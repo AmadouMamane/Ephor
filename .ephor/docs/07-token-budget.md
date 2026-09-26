@@ -18,9 +18,9 @@
 | **Ce qu'a coûté une tâche d'Ephor** | `make usage` — mesuré sur le journal de session de Claude Code ou de Copilot, et sur la base d'opencode, jamais estimé |
 | **Ce que ça a produit pour ce prix** | `make score` — coût par critère satisfait, sur le journal des jugements (`.ephor/docs/09`) |
 
-**Ordres de grandeur publiés par Anthropic** pour calibrer : environ 13 $ par
-développeur et par jour actif, 150 à 250 $ par développeur et par mois, et moins de
-30 $ par jour actif pour 90 % des utilisateurs. Si vous êtes loin au-dessus, la cause est
+**Ordres de grandeur publiés par Anthropic** (déploiements en entreprise, documentation de
+Claude Code) pour calibrer : environ 13 $ par développeur et par jour actif, 150 à 250 $
+par développeur et par mois, et moins de 30 $ par jour actif pour 90 % des utilisateurs. Si vous êtes loin au-dessus, la cause est
 presque toujours l'une des deux suivantes : des sessions longues jamais vidées, ou
 le modèle le plus cher laissé par défaut.
 
@@ -117,8 +117,9 @@ Deux outils font, en produit, ce que ce template fait à la main :
 
 **RTK** (`brew install rtk && rtk init -g`) est un proxy CLI qui compresse la sortie
 de plus de cent commandes avant qu'elle n'atteigne le modèle — filtrage du bruit,
-regroupement, troncature conservant le signal, déduplication. Réduction annoncée de
-60 à 90 % ; sur une session de trente minutes, environ 118 k tokens ramenés à 24 k.
+regroupement, troncature conservant le signal, déduplication. Réduction annoncée :
+jusqu'à 90 % de la sortie du terminal que lit l'agent, ce qui n'est pas 90 % de la
+facture — le projet le précise lui-même.
 Il s'installe comme un hook `PreToolUse`, exactement comme `filter-output.sh` ici —
 qui se désactive automatiquement si `rtk` est détecté sur le PATH. **Limite : les
 outils natifs `Read`, `Grep` et `Glob` contournent RTK**, qui n'agit que sur Bash.

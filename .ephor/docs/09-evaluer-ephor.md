@@ -5,7 +5,7 @@
 
 ## 1. Pourquoi c'est le sujet, et pas un raffinement
 
-Un travail publié en mai 2026, **Harness-Bench**, a mesuré l'effet du harnais sur
+Un travail publié en mai 2026, **Harness-Bench** (arXiv 2605.27922), a mesuré l'effet du harnais sur
 106 tâches d'agent en bac à sable, avec 5 194 trajectoires d'exécution, à travers
 plusieurs configurations de harnais et plusieurs modèles, budgets et protocoles
 d'évaluation standardisés. Sa conclusion tient en une phrase, et elle change la façon
@@ -25,7 +25,8 @@ Conséquence pratique : annoncer « on utilise le modèle X » ne dit rien de ce
 
 ## 2. Deux familles d'évaluation, qui ne répondent pas à la même question
 
-Google a publié le 9 septembre 2026 la distinction la plus utile sur ce sujet.
+Google a publié le 9 septembre 2026 la distinction la plus utile sur ce sujet (Google
+Developers Blog, « The Anatomy of Harness Engineering »).
 
 **Les benchmarks de bout en bout** (Terminal-Bench, SWE-bench, DeepSWE) donnent un score
 composite. Ils disent *que* la performance a changé, jamais *pourquoi*. Ils sont lents,
@@ -87,9 +88,9 @@ détecte. Le **score de mutation** est le pourcentage de défauts attrapés. Il 
 question bien plus dure que la couverture : *est-ce que mes tests verraient la
 différence si le comportement était réellement cassé ?*
 
-Un ordre de grandeur — retour d'expérience publié en 2026, pas étude contrôlée : un
-composant affichant **100 % de couverture de lignes** obtenait **61,29 % de score de
-mutation**. Quatre défauts sur dix passaient à travers une suite prétendument complète.
+Pour le constater plutôt que le croire : l'étape 5 de `.ephor/docs/10-installation.md`
+montre, sur le code d'exemple, une suite où tous les tests passent et qui laisse pourtant
+traverser une bonne part des mutants (`make mutants`).
 
 **Outils** : `mutmut` ou `cosmic-ray` en Python, PITest en Java, StrykerJS en
 TypeScript. Dans ce dépôt : `make mutants`.

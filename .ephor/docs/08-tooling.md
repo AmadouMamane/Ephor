@@ -3,10 +3,13 @@
 > Principe de sélection : un outil entre dans cette liste s'il **change ce qu'un agent
 > peut faire ou voir**, ou s'il **réduit ce qu'il doit lire**. Tout le reste est du confort
 > humain et n'a rien à faire ici. Chaque outil exposé à un agent est une dimension de
-> plus dans son espace de décision : Vercel a retiré 80 % des outils d'un agent et son
-> taux de succès est passé de 80 % à 100 %, à modèle constant. Installez large, **exposez étroit**.
+> plus dans son espace de décision : Vercel a retiré 80 % des outils de son agent SQL et
+> les a remplacés par un terminal en bac à sable ; à modèle constant, l'agent a réussi cinq
+> requêtes de test sur cinq au lieu de quatre (décembre 2025). Installez large, **exposez étroit**.
 
-Colonne « Agent » : pourquoi ça compte pour une machine, pas pour vous.
+Colonne « Agent » : pourquoi ça compte pour une machine, pas pour vous. Étoiles, licences
+et chiffres annoncés : relevés à la source le 26 septembre 2026 ; un chiffre d'éditeur est
+dit comme tel.
 
 ---
 
@@ -50,13 +53,13 @@ L'agent demande « qui appelle cette fonction, et qu'est-ce que ça casse » au 
 
 | Outil | Installation | Ce qu'il apporte |
 |---|---|---|
-| **CodeGraph** (MIT, ≈ 70 k étoiles) | `npm i -g @colbymchenry/codegraph` puis `codegraph install` | Nœuds (fonctions, classes) et arêtes (appels, imports, héritage) sur 20+ langages, SQLite + FTS5, resynchronisation par file watcher natif. Outil MCP principal : `codegraph_explore` — rend le code des symboles pertinents, les chemins d'appel et l'analyse d'impact en **un** appel. 100 % local, rien ne sort. |
+| **CodeGraph** (MIT, ≈ 72 k étoiles) | `npm i -g @colbymchenry/codegraph` puis `codegraph install` | Nœuds (fonctions, classes) et arêtes (appels, imports, héritage) sur 20+ langages, SQLite + FTS5, resynchronisation par file watcher natif. Outil MCP principal : `codegraph_explore` — rend le code des symboles pertinents, les chemins d'appel et l'analyse d'impact en **un** appel. 100 % local, rien ne sort. |
 | **GitNexus** | voir dépôt | Intégration Claude Code la plus profonde (outils MCP + skills + hooks). **Licence non commerciale** : disqualifiant en banque, à vérifier avant d'y toucher. |
 | **CodeGraphContext** (MIT) | backends FalkorDB / KuzuDB / Neo4j | Même idée, base au choix. Utile si vous avez déjà un Neo4j. |
 
 Chiffres annoncés par CodeGraph sur sept dépôts open source : 88 % d'appels d'outils en
 moins, 62 % de tokens en moins, zéro lecture de fichier là où la ligne de base en
-demandait jusqu'à 43. **Ce sont des mesures de l'éditeur**, non vérifiées ici. Et sa
+faisait jusqu'à 19, pour 43 appels d'outils. **Ce sont des mesures de l'éditeur**, non vérifiées ici. Et sa
 propre documentation admet le revers — les réponses laissent environ 80 % de contexte de
 récupération résident en plus sur une session multi-tours. On échange des lectures de
 fichiers contre un contexte plus lourd mais mieux ciblé.
@@ -65,7 +68,7 @@ fichiers contre un contexte plus lourd mais mieux ciblé.
 
 | Outil | Installation | Ce qu'il apporte |
 |---|---|---|
-| **Serena** (MIT, ≈ 28 k étoiles) | `uv tool install -p 3.13 serena-agent` puis `serena init` | Le standard de la navigation symbolique. Serveur MCP adossé aux **language servers** : trouver un symbole, ses références, sa hiérarchie de types — mais aussi **éditer** au niveau symbole (renommer, remplacer un corps de fonction, insérer avant/après, supprimer sans casser). 40+ langages. C'est la différence entre éditer du texte et éditer du code. |
+| **Serena** (GPL-3.0, ≈ 30 k étoiles) | `uv tool install -p 3.13 serena-agent` puis `serena init` | Le standard de la navigation symbolique. Serveur MCP adossé aux **language servers** : trouver un symbole, ses références, sa hiérarchie de types — mais aussi **éditer** au niveau symbole (renommer, remplacer un corps de fonction, insérer avant/après, supprimer sans casser). 40+ langages. C'est la différence entre éditer du texte et éditer du code. Licence : le paquet `serena-agent` est sous GPL-3.0, seule sa bibliothèque LSP reste sous MIT — à faire valider avant un usage en entreprise. |
 | **grepai** | recherche sémantique locale (Ollama) | Embeddings 100 % locaux + traçage du graphe d'appels. Revendique une réduction massive des tokens d'entrée ; solo mainteneur, à évaluer avant production. |
 | **claude-context** | BM25 + embeddings (Milvus/Zilliz) | Passage à l'échelle monorepo. **Envoie le code vers le cloud par défaut** : rédhibitoire en banque sans configuration auto-hébergée explicite. |
 | **Octocode MCP** | npm | Recherche multi-dépôts et archéologie GitHub (historique de PR). Utile quand la question est « pourquoi ce code est comme ça ». |
@@ -78,7 +81,7 @@ réservés au greffon JetBrains payant.
 
 | Outil | Installation | Ce qu'il apporte |
 |---|---|---|
-| **RTK** (Rust Token Killer, Apache-2.0, ≈ 78 k étoiles) | `brew install rtk` puis `rtk init -g` | Proxy CLI qui s'interpose entre le shell et le modèle et **compresse la sortie de plus de 100 commandes** (git, pytest, jest, cargo test, tsc, ruff, ls, grep, find, docker, kubectl…). Quatre stratégies : filtrage du bruit, regroupement, troncature conservant le signal, déduplication des lignes répétées. S'installe comme un hook `PreToolUse` qui réécrit `git status` en `rtk git status`. Réduction annoncée de 60 à 90 % ; sur une session de 30 minutes, ≈ 118 k tokens ramenés à ≈ 24 k. |
+| **RTK** (Rust Token Killer, Apache-2.0, ≈ 82 k étoiles) | `brew install rtk` puis `rtk init -g` | Proxy CLI qui s'interpose entre le shell et le modèle et **compresse la sortie de plus de 100 commandes** (git, pytest, jest, cargo test, tsc, ruff, ls, grep, find, docker, kubectl…). Quatre stratégies : filtrage du bruit, regroupement, troncature conservant le signal, déduplication des lignes répétées. S'installe comme un hook `PreToolUse` qui réécrit `git status` en `rtk git status`. Réduction annoncée : jusqu'à 90 % de la sortie du terminal que lit l'agent — le projet précise lui-même que ce n'est pas 90 % de la facture. |
 
 **C'est exactement le mécanisme que `.ephor/hooks/filter-output.sh` implémente à la
 main dans ce template — en vingt lignes et pour les seules commandes de test.** RTK
@@ -96,7 +99,7 @@ que prévu).
 
 | Outil | Installation | Ce qu'il apporte |
 |---|---|---|
-| **Repomix** | `npx repomix` | Aplatit un dépôt en un fichier XML compressé par tree-sitter, ≈ 70 % de tokens en moins. Utile pour **une** question globale sur un dépôt tiers ; inutile en session de travail, où un index bat un aplatissement. |
+| **Repomix** | `npx repomix` | Aplatit un dépôt en un seul fichier ; avec `--compress`, tree-sitter n'en garde que la structure (classes, fonctions, interfaces). Utile pour **une** question globale sur un dépôt tiers ; inutile en session de travail, où un index bat un aplatissement. |
 | **code2prompt** | `cargo install code2prompt` | Même famille, gabarits Handlebars. Adoption en ralentissement. |
 | **Aider repo-map** | intégré à Aider | Sélection dynamique du contexte par tags tree-sitter. À connaître comme référence de conception, pas comme produit. |
 
@@ -328,7 +331,7 @@ optimise du bruit. Construisez le vérificateur d'abord.
 | **git worktree** | intégré | Un agent, une branche, un répertoire, un environnement applicatif éphémère. Le préalable à tout parallélisme. |
 | **devcontainer** | `npm i -g @devcontainers/cli` | Environnement reproductible, et frontière de système de fichiers par construction. |
 | **Docker / Colima** | `brew install colima docker` | Bac à sable de base. Conteneur frais par tâche, à la façon du compilateur C. |
-| **bubblewrap** (Linux) / **Seatbelt** (macOS) | système | Durcissement au niveau OS, utilisé par Claude Code lui-même pour réduire les demandes de permission de 84 %. |
+| **bubblewrap** (Linux) / **Seatbelt** (macOS) | système | Durcissement au niveau OS, utilisé par Claude Code lui-même : 84 % de demandes de permission en moins dans l'usage interne d'Anthropic. |
 | **gVisor** | `brew install gvisor` (Linux) | Noyau en espace utilisateur : isolation plus forte qu'un conteneur, moins lourde qu'une VM. |
 | **Firecracker / microVM** | selon plateforme | Quand le conteneur ne suffit pas — exécution de code non fiable. |
 | **Proxy d'egress** (`mitmproxy`, Squid) | `brew install mitmproxy` | **Le contrôle qui compte réellement.** Une exfiltration d'identifiants AWS par hameçonnage a montré en février 2026 que le contrôle de sortie réseau tient là où les défenses au niveau du modèle cèdent. Et une liste blanche accorde des **capacités**, pas seulement des destinations : un domaine autorisé peut servir de canal. |
@@ -350,7 +353,7 @@ optimise du bruit. Construisez le vérificateur d'abord.
 | **Exécution et cache distants** (BuildBuddy, EngFlow) | dès que plusieurs agents bâtissent en parallèle | Résout les conflits de verrou de workspace, le thrash de cache d'analyse et le test multi-architecture. Les snapshots de VM conservent un cache d'analyse chaud entre deux builds. |
 | **Nx / Turborepo** | monorepo JS/TS | Graphe de tâches + cache. |
 | **sccache**, **ccache**, **mold** | C/C++/Rust | Le temps de compilation est du temps d'agent. |
-| **PR empilées** (`gh stack`, Graphite, git-spice) | dès que les diffs dépassent 400 lignes | Une PR de 200 à 400 lignes présente environ 40 % de défauts en moins et est approuvée trois fois plus vite qu'une grosse. GitHub a livré `gh-stack` en préversion en avril 2026 : rebase en cascade, force-push atomique sur la chaîne, protections de branche évaluées contre la cible finale, CI exécutée comme si chaque PR visait `main`. C'est le mécanisme qui rend praticable la consigne « petites PR » face au volume agentique — apprenez à l'agent à découper un gros diff en couches. |
+| **PR empilées** (`gh stack`, Graphite, git-spice) | dès que les diffs dépassent 400 lignes | Au-delà de 400 lignes, une revue trouve nettement moins de défauts par ligne relue (étude SmartBear sur 2 500 revues) ; les éditeurs d'outils de revue annoncent environ 40 % de défauts en moins pour les PR de 200 à 400 lignes, et des PR de moins de 200 lignes approuvées trois fois plus vite. GitHub a ouvert les PR empilées (`gh-stack`) en préversion privée en avril 2026, puis publique le 30 juillet 2026 : rebase en cascade, force-push atomique sur la chaîne, protections de branche évaluées contre la cible finale, CI exécutée comme si chaque PR visait `main`. C'est le mécanisme qui rend praticable la consigne « petites PR » face au volume agentique — apprenez à l'agent à découper un gros diff en couches. |
 | **File de merge GitHub**, **Graphite**, **Aviator** | > 20 PR/jour | Une CI de groupe à 30 minutes plafonne à ≈ 48 PR/jour en file stricte. Une équipe de 50 avec agents dépasse ce seuil, et l'attente n'augmente pas linéairement : elle explose. |
 | **Quarantaine de tests instables** | dès le premier test intermittent | Les agents relancent en boucle, ce que les humains ne font pas. Un instable non mis en quarantaine devient un déni de service sur la file. |
 | **Budget de relance par agent** | dès le premier agent autonome | Même raison. À imposer côté CI, pas côté prompt. |
@@ -376,7 +379,7 @@ Une évaluation qu'on lance à la main n'est pas un vérificateur ; c'est un rap
 |---|---|
 | **Claude Code** | Référence sur modèles Anthropic ; skills, hooks, sous-agents, worktrees, routines. |
 | **Codex CLI / app** | Référence OpenAI ; revue agent-à-agent très aboutie. |
-| **Antigravity CLI / 2.0** | Google, écrit en Go, asynchrone, même harnais que l'application de bureau. Gemini CLI est arrêté côté grand public depuis juin 2026. |
+| **Antigravity CLI / 2.0** | Google, écrit en Go, asynchrone, même harnais que l'application de bureau. Gemini CLI est arrêté côté grand public depuis le 18 juin 2026 ; les licences entreprise le gardent. |
 | **OpenCode** | 75+ fournisseurs, dont des poids ouverts auto-hébergés. L'option souveraine. |
 | **Goose** | Gouvernance Linux Foundation, agnostique. Argument de neutralité en comité. |
 | **OpenHands** | Bac à sable Docker auto-hébergé, coordination d'équipe. |
@@ -384,7 +387,7 @@ Une évaluation qu'on lance à la main n'est pas un vérificateur ; c'est un rap
 
 Le fond compte plus que l'anecdote. On cite souvent un harnais tiers qui dépasserait de
 dix-sept points le harnais du fournisseur sur Terminal-Bench 2.0 à modèle constant —
-chiffre sans source primaire vérifiable. L'argument solide est Harness-Bench : 106
+chiffre sans source primaire vérifiable. L'argument solide est Harness-Bench (arXiv 2605.27922, mai 2026) : 106
 tâches, 5 194 trajectoires, plusieurs harnais et plusieurs modèles, et une conclusion
 sans ambiguïté — la capacité se rapporte au **couple modèle-harnais**, jamais au modèle
 seul. Le choix du harnais pèse autant que celui du modèle.
@@ -398,7 +401,7 @@ seul. Le choix du harnais pèse autant que celui du modèle.
 ### 20.1 « Ce code vient d'où, et sous quelle licence ? »
 
 Un modèle entraîné sur des décennies de code public peut reproduire des structures
-familières. Chris Lattner posait la question en relisant le compilateur C d'Anthropic :
+familières. Chris Lattner posait la question en relisant le compilateur C d'Anthropic (blog de Modular, février 2026) :
 où passe exactement la frontière entre apprendre et copier ? Juridiquement, la question
 n'est pas tranchée — opérationnellement, elle l'est : vous devez pouvoir montrer que le
 code entrant dans votre branche principale a été passé au crible.
@@ -422,7 +425,7 @@ toutes les raisons de coller un extrait de log ou une ligne de base dans son con
 
 | Outil | Note |
 |---|---|
-| **Microsoft Presidio** (MIT, ≈ 11 k étoiles) | Détection et anonymisation de données personnelles — texte, images, données structurées. Reconnaissances par NER, expressions régulières, règles et sommes de contrôle, avec recognizers personnalisables (utile pour les formats internes : IBAN, identifiants clients). S'utilise en bibliothèque Python, CLI, Docker, Spark. |
+| **Presidio** (MIT, ≈ 11 k étoiles ; né chez Microsoft, désormais projet communautaire `data-privacy-stack/presidio`) | Détection et anonymisation de données personnelles — texte, images, données structurées. Reconnaissances par NER, expressions régulières, règles et sommes de contrôle, avec recognizers personnalisables (utile pour les formats internes : IBAN, identifiants clients). S'utilise en bibliothèque Python, CLI, Docker, Spark. |
 | **Passerelle LLM avec caviardage** (LiteLLM + Presidio en amont) | Le seul point où le contrôle est **systématique** plutôt que déclaratif. La passerelle LiteLLM existe déjà dans l'environnement cible : c'est l'endroit naturel. |
 
 Dans ce dépôt, le premier filet est en place et il ne coûte rien : `make verify` refuse
