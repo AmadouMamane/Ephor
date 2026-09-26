@@ -81,8 +81,13 @@ demander à sortir du bac à sable pour une commande, et un clic suffit.
   du bac à sable). Le juge en conteneur est une commande de l'opérateur, lancée hors de
   l'agent ; l'agent juge en local.
 - **Pas encore mesuré** : le mandataire du bac à sable derrière le proxy de
-  l'entreprise, un dépôt JFrog, et Linux (le bac à sable demande bubblewrap ; sans lui,
-  Claude Code le saute avec un avertissement — `make doctor` ne le voit pas encore).
+  l'entreprise, et un dépôt JFrog.
+- **Sous Linux, le bac à sable demande bubblewrap et socat.** Sans eux, ou quand bubblewrap
+  ne peut pas démarrer (AppArmor d'Ubuntu 24.04, conteneur sans droits, WSL1), Claude Code
+  le saute avec un simple avertissement. `make doctor` lance bubblewrap pour de vrai et le
+  dit (mesuré le 26/09/2026 sur Fedora : il démarre ; dans un conteneur sans droits : non).
+  Pour que Claude Code refuse de démarrer plutôt que de le sauter :
+  `"failIfUnavailable": true` dans le bloc `sandbox`.
 - **L'opérateur garde la main** : `{"sandbox": {"enabled": false}}` dans
   `.claude/settings.local.json` le coupe sur son poste. La sentinelle signale ce réglage
   s'il apparaît pendant un tour, et `make doctor` le dit toujours.

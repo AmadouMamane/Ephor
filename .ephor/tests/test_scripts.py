@@ -476,3 +476,58 @@ def test_le_bac_a_sable_de_claude_code_est_la_frontiere_du_terminal(tmp_path: Pa
     (copie / ".claude" / "settings.local.json").write_text('{"sandbox": {"enabled": false}}')
     coupe = subprocess.run(doctor, capture_output=True, text=True, timeout=180, check=False)
     assert "[WARN] bac à sable de Claude Code coupé" in coupe.stdout
+
+
+def test_le_doctor_voit_le_bac_a_sable_saute_sous_linux(tmp_path: Path) -> None:
+    """Sous Linux, sans bubblewrap et socat, ou quand bubblewrap ne peut pas démarrer, Claude
+    Code saute son bac à sable avec un simple avertissement. Le diagnostic le dit. Le poste
+    Linux est simulé : un PATH qui reprend tous les outils du vrai, sauf bwrap et socat."""
+    copie = tmp_path / "depot"
+    (copie / ".ephor" / "scripts").mkdir(parents=True)
+    (copie / ".claude").mkdir()
+    shutil.copy(ROOT / ".ephor" / "scripts" / "doctor.sh", copie / ".ephor" / "scripts")
+    shutil.copy(ROOT / ".ephor" / "zones.txt", copie / ".ephor")
+    shutil.copy(ROOT / ".claude" / "settings.json", copie / ".claude")
+    git(copie, "init", "-q", "-b", "main")
+    poste = tmp_path / "bin"
+    poste.mkdir()
+    for dossier in map(Path, os.environ["PATH"].split(os.pathsep)):
+        if not dossier.is_dir():
+            continue
+        for outil in dossier.iterdir():
+            cible = poste / outil.name
+            if outil.name not in {"bwrap", "socat", "uname"} and not os.path.lexists(cible):
+                cible.symlink_to(outil)
+    vrai_uname = shutil.which("uname")
+    (poste / "uname").write_text(
+        f'#!/bin/sh\nif [ "$1" = "-s" ]; then echo Linux; else exec {vrai_uname} "$@"; fi\n'
+    )
+    (poste / "uname").chmod(0o755)
+    doctor = ["bash", str(copie / ".ephor" / "scripts" / "doctor.sh")]
+
+    def diagnostic() -> str:
+        env = dict(os.environ, PATH=str(poste))
+        return subprocess.run(
+            doctor, capture_output=True, text=True, env=env, timeout=180, check=False
+        ).stdout
+
+    sans = diagnostic()
+    assert "SAUTÉ sur ce poste (il manque bubblewrap et socat)" in sans
+    assert "apt-get install bubblewrap socat" in sans and "failIfUnavailable" in sans
+    assert "[ OK ] bac à sable" not in sans
+
+    def outil(nom: str, corps: str) -> None:
+        (poste / nom).write_text(f"#!/bin/sh\n{corps}\n")
+        (poste / nom).chmod(0o755)
+
+    outil("socat", "exit 0")
+    outil("bwrap", 'echo "bwrap: setting up uid map: Permission denied" >&2; exit 1')
+    refuse = diagnostic()
+    assert "bubblewrap ne démarre pas : bwrap: setting up uid map: Permission denied" in refuse
+    assert "AppArmor" in refuse and "[ OK ] bac à sable" not in refuse
+
+    outil("bwrap", "exit 0")
+    assert "[ OK ] bac à sable de Claude Code" in diagnostic()
+    # Coupé par le poste : rien à essayer, le diagnostic le dit comme avant.
+    (copie / ".claude" / "settings.local.json").write_text('{"sandbox": {"enabled": false}}')
+    assert "[WARN] bac à sable de Claude Code coupé" in diagnostic()

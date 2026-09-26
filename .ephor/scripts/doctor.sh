@@ -231,8 +231,31 @@ def lu(chemin):
         return None
 local, projet = lu(".claude/settings.local.json"), lu(".claude/settings.json")
 print("coupe" if local is False else "actif" if (local or projet) else "absent")' 2>/dev/null)"
+# Sous Linux, le bac à sable repose sur bubblewrap et socat. S'il ne peut pas démarrer
+# (paquet absent, espaces de noms refusés par AppArmor sur Ubuntu 24.04, conteneur sans
+# droits, WSL1), Claude Code l'annonce d'un avertissement et lance le terminal SANS lui.
+# Le programme présent ne suffit donc pas : on le lance. Mesuré le 26/09/2026 : cet essai
+# passe sur une machine Fedora, et échoue dans un conteneur sans droits (« Can't mount
+# devpts on /newroot/dev/pts: Permission denied »).
+SAUTE=""
+if [ "$BAC" = actif ] && [ "$(uname -s)" = "Linux" ]; then
+  MANQUE=""
+  command -v bwrap >/dev/null 2>&1 || MANQUE="bubblewrap"
+  command -v socat >/dev/null 2>&1 || MANQUE="${MANQUE:+$MANQUE et }socat"
+  if [ -n "$MANQUE" ]; then
+    SAUTE="il manque $MANQUE"
+    REMEDE="sudo apt-get install bubblewrap socat (dnf sous Fedora), puis relancez Claude Code"
+  elif ! ESSAI="$(bwrap --ro-bind / / --dev /dev --proc /proc --unshare-net \
+                    --new-session --die-with-parent true 2>&1)"; then
+    SAUTE="bubblewrap ne démarre pas : $(printf '%s\n' "$ESSAI" | tail -n 1)"
+    REMEDE="Ubuntu 24.04 : profil AppArmor pour bwrap ; dans un conteneur : sandbox.enableWeakerNestedSandbox ; WSL1 : passez en WSL2 (doc « sandboxing » de Claude Code)"
+  fi
+fi
+[ -n "$SAUTE" ] && BAC=saute
 case "$BAC" in
   actif) ok "bac à sable de Claude Code : le terminal ne peut pas écrire les zones, détour compris (ADR 0008)" ;;
+  saute) warn "bac à sable de Claude Code réglé, mais SAUTÉ sur ce poste ($SAUTE) : Claude Code avertit, puis lance le terminal sans frontière" \
+              "$REMEDE. Pour qu'il refuse de démarrer plutôt que de le sauter : \"failIfUnavailable\": true dans le bloc sandbox (ADR 0008)" ;;
   coupe) warn "bac à sable de Claude Code coupé sur ce poste (.claude/settings.local.json)" \
               "le terminal peut de nouveau écrire les zones par un détour ; retirez ce réglage (ADR 0008)" ;;
   absent) warn "bac à sable de Claude Code absent des réglages : le terminal n'a pas de frontière" \
