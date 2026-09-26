@@ -35,7 +35,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Sequence
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -1548,6 +1548,169 @@ def format_summary(report: dict[str, Any], lines: list[str]) -> str:
 # --------------------------------------------------------------------------- commandes
 
 
+@dataclass
+class Banc:
+    """Une copie prête, et ce qu'on y lance : l'installation, la vérification, les critères.
+
+    Le juge s'en sert pour rendre son verdict, et `make task-check` pour s'assurer que chaque
+    critère échoue AVANT le travail : une preuve y est lancée et lue exactement de la même
+    façon. Les preuves sont relevées avant la première étape, et recomparées après chacune.
+    """
+
+    repo: Path
+    run_id: str
+    runtime: Runtime
+    copy: Path
+    logs: Path
+    preuves: Path
+    report_dir: Path
+    has_setup: bool
+    deadline: float
+    steps: list[dict[str, Any]]
+    lines: list[str]
+    junit: list[dict[str, Any]]
+    gardees: set[str] = field(default_factory=set)
+    dossiers: list[str] = field(default_factory=list)
+    reference_preuves: dict[str, str] = field(default_factory=dict)
+    preuves_abimees: list[str] = field(default_factory=list)
+    any_timeout: bool = False
+
+    def execute(
+        self,
+        label: str,
+        key: str,
+        argv: tuple[str, ...],
+        phase: str,
+        max_seconds: float | None = None,
+        critere: Criterion | None = None,
+    ) -> dict[str, Any]:
+        resolved = [self.runtime.python() if part == "{python}" else part for part in argv]
+        annonce = list(resolved)  # ce que le rapport montre : la commande du contrat
+        forme = forme_de_preuve(critere) if critere is not None else "étape"
+        jeton = ""
+        rapport: Path | None = None
+        # Chaque forme de preuve dit à sa façon qu'elle est allée au bout. Seule la
+        # dernière, « code de retour seul », croit le processus sur parole : elle est
+        # nommée au verdict, et refusée sur une tâche à risque élevé.
+        index = position_script(argv)
+        if forme == "jeton" and index is not None:
+            jeton = "preuve-" + os.urandom(8).hex()
+            resolved = [
+                *resolved[: index + 1],
+                "-c",
+                AMORCE_PREUVE,
+                jeton,
+                *resolved[index + 1 :],
+            ]
+        elif forme == "rapport":
+            nom = f"{key}-{os.urandom(6).hex()}.xml"
+            rapport = self.preuves / nom
+            cible = str(rapport) if self.runtime.kind == "local" else f"{PREUVES_CONTENEUR}/{nom}"
+            resolved = [*resolved, f"--junitxml={cible}"]
+        entree = critere.stdin if critere is not None else None
+        log = self.logs / f"{key}.log"
+        cleanup: Callable[[], None] | None = None
+        if self.runtime.kind == "local":
+            command, env = resolved, filtered_env(phase, self.has_setup)
+        else:
+            name = f"ephor-judge-{self.run_id}-{key.lower()}"
+            command, env = container_command(
+                self.runtime,
+                resolved,
+                self.copy,
+                phase,
+                self.has_setup,
+                name,
+                preuves=self.preuves,
+                entree=entree is not None,
+            )
+            cleanup = functools.partial(remove_container, self.runtime.kind, name)
+        # Le maximum du critère coupe avant le budget global : un critère lent échoue
+        # tout seul, il ne consomme pas le temps des suivants.
+        limit = self.deadline - time.monotonic()
+        bounded = False
+        if max_seconds is not None and max_seconds < limit:
+            limit, bounded = max_seconds, True
+        result = run_process(command, self.copy, log, limit, env, on_timeout=cleanup, entree=entree)
+        termine = not result["timed_out"] and not result["output_limit"]
+        reason = ""
+        if forme == "sortie" and critere is not None:
+            # Comparée de l'extérieur, à l'octet près, sans l'en-tête que le juge écrit.
+            sortie = log.read_bytes()[result["output_offset"] :].decode("utf-8", "replace")
+            ok = termine and result["returncode"] == critere.returncode
+            ok = ok and sortie == critere.expected_output
+            if termine and result["returncode"] != critere.returncode:
+                reason = f"code de retour {result['returncode']}, attendu {critere.returncode}"
+            elif termine and not ok:
+                reason = "sortie différente de la sortie attendue (voir le journal)"
+        else:
+            ok = termine and result["returncode"] == 0
+        if ok and jeton:
+            # Une LIGNE égale au jeton, pas le jeton n'importe où : le journal recopie
+            # la commande lancée, donc le jeton s'y trouve déjà. Cherché à la légère,
+            # ce contrôle se validait lui-même.
+            sortie = log.read_text(encoding="utf-8", errors="replace")
+            if not any(ligne.strip() == jeton for ligne in sortie.splitlines()):
+                ok = False
+                reason = "preuve interrompue avant la fin : le code jugé a coupé le processus"
+        if rapport is not None:
+            if ok and critere is not None:
+                manque = verifier_rapport_pytest(rapport, tests_attendus(critere.check))
+                if manque is not None:
+                    ok, reason = False, manque
+            if rapport.is_file() and not rapport.is_symlink():
+                shutil.copy2(rapport, self.logs / f"{key}.junit.xml")
+        if result["output_limit"]:
+            ok = False
+            reason = f"sortie de plus de {MAX_LOG_BYTES // 2**20} Mo : processus arrêté"
+        too_slow = bounded and result["timed_out"]
+        if too_slow:
+            ok = False
+        else:
+            self.any_timeout = self.any_timeout or result["timed_out"]
+        shown = relative(self.report_dir / "logs" / log.name, self.repo)
+        if too_slow:
+            reason = f"trop lent : maximum {max_seconds:.1f} s".replace(".", ",")
+        mesure = {cle: valeur for cle, valeur in result.items() if cle != "output_offset"}
+        self.steps.append({"name": key, "argv": annonce, **mesure, "log": f"logs/{log.name}"})
+        seconds = f"{result['seconds']:.1f} s".replace(".", ",")
+        status = "ok   " if ok else "FAIL "
+        detail = "" if ok else f"  -> {reason or shown}"
+        self.lines.append(f"  {status} {seconds:>8}  {label}{detail}")
+        self.junit.append(
+            {
+                "name": label,
+                "ok": ok,
+                "seconds": result["seconds"],
+                "detail": reason or shown,
+            }
+        )
+        releves = (
+            self.gardees | set(self.reference_preuves) | a_surveiller(self.copy, self.dossiers)
+        )
+        for nom, empreinte in empreintes_preuves(self.copy, releves).items():
+            if (
+                empreinte != self.reference_preuves.get(nom, "absente")
+                and nom not in self.preuves_abimees
+            ):
+                self.preuves_abimees.append(nom)
+        if phase == "setup":
+            # L'installation est celle du contrat, écrite par l'opérateur : ce qu'elle
+            # change à un fichier suivi (un verrou de dépendances) fait partie du jugé.
+            git(self.copy, "add", "-u")
+        else:
+            for nom in suivis_modifies(self.copy):
+                if nom not in self.preuves_abimees:
+                    self.preuves_abimees.append(nom)
+        return {
+            "ok": ok,
+            "too_slow": too_slow,
+            "seconds": result["seconds"],
+            "reason": reason,
+            "forme": forme,
+        }
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo)
     task_path, task_id = resolve_task(repo, args.task_id, args.task)
@@ -1771,10 +1934,6 @@ def cmd_check(args: argparse.Namespace) -> int:
             for nom in paths
         }
 
-        deadline = time.monotonic() + contract.timeout_seconds
-        has_setup = contract.setup is not None
-        failed_log: str | None = None
-        any_timeout = False
         # Les preuves sont relevées AVANT la première étape, et recomparées après CHACUNE.
         # Comparer une seule fois à la fin ne voyait pas le sabotage remis en état : abîmer
         # une preuve, la faire passer, puis la remettre d'aplomb ressortait « VÉRIFIÉ » avec
@@ -1784,153 +1943,34 @@ def cmd_check(args: argparse.Namespace) -> int:
         # vivent ses tests, leurs données et leurs aides.
         dossiers = sorted({d for _, d in cited_dirs(repo, base, contract)} | {f"tasks/{task_id}"})
         reference_preuves = empreintes_preuves(copy, gardees | a_surveiller(copy, dossiers))
-        preuves_abimees: list[str] = []
-
-        def execute(
-            label: str,
-            key: str,
-            argv: tuple[str, ...],
-            phase: str,
-            max_seconds: float | None = None,
-            critere: Criterion | None = None,
-        ) -> dict[str, Any]:
-            nonlocal failed_log, any_timeout
-            resolved = [runtime.python() if part == "{python}" else part for part in argv]
-            annonce = list(resolved)  # ce que le rapport montre : la commande du contrat
-            forme = forme_de_preuve(critere) if critere is not None else "étape"
-            jeton = ""
-            rapport: Path | None = None
-            # Chaque forme de preuve dit à sa façon qu'elle est allée au bout. Seule la
-            # dernière, « code de retour seul », croit le processus sur parole : elle est
-            # nommée au verdict, et refusée sur une tâche à risque élevé.
-            index = position_script(argv)
-            if forme == "jeton" and index is not None:
-                jeton = "preuve-" + os.urandom(8).hex()
-                resolved = [
-                    *resolved[: index + 1],
-                    "-c",
-                    AMORCE_PREUVE,
-                    jeton,
-                    *resolved[index + 1 :],
-                ]
-            elif forme == "rapport":
-                nom = f"{key}-{os.urandom(6).hex()}.xml"
-                rapport = preuves / nom
-                cible = str(rapport) if runtime.kind == "local" else f"{PREUVES_CONTENEUR}/{nom}"
-                resolved = [*resolved, f"--junitxml={cible}"]
-            entree = critere.stdin if critere is not None else None
-            log = logs / f"{key}.log"
-            cleanup: Callable[[], None] | None = None
-            if runtime.kind == "local":
-                command, env = resolved, filtered_env(phase, has_setup)
-            else:
-                name = f"ephor-judge-{run_id}-{key.lower()}"
-                command, env = container_command(
-                    runtime,
-                    resolved,
-                    copy,
-                    phase,
-                    has_setup,
-                    name,
-                    preuves=preuves,
-                    entree=entree is not None,
-                )
-                cleanup = functools.partial(remove_container, runtime.kind, name)
-            # Le maximum du critère coupe avant le budget global : un critère lent échoue
-            # tout seul, il ne consomme pas le temps des suivants.
-            limit = deadline - time.monotonic()
-            bounded = False
-            if max_seconds is not None and max_seconds < limit:
-                limit, bounded = max_seconds, True
-            result = run_process(command, copy, log, limit, env, on_timeout=cleanup, entree=entree)
-            termine = not result["timed_out"] and not result["output_limit"]
-            reason = ""
-            if forme == "sortie" and critere is not None:
-                # Comparée de l'extérieur, à l'octet près, sans l'en-tête que le juge écrit.
-                sortie = log.read_bytes()[result["output_offset"] :].decode("utf-8", "replace")
-                ok = termine and result["returncode"] == critere.returncode
-                ok = ok and sortie == critere.expected_output
-                if termine and result["returncode"] != critere.returncode:
-                    reason = f"code de retour {result['returncode']}, attendu {critere.returncode}"
-                elif termine and not ok:
-                    reason = "sortie différente de la sortie attendue (voir le journal)"
-            else:
-                ok = termine and result["returncode"] == 0
-            if ok and jeton:
-                # Une LIGNE égale au jeton, pas le jeton n'importe où : le journal recopie
-                # la commande lancée, donc le jeton s'y trouve déjà. Cherché à la légère,
-                # ce contrôle se validait lui-même.
-                sortie = log.read_text(encoding="utf-8", errors="replace")
-                if not any(ligne.strip() == jeton for ligne in sortie.splitlines()):
-                    ok = False
-                    reason = "preuve interrompue avant la fin : le code jugé a coupé le processus"
-            if rapport is not None:
-                if ok and critere is not None:
-                    manque = verifier_rapport_pytest(rapport, tests_attendus(critere.check))
-                    if manque is not None:
-                        ok, reason = False, manque
-                if rapport.is_file() and not rapport.is_symlink():
-                    shutil.copy2(rapport, logs / f"{key}.junit.xml")
-            if result["output_limit"]:
-                ok = False
-                reason = f"sortie de plus de {MAX_LOG_BYTES // 2**20} Mo : processus arrêté"
-            too_slow = bounded and result["timed_out"]
-            if too_slow:
-                ok = False
-            else:
-                any_timeout = any_timeout or result["timed_out"]
-            shown = relative(report_dir / "logs" / log.name, repo)
-            if too_slow:
-                reason = f"trop lent : maximum {max_seconds:.1f} s".replace(".", ",")
-            mesure = {cle: valeur for cle, valeur in result.items() if cle != "output_offset"}
-            report["steps"].append(
-                {"name": key, "argv": annonce, **mesure, "log": f"logs/{log.name}"}
-            )
-            seconds = f"{result['seconds']:.1f} s".replace(".", ",")
-            status = "ok   " if ok else "FAIL "
-            detail = "" if ok else f"  -> {reason or shown}"
-            lines.append(f"  {status} {seconds:>8}  {label}{detail}")
-            junit.append(
-                {
-                    "name": label,
-                    "ok": ok,
-                    "seconds": result["seconds"],
-                    "detail": reason or shown,
-                }
-            )
-            if not ok and failed_log is None:
-                failed_log = shown
-            releves = gardees | set(reference_preuves) | a_surveiller(copy, dossiers)
-            for nom, empreinte in empreintes_preuves(copy, releves).items():
-                if (
-                    empreinte != reference_preuves.get(nom, "absente")
-                    and nom not in preuves_abimees
-                ):
-                    preuves_abimees.append(nom)
-            if phase == "setup":
-                # L'installation est celle du contrat, écrite par l'opérateur : ce qu'elle
-                # change à un fichier suivi (un verrou de dépendances) fait partie du jugé.
-                git(copy, "add", "-u")
-            else:
-                for nom in suivis_modifies(copy):
-                    if nom not in preuves_abimees:
-                        preuves_abimees.append(nom)
-            return {
-                "ok": ok,
-                "too_slow": too_slow,
-                "seconds": result["seconds"],
-                "reason": reason,
-                "forme": forme,
-            }
+        banc = Banc(
+            repo=repo,
+            run_id=run_id,
+            runtime=runtime,
+            copy=copy,
+            logs=logs,
+            preuves=preuves,
+            report_dir=report_dir,
+            has_setup=contract.setup is not None,
+            deadline=time.monotonic() + contract.timeout_seconds,
+            steps=report["steps"],
+            lines=lines,
+            junit=junit,
+            gardees=gardees,
+            dossiers=dossiers,
+            reference_preuves=reference_preuves,
+        )
 
         setup_ok = True
         if contract.setup is not None:
-            setup_ok = execute("installation", "setup", contract.setup, "setup")["ok"]
+            setup_ok = banc.execute("installation", "setup", contract.setup, "setup")["ok"]
         all_ok = setup_ok
         if setup_ok:
-            all_ok = execute("vérification", "verify", contract.verify, "verify")["ok"] and all_ok
+            all_ok = (
+                banc.execute("vérification", "verify", contract.verify, "verify")["ok"] and all_ok
+            )
             for criterion in contract.criteria:
-                outcome = execute(
+                outcome = banc.execute(
                     f"{criterion.id} {criterion.description[:60]}",
                     criterion.id,
                     criterion.check,
@@ -1953,24 +1993,24 @@ def cmd_check(args: argparse.Namespace) -> int:
                 report["criteria"].append(entry)
                 all_ok = outcome["ok"] and all_ok
 
-        if preuves_abimees:
+        if banc.preuves_abimees:
             # Constaté, donc consigné, que les critères aient réussi ou non : une preuve
             # touchée pendant l'exécution retire son sens à tout ce qui a été mesuré.
             all_ok = False
-            detail = ", ".join(preuves_abimees)
+            detail = ", ".join(banc.preuves_abimees)
             lines.append(
                 "  FAIL        preuve, réglage ou fichier jugé modifié pendant l'exécution : "
                 + detail
             )
             junit.append({"name": "intégrité des preuves", "ok": False, "detail": detail})
-            report["tampered_proofs"] = preuves_abimees
+            report["tampered_proofs"] = banc.preuves_abimees
 
         after, _ = snapshot(repo, base)
         if sha256(after) != report["patch_sha256"] or task_path.read_bytes() != contract_bytes:
             report["status"] = "stale"
         elif all_ok:
             report["status"] = "verified_needs_review"
-        elif any_timeout:
+        elif banc.any_timeout:
             report["status"] = "budget_exhausted"
         else:
             report["status"] = "verification_failed"
