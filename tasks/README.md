@@ -11,12 +11,19 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
    d'être écrit — s'il est mauvais, rien n'est créé — et les fichiers de test cités par
    les critères sont créés avec un test vide par critère, qu'il ne reste qu'à remplir.
    Sans plan sous la main, `make task-new ID=FEAT-001` donne un squelette à compléter.
-2. **Approuver.** Vous relisez, vous lancez `make task-check ID=FEAT-001`, puis vous commitez le
-   dossier sur la branche principale. **Ce commit est l'approbation** : le juge refuse tout
-   contrat absent de la base ou différent de sa version approuvée.
-3. **Travailler.** L'agent travaille sur la branche `task/FEAT-001`, dans le périmètre
+2. **Voir échouer.** Vous relisez, puis vous lancez `make task-check ID=FEAT-001`. Il vérifie
+   la forme du contrat, puis lance chaque critère une fois sur le code actuel, comme le juge
+   le fera. **Tous doivent échouer** : un critère déjà vert ferait déclarer l'agent VÉRIFIÉ
+   sans qu'il ait rien fait, et il est refusé. Lisez la raison affichée pour chacun : une
+   faute de frappe dans un test le fait échouer aussi, mais pour une mauvaise raison. Alors
+   seulement il écrit `tasks/FEAT-001/rouge.json`.
+3. **Approuver.** Vous commitez le dossier entier (contrat, tests, `rouge.json`) sur la
+   branche principale. **Ce commit est l'approbation** : le juge refuse tout contrat absent
+   de la base ou différent de sa version approuvée, et toute tâche sans contrôle rouge, ou
+   dont une preuve a changé depuis. Un test retouché après coup : relancez `make task-check`.
+4. **Travailler.** L'agent travaille sur la branche `task/FEAT-001`, dans le périmètre
    `allowed_paths`. Il ne peut modifier ni ce dossier, ni les zones de contrôle.
-4. **Juger.** `make judge TASK=FEAT-001` en local, puis le job `juge` de la CI sur la merge request.
+5. **Juger.** `make judge TASK=FEAT-001` en local, puis le job `juge` de la CI sur la merge request.
 
 ## Écrire un bon contrat
 
@@ -24,9 +31,12 @@ Un critère est bon quand un tiers qui n'a pas vu le code peut trancher sans dis
 « L'import fonctionne bien » est mauvais. « Un CSV de 10 000 lignes dont 3 malformées
 importe 9 997 lignes et écrit les 3 rejets dans un rapport » est bon.
 
-Chaque critère a une commande `check` qui échoue tant que le comportement n'existe pas.
-Les tests d'acceptation vivent dans ce dossier, hors de `tests/` : la suite normale reste
-verte sur la branche principale tant que la fonctionnalité n'est pas faite.
+Chaque critère a une commande `check` qui échoue tant que le comportement n'existe pas, et
+`make task-check` le vérifie. Les tests d'acceptation vivent dans ce dossier, hors de
+`tests/` : la suite normale reste verte sur la branche principale tant que la fonctionnalité
+n'est pas faite. Ce qui doit seulement **rester** vrai (« un libellé valide reste nettoyé »)
+n'est pas un critère : il passe déjà. Sa place est la suite normale, que l'étape `verify`
+du juge fait tourner à chaque jugement.
 
 **Une preuve doit montrer qu'elle est allée au bout.** Un code de sortie 0 ne suffit pas :
 le code jugé peut le provoquer avant la première assertion. Le juge reconnaît trois formes

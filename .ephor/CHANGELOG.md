@@ -3,6 +3,39 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.1.0 — 26 septembre 2026
+
+**Rouge d'abord.** Un critère déjà vert avant le travail faisait déclarer l'agent VÉRIFIÉ
+sans qu'il ait rien fait. `make task-check ID=<ID>` lance maintenant chaque critère une
+fois sur le code actuel : tous doivent échouer, et la raison de chacun est affichée. Il
+écrit alors `tasks/<ID>/rouge.json`, à commiter avec le contrat. Le juge refuse une tâche
+sans cette trace, ou dont une preuve a changé depuis (ADR 0009). EXEMPLE-001 perd son
+critère C3, vert avant tout travail : ce qui doit seulement rester vrai va dans la suite
+normale.
+
+**Au bureau.**
+- `make doctor` lance bubblewrap pour de vrai sous Linux : sans lui ou sans socat, ou
+  quand il ne peut pas démarrer, Claude Code saute son bac à sable avec un simple
+  avertissement, et le diagnostic le dit maintenant (ADR 0008).
+- L'autorité de certification de l'entreprise : un certificat PEM déposé dans
+  `.ephor/deploy/autorites/` entre dans l'image de CI et du juge ; `make doctor` reconnaît
+  un certificat refusé par uv et donne `UV_SYSTEM_CERTS=true`. Détail : `.ephor/docs/10`,
+  « Certificat de l'entreprise ».
+- Les images se prennent sur un miroir : `make ci-image EPHOR_CI_BASE=… EPHOR_CI_GITLEAKS=…`,
+  et `EPHOR_TEST_IMAGE` pour les tests d'Ephor en conteneur.
+- La CI GitHub passe à gitleaks-action 3.0.0 (Node 24).
+
+### Mettre à jour un projet équipé de la 1.0
+
+`bootstrap_existing_repo.sh --mettre-a-jour`, puis :
+
+- **le `Makefile`** : la recette de `task-check` a changé (elle appelle `judge.py rouge`)
+  et `ci-image` prend deux variables. Le bilan dépose un `Makefile.ephor-new` : reprenez
+  ces deux cibles ;
+- **chaque contrat déjà commité** : `make task-check ID=<ID>` sur la branche principale,
+  puis commitez le `rouge.json` qu'il écrit. Sans lui, le juge refuse la tâche. Un critère
+  qu'il trouve déjà vert est à resserrer ou à retirer.
+
 ## 1.0.0 — 26 septembre 2026
 
 Première version partagée avec l'équipe.

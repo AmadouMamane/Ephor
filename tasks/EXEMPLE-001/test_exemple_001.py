@@ -25,10 +25,3 @@ def test_nothing_stored_on_refusal() -> None:
     with pytest.raises(ValueError):
         service.register("a1", "  ")
     assert repo.count() == 0
-
-
-def test_valid_label_is_still_trimmed() -> None:
-    repo = ItemRepo()
-    item = ItemService(repo, Providers.default()).register("a2", "  Libellé  ")
-    assert item.label == "Libellé"
-    assert repo.get("a2") == item

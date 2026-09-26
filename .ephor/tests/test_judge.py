@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from conftest import EPHOR, FIX, ROOT, WRONG, contract, git, judge
+from conftest import EPHOR, FIX, ROOT, WRONG, contract, git, judge, trace_rouge
 
 Runner = Callable[..., tuple[int, dict[str, Any]]]
 
@@ -164,6 +164,7 @@ def test_acceptance_test_outside_tasks_is_guarded(
     (repo / "tests" / "acceptance_check.py").write_text("raise SystemExit(1)\n")
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "test d'acceptation")
+    trace_rouge(repo)  # l'opérateur refait le contrôle rouge
     git(repo, "switch", "-q", "task/T-001")
     git(repo, "rebase", "-q", "main")
     (repo / "tests" / "acceptance_check.py").write_text("pass\n")
@@ -550,6 +551,7 @@ def test_container_runtime_runs_the_checks_offline(
     (repo / "tasks" / "T-001" / "offline.py").write_text(offline)
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "critère hors ligne")
+    trace_rouge(repo)  # l'opérateur refait le contrôle rouge
     git(repo, "switch", "-q", "task/T-001")
     git(repo, "rebase", "-q", "main")
     (repo / "src" / "metrics.py").write_text(FIX)
@@ -727,6 +729,7 @@ def test_une_preuve_qui_finit_par_sortir_en_zero_reste_valable(
     git(repo, "switch", "-q", "main")
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "preuve")
+    trace_rouge(repo)  # l'opérateur refait le contrôle rouge
     git(repo, "switch", "-q", "task/T-001")
     git(repo, "rebase", "-q", "main")
     (repo / "src" / "metrics.py").write_text(FIX)
@@ -759,6 +762,7 @@ def test_une_preuve_posee_a_la_racine_est_protegee(
     )
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "preuve à la racine")
+    trace_rouge(repo)  # l'opérateur refait le contrôle rouge
     git(repo, "switch", "-q", "task/T-001")
     git(repo, "rebase", "-q", "main")
     (repo / "check_c1.py").write_text("# vidée par l'agent\n")
@@ -969,6 +973,7 @@ def ajoute_sur_la_base(repo: Path, fichiers: dict[str, str]) -> None:
         cible.write_text(contenu)
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "preuves approuvées")
+    trace_rouge(repo)  # l'opérateur refait le contrôle rouge
     git(repo, "switch", "-q", "task/T-001")
     git(repo, "rebase", "-q", "main")
 
@@ -1592,6 +1597,7 @@ def _acceptation_en_dossier(make_repo: Callable[..., Path]) -> Path:
     )
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "acceptation")
+    trace_rouge(repo)  # l'opérateur refait le contrôle rouge
     git(repo, "switch", "-q", "task/T-001")
     git(repo, "rebase", "-q", "main")
     return repo
@@ -1650,6 +1656,7 @@ def test_ce_que_l_installation_change_fait_partie_du_juge(
     (repo / "verrou.lock").write_text("v1\n")
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "verrou")
+    trace_rouge(repo)  # l'opérateur refait le contrôle rouge
     git(repo, "switch", "-q", "task/T-001")
     git(repo, "rebase", "-q", "main")
     (repo / "src" / "metrics.py").write_text(FIX)

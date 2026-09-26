@@ -268,6 +268,15 @@ def test_le_juge_tourne_dans_un_depot_node_equipe(tmp_path: Path) -> None:
         "import sys\nsys.path.insert(0, 'src')\nfrom taux import taux\nassert taux(3) == 6\n",
         encoding="utf-8",
     )
+    rouge = subprocess.run(
+        [*juge, "rouge", "--task-id", "FEAT-001", "--workdir", str(tmp_path / "travail")],
+        cwd=cible,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rouge.returncode == 0, rouge.stdout + rouge.stderr
+    assert "rouge  C1" in rouge.stdout and "AssertionError" in rouge.stdout
     git(cible, "add", "-A")
     git(cible, "commit", "-qm", "Ephor et contrat FEAT-001 approuvé")
     git(cible, "switch", "-qc", "task/FEAT-001")

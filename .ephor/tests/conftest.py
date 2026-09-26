@@ -91,8 +91,29 @@ def build_repo(path: Path, contract_data: dict[str, Any]) -> Path:
     git(path, "config", "user.name", "Ephor test")
     git(path, "add", "-A")
     git(path, "commit", "-qm", "base approuvée : contrat et tests d'acceptation")
+    trace_rouge(path)
     git(path, "switch", "-qc", "task/T-001")
     return path
+
+
+def trace_rouge(repo: Path, task_id: str = "T-001") -> None:
+    """Le contrôle rouge, écrit comme `make task-check` l'écrirait, puis commité sur la branche
+    courante. Les critères ne sont pas relancés : le code de départ (DEFECT) les fait tous
+    échouer, et les tests de `make task-check` le vérifient pour de vrai. Un contrat
+    invalide n'en reçoit pas : le juge le refuse avant de chercher la trace."""
+    try:
+        contrat = judge.load_contract(repo / "tasks" / task_id / "contract.json", task_id)
+    except judge.JudgeError:
+        return
+    trace = judge.trace_rouge(
+        task_id,
+        git(repo, "rev-parse", "HEAD").strip(),
+        judge.preuves_rouges(repo, "HEAD", contrat, task_id),
+        [{"id": c.id, "resultat": "rouge", "raison": "code de départ"} for c in contrat.criteria],
+    )
+    (repo / "tasks" / task_id / judge.ROUGE).write_text(json.dumps(trace, indent=2) + "\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "contrôle rouge")
 
 
 @pytest.fixture

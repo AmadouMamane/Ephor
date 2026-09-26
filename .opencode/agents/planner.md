@@ -35,7 +35,9 @@ vrai : chaque détail technique inventé trop tôt devient une contrainte que pe
    à lui seul. Ajoute `max_duration_seconds` à un critère seulement si la lenteur est un
    vrai risque, et vise large : dix fois la durée observée.
 2. Le fichier de tests d'acceptation `tasks/<ID>/test_<id>.py`, un test par critère,
-   qui **échoue** tant que le comportement n'existe pas.
+   qui **échoue** tant que le comportement n'existe pas : `make task-check` refuse un
+   critère déjà vert. Ce qui doit seulement rester vrai n'est pas un critère : c'est la
+   suite normale, sous `tests/`.
 3. En dix lignes au plus : hors périmètre, découpage en incréments, risques et questions.
 
 Un critère est bon si un tiers qui n'a pas vu le code peut dire « satisfait » ou « non

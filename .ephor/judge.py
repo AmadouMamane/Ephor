@@ -933,6 +933,135 @@ def writable_proofs(repo: Path, base: str, contract: Contract) -> list[str]:
     ]
 
 
+# --------------------------------------------------------------------------- rouge d'abord
+
+# Un critère déjà vert avant le travail fait déclarer l'agent VÉRIFIÉ sans qu'il ait rien
+# fait. `make task-check` lance donc chaque critère une fois sur le code actuel, AVANT
+# l'approbation : tous doivent échouer. Il en garde la trace ici, commitée avec le contrat ;
+# le juge la lit sur la base, où l'agent ne peut pas écrire, et ne relance rien.
+ROUGE = "rouge.json"
+
+
+def preuves_rouges(repo: Path, arbre: str, contract: Contract, task_id: str) -> dict[str, str]:
+    """Ce dont dépend le verdict rouge, à cet arbre git : le dossier de la tâche (contrat
+    compris), les fichiers et les dossiers que les critères citent. Un seul changé après le
+    contrôle, et ce qui a été vu échouer n'est plus ce qui sera jugé."""
+    racines = (
+        {f"tasks/{task_id}"}
+        | {dossier for _, dossier in cited_dirs(repo, arbre, contract)}
+        | set(cited_paths(repo, arbre, contract))
+    )
+    if "." in racines:
+        racines = {"."}
+    sortie = git(repo, "ls-tree", "-r", "-z", "--full-tree", arbre, "--", *sorted(racines))
+    empreintes: dict[str, str] = {}
+    for ligne in sortie.split(b"\0"):
+        if not ligne:
+            continue
+        meta, chemin = ligne.split(b"\t", 1)
+        _, sorte, objet = meta.split()
+        nom = chemin.decode("utf-8", "replace")
+        if sorte != b"blob" or nom == f"tasks/{task_id}/{ROUGE}":
+            continue
+        empreintes[nom] = sha256(git(repo, "cat-file", "blob", objet.decode()))
+    return dict(sorted(empreintes.items()))
+
+
+def trace_rouge(
+    task_id: str, commit: str, preuves: dict[str, str], criteres: list[dict[str, str]]
+) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "tache": task_id,
+        "date": now_iso(),
+        "commit": commit,
+        "moteur_sha256": engine_hash(),
+        "preuves": preuves,
+        "criteres": criteres,
+    }
+
+
+def lire_trace_rouge(repo: Path, base: str, contract: Contract, task_id: str) -> dict[str, Any]:
+    """La trace du contrôle rouge, lue sur la BASE, et qui doit encore dire la vérité."""
+    chemin = f"tasks/{task_id}/{ROUGE}"
+    refaire = (
+        f"lancez `make task-check ID={task_id}` sur la branche principale, puis commitez "
+        f"{chemin} avec le contrat"
+    )
+    try:
+        brut = git(repo, "show", f"{base}:{chemin}")
+    except JudgeError:
+        raise JudgeError(
+            f"contrôle rouge absent de la base ({chemin}) : rien ne montre que les critères "
+            f"échouaient avant le travail — {refaire}"
+        ) from None
+    try:
+        trace = lire_json(brut.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, JudgeError):
+        trace = None
+    if (
+        not isinstance(trace, dict)
+        or not isinstance(trace.get("preuves"), dict)
+        or not isinstance(trace.get("criteres"), list)
+    ):
+        raise JudgeError(f"contrôle rouge illisible ({chemin}) : {refaire}")
+    rouges = {
+        critere.get("id")
+        for critere in trace["criteres"]
+        if isinstance(critere, dict) and critere.get("resultat") == "rouge"
+    }
+    manquants = [c.id for c in contract.criteria if c.id not in rouges]
+    if trace.get("tache") != task_id or manquants:
+        quoi = ", ".join(manquants) if manquants else "écrit pour une autre tâche"
+        raise JudgeError(f"contrôle rouge qui ne couvre pas ce contrat ({quoi}) : {refaire}")
+    attendu: dict[str, Any] = trace["preuves"]
+    present = preuves_rouges(repo, base, contract, task_id)
+    ecarts = [
+        f"{nom} a changé depuis"
+        for nom in sorted(attendu.keys() & present.keys())
+        if attendu[nom] != present[nom]
+    ]
+    ecarts += [f"{nom} ajouté depuis" for nom in sorted(present.keys() - attendu.keys())]
+    ecarts += [f"{nom} retiré depuis" for nom in sorted(attendu.keys() - present.keys())]
+    if ecarts:
+        raise JudgeError(
+            [f"contrôle rouge périmé : {ecart}" for ecart in ecarts]
+            + [f"les critères n'ont pas été vus échouer sous leur forme actuelle : {refaire}"]
+        )
+    return trace
+
+
+def changes_depuis(repo: Path, commit: Any, base: str) -> int | None:
+    """Fichiers changés hors de tasks/ entre le contrôle rouge et la base. Le juge ne rejoue
+    pas les critères sur la base : il le dit au relecteur quand le code a bougé entre-temps."""
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{40,64}", commit):
+        return None
+    try:
+        git(repo, "merge-base", "--is-ancestor", commit, base)
+    except JudgeError:
+        return None
+    noms = git(repo, "diff", "--name-only", "-z", "--no-renames", commit, base)
+    return len([nom for nom in noms.split(b"\0") if nom and not nom.startswith(b"tasks/")])
+
+
+def extrait(log: Path) -> str:
+    """La ligne qui dit pourquoi une preuve a échoué, pour que l'opérateur voie que c'est la
+    bonne raison : la dernière erreur que pytest détaille (son résumé est coupé à la largeur
+    du terminal), sinon ce résumé, sinon la dernière ligne."""
+    try:
+        lignes = log.read_text(encoding="utf-8", errors="replace").splitlines()[1:]
+    except OSError:
+        return "journal illisible"
+    utiles = [ligne.strip() for ligne in lignes if ligne.strip()]
+    choix = (
+        [ligne[1:].strip() for ligne in utiles if ligne.startswith("E ")]
+        or [ligne for ligne in utiles if ligne.startswith("FAILED ")]
+        or utiles
+        or ["aucune sortie"]
+    )
+    return choix[-1][:200]
+
+
 def empreintes_preuves(copy: Path, guarded: set[str]) -> dict[str, str]:
     """Empreinte de chaque preuve, ici et maintenant.
 
@@ -1801,6 +1930,9 @@ def cmd_check(args: argparse.Namespace) -> int:
             )
         if approved != contract_bytes:
             raise JudgeError("contrat différent de la version approuvée sur la base")
+        # Lu sur la base, comme le contrat : l'agent ne peut ni l'écrire ni le rafraîchir.
+        rouge = lire_trace_rouge(repo, base, contract, task_id)
+        report["rouge"] = {"date": rouge.get("date"), "commit": rouge.get("commit")}
         writable = writable_proofs(repo, base, contract)
         # Un dossier cité l'est tout entier : `pytest tests/` avec `tests/` dans le périmètre,
         # et l'agent réécrivait le test d'acceptation qui s'y trouvait — VÉRIFIÉ sur un code
@@ -1816,6 +1948,18 @@ def cmd_check(args: argparse.Namespace) -> int:
             )
         lines.append("  ok    contrat approuvé sur la base")
         junit.append({"name": "contrat approuvé", "ok": True})
+        jour = str(rouge.get("date") or "?")[:10]
+        lines.append(
+            f"  ok    contrôle rouge du {jour} : les {len(contract.criteria)} critère(s)"
+            " échouaient avant le travail"
+        )
+        junit.append({"name": "contrôle rouge", "ok": True})
+        bouge = changes_depuis(repo, rouge.get("commit"), base)
+        if bouge:
+            lines.append(
+                f"  info  {bouge} fichier(s) hors tasks/ ont changé sur la base depuis le contrôle"
+                " rouge : les critères n'y ont pas été rejoués (à regarder en revue)"
+            )
 
         patch, paths = snapshot(repo, base)
         report.update(changed_paths=paths, patch_sha256=sha256(patch))
@@ -2042,6 +2186,125 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rouge(args: argparse.Namespace) -> int:
+    """`make task-check` : la forme du contrat, puis chaque critère lancé une fois sur le code
+    actuel, comme le juge le lancera. Tous doivent échouer ; alors seulement la trace est
+    écrite, à commiter avec le contrat.
+
+    Le code actuel, c'est HEAD plus l'état du dossier : le contrat et ses tests ne sont pas
+    encore commités quand on le lance. Une faute de frappe dans un test le fait échouer aussi :
+    c'est pourquoi chaque raison est affichée, pour que l'opérateur la lise.
+    """
+    if cmd_validate(args) != 0:
+        return 2
+    repo = repo_root(args.repo)
+    task_path, task_id = resolve_task(repo, args.task_id, args.task)
+    contract = load_contract(task_path, task_id)
+    trace_path = task_path.parent / ROUGE
+    run_id = uuid.uuid4().hex[:12]
+    report_dir = repo / ".verify" / "rouge" / task_id
+    workdir = (
+        Path(args.workdir or os.environ.get("EPHOR_WORKDIR") or Path.home() / ".cache/ephor/judge")
+        .expanduser()
+        .joinpath(f"{repo.name}-{sha256(str(repo).encode())[:8]}", f"rouge-{run_id}")
+    )
+    logs, preuves, copy = workdir / "logs", workdir / "preuves", workdir / "copy"
+    head = git(repo, "rev-parse", "HEAD").decode().strip()
+    criteres: list[dict[str, str]] = []
+    verts: list[str] = []
+    refus = ""
+    try:
+        patch, _ = snapshot(repo, head)
+        runtime = choose_runtime(args.runtime, args.image)
+        logs.mkdir(parents=True)
+        preuves.mkdir()
+        if runtime.kind != "local":
+            ensure_image(runtime, logs / "pull.log")
+        create_copy(repo, copy, head)
+        if patch:
+            courant = workdir / "courant.patch"
+            courant.write_bytes(patch)
+            git(copy, "apply", "--index", "--binary", "--whitespace=nowarn", str(courant))
+        empreintes = preuves_rouges(
+            copy, git(copy, "write-tree").decode().strip(), contract, task_id
+        )
+        banc = Banc(
+            repo=repo,
+            run_id=run_id,
+            runtime=runtime,
+            copy=copy,
+            logs=logs,
+            preuves=preuves,
+            report_dir=report_dir,
+            has_setup=contract.setup is not None,
+            deadline=time.monotonic() + contract.timeout_seconds,
+            steps=[],
+            lines=[],
+            junit=[],
+        )
+        print("contrôle rouge : chaque critère doit ÉCHOUER sur le code actuel")
+        installe = (
+            contract.setup is None
+            or banc.execute("installation", "setup", contract.setup, "setup")["ok"]
+        )
+        if not installe:
+            refus = (
+                "l'installation du contrat échoue : impossible de dire si les critères "
+                f"échouent pour la bonne raison ({extrait(logs / 'setup.log')})"
+            )
+        for critere in [] if refus else contract.criteria:
+            issue = banc.execute(
+                critere.id,
+                critere.id,
+                critere.check,
+                "verify",
+                critere.max_duration_seconds,
+                critere,
+            )
+            titre = f"{critere.id} {critere.description[:60]}"
+            if banc.any_timeout:
+                refus = f"budget de temps du contrat épuisé pendant {critere.id} : relancez-le"
+                break
+            if issue["ok"]:
+                verts.append(critere.id)
+                print(f"  VERT   {titre} : passe déjà")
+                continue
+            raison = issue["reason"] or extrait(logs / f"{critere.id}.log")
+            criteres.append({"id": critere.id, "resultat": "rouge", "raison": raison})
+            print(f"  rouge  {titre}\n         -> {raison}")
+    finally:
+        if logs.is_dir():
+            shutil.rmtree(report_dir, ignore_errors=True)
+            shutil.copytree(logs, report_dir / "logs")
+        remove_copy(copy)
+        shutil.rmtree(workdir, ignore_errors=True)
+    if refus or verts:
+        # Une trace qui ne dit plus la vérité ne doit pas rester là, prête à être commitée.
+        retiree = trace_path.is_file()
+        trace_path.unlink(missing_ok=True)
+        if verts:
+            print(
+                f"REFUS : {', '.join(verts)} passe(nt) déjà sur le code actuel : l'agent serait"
+                " VÉRIFIÉ sans rien faire. Resserrez la preuve, ou retirez le critère : ce qui"
+                " doit seulement rester vrai va dans la suite normale, que le juge lance aussi."
+            )
+        if refus:
+            print(f"REFUS : {refus}")
+        if retiree:
+            print(f"{relative(trace_path, repo)} retiré : il ne dit plus la vérité")
+        print(f"journaux : {relative(report_dir / 'logs', repo)}")
+        return 1
+    trace = trace_rouge(task_id, head, empreintes, criteres)
+    trace_path.write_text(json.dumps(trace, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(
+        f"écrit : {relative(trace_path, repo)}. Lisez chaque raison : un critère doit échouer"
+        " parce que le comportement manque, pas pour une faute de frappe.\n"
+        f"Puis commitez tasks/{task_id}/ entier (contrat, tests, {ROUGE}) sur la branche"
+        " principale : ce commit est l'approbation."
+    )
+    return 0
+
+
 TEST_NAME = re.compile(r"^test_[A-Za-z0-9_]*$")
 
 
@@ -2163,12 +2426,14 @@ def cmd_new(args: argparse.Namespace) -> int:
     if args.from_file:
         print(
             "le contrat vient de votre plan et il est valide. Reste à écrire les tests\n"
-            "d'acceptation, à les faire échouer, puis à commiter le dossier sur la branche\n"
-            f"principale : ce commit est l'approbation. Ensuite : git switch -c task/{task_id}"
+            f"d'acceptation, à les voir échouer (make task-check ID={task_id}), puis à commiter\n"
+            "le dossier sur la branche principale : ce commit est l'approbation.\n"
+            f"Ensuite : git switch -c task/{task_id}"
         )
     else:
         print(
-            "ensuite : complétez-les, faites-les relire, commitez-les sur la branche principale,\n"
+            "ensuite : complétez-les, faites-les relire, voyez-les échouer\n"
+            f"(make task-check ID={task_id}), commitez le dossier sur la branche principale,\n"
             f"puis créez la branche de travail : git switch -c task/{task_id}"
         )
     return 0
@@ -2234,6 +2499,18 @@ def main(argv: list[str] | None = None) -> int:
     validate = sub.add_parser("validate", help="vérifier la forme d'un contrat")
     task_options(validate)
     validate.set_defaults(func=cmd_validate)
+
+    rouge = sub.add_parser(
+        "rouge",
+        help="make task-check : la forme du contrat, puis chaque critère doit échouer (opérateur)",
+    )
+    task_options(rouge)
+    rouge.add_argument("--runtime", choices=["local", "podman", "docker", "auto"], default="local")
+    rouge.add_argument(
+        "--image", help=f"image de conteneur (défaut : EPHOR_IMAGE ou {DEFAULT_IMAGE})"
+    )
+    rouge.add_argument("--workdir", help="dossier de travail (défaut : ~/.cache/ephor/judge)")
+    rouge.set_defaults(func=cmd_rouge)
 
     new = sub.add_parser("new", help="créer le squelette d'un contrat (opérateur)")
     new.add_argument("--task-id", required=True)

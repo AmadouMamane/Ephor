@@ -69,7 +69,7 @@ reste du projet ne bouge pas, et le bilan dit ce qui a changé (ADR 0007).
 | Moment | Geste |
 |---|---|
 | Début de session | `cat PROGRESS.md`, puis `/feature <ID>` ou reprise du « Prochain pas » |
-| Nouvelle fonctionnalité | contrat préparé par `planner`, créé par l'opérateur (`make task-new ID=<ID> FROM=plan.json`), commité sur `main` |
+| Nouvelle fonctionnalité | contrat préparé par `planner`, créé par l'opérateur (`make task-new ID=<ID> FROM=plan.json`), vu échouer (`make task-check ID=<ID>`), commité sur `main` |
 | Pendant | branche `task/<ID>`, `make verify` après chaque incrément |
 | Avant de conclure | `make judge TASK=<ID>` ; en conteneur, `RUNTIME=podman` |
 | Revue | `make review TASK=<ID>` : enchaîne ce que le risque du contrat exige, et rien de plus |
@@ -85,7 +85,7 @@ reste du projet ne bouge pas, et le bilan dit ce qui a changé (ADR 0007).
 
 | Pièce | Ce qu'elle empêche | Limite |
 |---|---|---|
-| Juge + contrat approuvé sur `main` | Qu'un agent se déclare vainqueur, retouche ses tests d'acceptation, sorte de son périmètre, ou fasse sortir un test « en succès » avant qu'il ait tourné | La preuve et le code jugé partagent un processus : un code qui ment DÉLIBÉRÉMENT à la preuve qui l'importe passe encore, mais en clair dans le patch. Voir `.ephor/README.md`, « Ce que le juge ne peut pas voir » |
+| Juge + contrat approuvé sur `main` | Qu'un agent soit déclaré vainqueur d'un critère qui passait déjà avant lui, qu'il se déclare vainqueur, retouche ses tests d'acceptation, sorte de son périmètre, ou fasse sortir un test « en succès » avant qu'il ait tourné | La preuve et le code jugé partagent un processus : un code qui ment DÉLIBÉRÉMENT à la preuve qui l'importe passe encore, mais en clair dans le patch. Voir `.ephor/README.md`, « Ce que le juge ne peut pas voir » |
 | Juge de la CI pris sur la branche cible | Qu'une branche réécrive le juge pour se juger elle-même | La configuration de CI doit être protégée côté GitLab : `.ephor/docs/12-gitlab.md`, et `make gitlab-check` dit si c'est fait |
 | Manifeste de livraison lié au code jugé | Qu'on livre un code différent de celui qui a été jugé | Une empreinte n'est pas une signature : la chaîne de livraison doit protéger les rapports |
 | Juge en conteneur durci, sans réseau | Que les tests appellent l'extérieur, lisent le poste ou gagnent des privilèges | Mesuré avec Podman et Docker sur Mac, et avec Podman sous Linux (Fedora, SELinux actif) : mêmes verdicts qu'en local ; Docker sous Linux mesuré à chaque passage de la CI GitHub |

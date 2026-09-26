@@ -39,7 +39,11 @@ bibliothèque standard, compatible avec le Python 3.9 livré par Apple.
 
 1. **Contrat approuvé.** Il lit `tasks/<ID>/contract.json` et vérifie que ce fichier existe
    à l'identique sur la base (la branche principale). Un contrat écrit ou retouché sur la
-   branche de travail est refusé : l'approbation, c'est le commit sur `main`.
+   branche de travail est refusé : l'approbation, c'est le commit sur `main`. Il lit aussi
+   sur la base la trace du **contrôle rouge** (`tasks/<ID>/rouge.json`, écrite par
+   `make task-check`) : chaque critère y a été vu échouer avant le travail, et aucune preuve
+   n'a changé depuis. Absente ou périmée, la tâche est refusée ; il ne relance rien pour
+   autant. Si le code de la base a bougé depuis ce contrôle, le verdict le dit.
 2. **Périmètre.** Il calcule le patch entre la base et l'état courant du dossier, commits,
    modifications et nouveaux fichiers compris, sans toucher à votre index Git. Tout fichier
    hors de `allowed_paths` est refusé. Les zones de contrôle le sont toujours : celles de
@@ -98,7 +102,7 @@ bibliothèque standard, compatible avec le Python 3.9 livré par Apple.
 | `budget_exhausted` | Le budget de temps du contrat est épuisé. | 1 |
 | `stale` | Le code a changé pendant la vérification. Relancer. | 1 |
 | `no_change` | Rien à juger par rapport à la base. | 1 |
-| `rejected` | Contrat invalide ou non approuvé, patch hors contrat, preuve que l'agent pourrait écrire lui-même (fichier ou dossier), ou, sur une tâche à risque élevé, silencieux ajouté ou réglage des contrôles modifié. Rien n'a été exécuté. | 2 |
+| `rejected` | Contrat invalide ou non approuvé, contrôle rouge absent ou périmé, patch hors contrat, preuve que l'agent pourrait écrire lui-même (fichier ou dossier), ou, sur une tâche à risque élevé, silencieux ajouté ou réglage des contrôles modifié. Rien n'a été exécuté. | 2 |
 
 ### Commandes
 
@@ -107,7 +111,7 @@ make judge TASK=EXEMPLE-001                   # local
 make judge TASK=EXEMPLE-001 RUNTIME=podman    # conteneur, vérification sans réseau
 make task-new ID=FEAT-002                     # squelette de contrat (opérateur)
 make task-new ID=FEAT-002 FROM=plan.json     # contrat déjà rédigé, vérifié avant écriture
-make task-check ID=FEAT-002                   # forme du contrat
+make task-check ID=FEAT-002                   # forme du contrat, puis chaque critère doit ÉCHOUER (écrit rouge.json)
 make score [TASK=FEAT-002]                    # ce qu'Ephor produit, d'après les jugements
 make refs                                     # dépôts lus en référence, et leur commit
 make map REPO=<nom>                           # la forme d'un dépôt de référence
