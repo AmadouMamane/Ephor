@@ -959,6 +959,12 @@ def test_l_image_de_ci_reconnait_l_autorite_de_l_entreprise(tmp_path: Path) -> N
     refus = construit("ephor-ci:autorite-der")
     assert refus.returncode != 0
     assert "autorité écartée" in refus.stdout + refus.stderr
+    # Un « ca.pem » tel que l'IT le livre : update-ca-certificates ne lit que les .crt.
+    (contexte / "autorites" / "entreprise.crt").unlink()
+    shutil.copy(ca / "ca.crt", contexte / "autorites" / "ca.pem")
+    ignore = construit("ephor-ci:autorite-pem")
+    assert ignore.returncode != 0
+    assert "extension .crt attendue" in ignore.stdout + ignore.stderr
 
 
 # ------------------------------------------------ des preuves qui vont au bout (ADR 0005)

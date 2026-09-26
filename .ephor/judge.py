@@ -940,6 +940,7 @@ def writable_proofs(repo: Path, base: str, contract: Contract) -> list[str]:
 # l'approbation : tous doivent échouer. Il en garde la trace ici, commitée avec le contrat ;
 # le juge la lit sur la base, où l'agent ne peut pas écrire, et ne relance rien.
 ROUGE = "rouge.json"
+COMMANDE_ROUGE = "python3 .ephor/judge.py rouge --task-id"
 
 
 def preuves_rouges(repo: Path, arbre: str, contract: Contract, task_id: str) -> dict[str, str]:
@@ -954,17 +955,47 @@ def preuves_rouges(repo: Path, arbre: str, contract: Contract, task_id: str) -> 
     if "." in racines:
         racines = {"."}
     sortie = git(repo, "ls-tree", "-r", "-z", "--full-tree", arbre, "--", *sorted(racines))
-    empreintes: dict[str, str] = {}
+    objets: dict[str, str] = {}
     for ligne in sortie.split(b"\0"):
         if not ligne:
             continue
         meta, chemin = ligne.split(b"\t", 1)
         _, sorte, objet = meta.split()
         nom = chemin.decode("utf-8", "replace")
-        if sorte != b"blob" or nom == f"tasks/{task_id}/{ROUGE}":
-            continue
-        empreintes[nom] = sha256(git(repo, "cat-file", "blob", objet.decode()))
-    return dict(sorted(empreintes.items()))
+        if sorte == b"blob" and nom != f"tasks/{task_id}/{ROUGE}":
+            objets[nom] = objet.decode()
+    # Un seul processus pour tous les contenus : un par fichier coûtait 7 s pour un dossier
+    # de 400 fichiers (mesuré le 26/09/2026), payées à chaque jugement.
+    contenus = lire_objets(repo, sorted(set(objets.values())))
+    return {nom: sha256(contenus[objet]) for nom, objet in sorted(objets.items())}
+
+
+def lire_objets(repo: Path, objets: list[str]) -> dict[str, bytes]:
+    """Le contenu de plusieurs objets git, en une seule lecture (`git cat-file --batch`)."""
+    if not objets:
+        return {}
+    try:
+        sortie = subprocess.run(
+            ["git", *GIT_HARDENING, "-C", str(repo), "cat-file", "--batch"],
+            input=("\n".join(objets) + "\n").encode(),
+            capture_output=True,
+            check=True,
+            timeout=300,
+            env=git_env(),
+        ).stdout
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired) as exc:
+        raise JudgeError(f"git cat-file impossible : {exc}") from exc
+    contenus: dict[str, bytes] = {}
+    position = 0
+    for objet in objets:
+        fin = sortie.index(b"\n", position)
+        entete = sortie[position:fin].split()
+        if len(entete) != 3 or entete[0].decode() != objet:
+            raise JudgeError(f"git cat-file : réponse inattendue pour {objet}")
+        taille = int(entete[2])
+        contenus[objet] = sortie[fin + 1 : fin + 1 + taille]
+        position = fin + 1 + taille + 1
+    return contenus
 
 
 def trace_rouge(
@@ -986,7 +1017,7 @@ def lire_trace_rouge(repo: Path, base: str, contract: Contract, task_id: str) ->
     chemin = f"tasks/{task_id}/{ROUGE}"
     refaire = (
         f"lancez `make task-check ID={task_id}` sur la branche principale, puis commitez "
-        f"{chemin} avec le contrat"
+        f"{chemin} avec le contrat (Makefile d'avant la 1.1 : `{COMMANDE_ROUGE} {task_id}`)"
     )
     try:
         brut = git(repo, "show", f"{base}:{chemin}")
@@ -1044,22 +1075,69 @@ def changes_depuis(repo: Path, commit: Any, base: str) -> int | None:
     return len([nom for nom in noms.split(b"\0") if nom and not nom.startswith(b"tasks/")])
 
 
-def extrait(log: Path) -> str:
+def extrait(log: Path, debut: int = 0, code: int | None = None) -> str:
     """La ligne qui dit pourquoi une preuve a échoué, pour que l'opérateur voie que c'est la
     bonne raison : la dernière erreur que pytest détaille (son résumé est coupé à la largeur
-    du terminal), sinon ce résumé, sinon la dernière ligne."""
+    du terminal), sinon ce résumé, sinon la dernière ligne.
+
+    Lue après l'en-tête que le juge écrit : pour une preuve en script, il recopie l'amorce,
+    sur plusieurs lignes, et un script muet affichait un morceau de la commande en guise de
+    raison (reproduit le 26/09/2026)."""
     try:
-        lignes = log.read_text(encoding="utf-8", errors="replace").splitlines()[1:]
+        texte = log.read_bytes()[debut:].decode("utf-8", "replace")
     except OSError:
         return "journal illisible"
-    utiles = [ligne.strip() for ligne in lignes if ligne.strip()]
+    utiles = [ligne.strip() for ligne in texte.splitlines() if ligne.strip()]
+    muet = "aucune sortie" + (f", code de retour {code}" if code is not None else "")
     choix = (
         [ligne[1:].strip() for ligne in utiles if ligne.startswith("E ")]
         or [ligne for ligne in utiles if ligne.startswith("FAILED ")]
         or utiles
-        or ["aucune sortie"]
+        or [muet]
     )
     return choix[-1][:200]
+
+
+def rouge_de_travers(rapport: Path, attendus: Sequence[tuple[str, tuple[str, ...]]]) -> str | None:
+    """Une preuve pytest rouge pour une mauvaise raison ? None si chaque test désigné a
+    tourné et échoué.
+
+    Mesuré le 26/09/2026 avec pytest : un nom de test mal écrit ou un chemin faux laisse un
+    rapport SANS aucun test ; un test qui importe une fonction pas encore écrite laisse une
+    erreur au niveau du fichier, et c'est un vrai rouge. Un test désigné dont tous les cas
+    passent déjà ne prouve rien du travail à venir."""
+    if rapport.is_symlink() or not rapport.is_file():
+        return "pytest n'a rendu aucun rapport : la commande échoue avant les tests"
+    brut = rapport.read_bytes()
+    if b"<!DOCTYPE" in brut.upper() or b"<!ENTITY" in brut.upper():
+        return "rapport de tests illisible"
+    try:
+        cas = list(ET.fromstring(brut).iter("testcase"))
+    except ET.ParseError:
+        return "rapport de tests illisible"
+    for fichier, parties in attendus:
+        nom = "::".join([fichier, *parties])
+        vus = [
+            c for c in cas if _couvre(c.get("classname", ""), c.get("name", ""), fichier, parties)
+        ]
+        du_fichier = [
+            c
+            for c in cas
+            if c.find("error") is not None
+            and _couvre(c.get("classname", ""), c.get("name", ""), fichier, ())
+        ]
+        if not vus and not du_fichier:
+            return f"test désigné jamais lancé : {nom} (nom ou chemin mal écrit ?)"
+        if (
+            vus
+            and not du_fichier
+            and all(c.find("failure") is None and c.find("error") is None for c in vus)
+        ):
+            return f"test désigné qui ne fait pas échouer le critère : {nom}"
+    if not cas:
+        # Un dossier désigné sans aucun test : pytest ne lance rien et sort en erreur.
+        return "pytest n'a lancé aucun test (chemin mal écrit, ou dossier sans test ?)"
+    return None
 
 
 def empreintes_preuves(copy: Path, guarded: set[str]) -> dict[str, str]:
@@ -1837,6 +1915,8 @@ class Banc:
             "seconds": result["seconds"],
             "reason": reason,
             "forme": forme,
+            "debut": result["output_offset"],
+            "code": result["returncode"],
         }
 
 
@@ -2183,17 +2263,43 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 2
     count = len(contract.criteria)
     print(f"contrat {contract.id} valide : {count} critère(s), risque {contract.risk}")
+    if args.command == "validate":
+        # Un projet mis à jour sans reprendre le nouveau Makefile lance encore cette forme
+        # seule sous le nom de `make task-check` : le juge lui réclamerait une trace que
+        # cette recette n'écrit jamais.
+        print(
+            f"forme seulement. Avant de commiter, le contrôle rouge : make task-check ID={task_id}"
+            f" (Makefile d'avant la 1.1 : {COMMANDE_ROUGE} {task_id})"
+        )
     return 0
+
+
+def recevabilite(copy: Path, arbre: str, contract: Contract) -> list[str]:
+    """Ce que le contrat promet d'échouer pour une mauvaise raison, dit avant de rien lancer :
+    un dossier de preuve ouvert à l'agent (le juge le refuserait), une preuve introuvable (le
+    critère échouerait sur « fichier absent », pas sur le comportement qui manque)."""
+    problemes = open_dirs(copy, arbre, contract)
+    for critere in contract.criteria:
+        forme = forme_de_preuve(critere)
+        index = position_script(critere.check)
+        fichiers = [critere.check[index + 1]] if forme == "jeton" and index is not None else []
+        if forme == "rapport":
+            fichiers += [fichier for fichier, _ in tests_attendus(critere.check)]
+        for fichier in dict.fromkeys(fichiers):
+            if safe_path(fichier) and not is_file_at(copy, arbre, fichier):
+                problemes.append(f"{critere.id} : preuve introuvable, {fichier}")
+    return problemes
 
 
 def cmd_rouge(args: argparse.Namespace) -> int:
     """`make task-check` : la forme du contrat, puis chaque critère lancé une fois sur le code
-    actuel, comme le juge le lancera. Tous doivent échouer ; alors seulement la trace est
-    écrite, à commiter avec le contrat.
+    actuel, comme le juge le lancera. Tous doivent échouer, et pour la bonne raison ; alors
+    seulement la trace est écrite, à commiter avec le contrat.
 
     Le code actuel, c'est HEAD plus l'état du dossier : le contrat et ses tests ne sont pas
-    encore commités quand on le lance. Une faute de frappe dans un test le fait échouer aussi :
-    c'est pourquoi chaque raison est affichée, pour que l'opérateur la lise.
+    encore commités quand on le lance. Chaque raison est affichée, pour que l'opérateur la
+    lise : ce que le juge sait reconnaître d'un échec de travers (preuve introuvable, test
+    pytest jamais lancé), il le refuse ; le reste, c'est cette lecture.
     """
     if cmd_validate(args) != 0:
         return 2
@@ -2212,66 +2318,41 @@ def cmd_rouge(args: argparse.Namespace) -> int:
     head = git(repo, "rev-parse", "HEAD").decode().strip()
     criteres: list[dict[str, str]] = []
     verts: list[str] = []
-    refus = ""
+    refus: list[str] = []
     try:
         patch, _ = snapshot(repo, head)
         runtime = choose_runtime(args.runtime, args.image)
         logs.mkdir(parents=True)
         preuves.mkdir()
-        if runtime.kind != "local":
-            ensure_image(runtime, logs / "pull.log")
         create_copy(repo, copy, head)
         if patch:
             courant = workdir / "courant.patch"
             courant.write_bytes(patch)
             git(copy, "apply", "--index", "--binary", "--whitespace=nowarn", str(courant))
-        empreintes = preuves_rouges(
-            copy, git(copy, "write-tree").decode().strip(), contract, task_id
-        )
-        banc = Banc(
-            repo=repo,
-            run_id=run_id,
-            runtime=runtime,
-            copy=copy,
-            logs=logs,
-            preuves=preuves,
-            report_dir=report_dir,
-            has_setup=contract.setup is not None,
-            deadline=time.monotonic() + contract.timeout_seconds,
-            steps=[],
-            lines=[],
-            junit=[],
-        )
-        print("contrôle rouge : chaque critère doit ÉCHOUER sur le code actuel")
-        installe = (
-            contract.setup is None
-            or banc.execute("installation", "setup", contract.setup, "setup")["ok"]
-        )
-        if not installe:
-            refus = (
-                "l'installation du contrat échoue : impossible de dire si les critères "
-                f"échouent pour la bonne raison ({extrait(logs / 'setup.log')})"
+        arbre = git(copy, "write-tree").decode().strip()
+        refus = recevabilite(copy, arbre, contract)
+        empreintes = preuves_rouges(copy, arbre, contract, task_id)
+        if not refus:
+            if runtime.kind != "local":
+                ensure_image(runtime, logs / "pull.log")
+            print("contrôle rouge : chaque critère doit ÉCHOUER sur le code actuel")
+            criteres, verts, refus = lancer_en_rouge(
+                Banc(
+                    repo=repo,
+                    run_id=run_id,
+                    runtime=runtime,
+                    copy=copy,
+                    logs=logs,
+                    preuves=preuves,
+                    report_dir=report_dir,
+                    has_setup=contract.setup is not None,
+                    deadline=time.monotonic() + contract.timeout_seconds,
+                    steps=[],
+                    lines=[],
+                    junit=[],
+                ),
+                contract,
             )
-        for critere in [] if refus else contract.criteria:
-            issue = banc.execute(
-                critere.id,
-                critere.id,
-                critere.check,
-                "verify",
-                critere.max_duration_seconds,
-                critere,
-            )
-            titre = f"{critere.id} {critere.description[:60]}"
-            if banc.any_timeout:
-                refus = f"budget de temps du contrat épuisé pendant {critere.id} : relancez-le"
-                break
-            if issue["ok"]:
-                verts.append(critere.id)
-                print(f"  VERT   {titre} : passe déjà")
-                continue
-            raison = issue["reason"] or extrait(logs / f"{critere.id}.log")
-            criteres.append({"id": critere.id, "resultat": "rouge", "raison": raison})
-            print(f"  rouge  {titre}\n         -> {raison}")
     finally:
         if logs.is_dir():
             shutil.rmtree(report_dir, ignore_errors=True)
@@ -2288,12 +2369,30 @@ def cmd_rouge(args: argparse.Namespace) -> int:
                 " VÉRIFIÉ sans rien faire. Resserrez la preuve, ou retirez le critère : ce qui"
                 " doit seulement rester vrai va dans la suite normale, que le juge lance aussi."
             )
-        if refus:
-            print(f"REFUS : {refus}")
+        for message in refus:
+            print(f"REFUS : {message}")
         if retiree:
             print(f"{relative(trace_path, repo)} retiré : il ne dit plus la vérité")
         print(f"journaux : {relative(report_dir / 'logs', repo)}")
         return 1
+    try:
+        ancienne = lire_json(trace_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, JudgeError):
+        ancienne = None
+    if (
+        isinstance(ancienne, dict)
+        and ancienne.get("preuves") == empreintes
+        and [c.get("id") for c in ancienne.get("criteres") or [] if isinstance(c, dict)]
+        == [c["id"] for c in criteres]
+        and changes_depuis(repo, ancienne.get("commit"), head) == 0
+    ):
+        # Mêmes preuves, et rien n'a bougé hors de tasks/ depuis le commit de la trace : la
+        # réécrire ne changerait que sa date et son commit, à recommiter pour rien, à chaque
+        # nouveau passage (relancer juste après avoir commité en créait un à chaque fois).
+        print(
+            f"{relative(trace_path, repo)} déjà à jour : rien n'a changé depuis le dernier contrôle"
+        )
+        return 0
     trace = trace_rouge(task_id, head, empreintes, criteres)
     trace_path.write_text(json.dumps(trace, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(
@@ -2303,6 +2402,54 @@ def cmd_rouge(args: argparse.Namespace) -> int:
         " principale : ce commit est l'approbation."
     )
     return 0
+
+
+def lancer_en_rouge(
+    banc: Banc, contract: Contract
+) -> tuple[list[dict[str, str]], list[str], list[str]]:
+    """L'installation, puis chaque critère une fois : ceux qui échouent pour la bonne raison,
+    ceux qui passent déjà, et ce qui empêche de conclure."""
+    criteres: list[dict[str, str]] = []
+    verts: list[str] = []
+    if contract.setup is not None:
+        installation = banc.execute("installation", "setup", contract.setup, "setup")
+        if not installation["ok"]:
+            raison = extrait(banc.logs / "setup.log", installation["debut"], installation["code"])
+            return (
+                [],
+                [],
+                [
+                    "l'installation du contrat échoue : impossible de dire si les critères "
+                    f"échouent pour la bonne raison ({raison})"
+                ],
+            )
+    refus: list[str] = []
+    for critere in contract.criteria:
+        issue = banc.execute(
+            critere.id, critere.id, critere.check, "verify", critere.max_duration_seconds, critere
+        )
+        titre = f"{critere.id} {critere.description[:60]}"
+        if banc.any_timeout:
+            return criteres, verts, [f"budget de temps du contrat épuisé pendant {critere.id}"]
+        if issue["ok"]:
+            verts.append(critere.id)
+            print(f"  VERT   {titre} : passe déjà")
+            continue
+        travers = None
+        if issue["forme"] == "rapport":
+            travers = rouge_de_travers(
+                banc.logs / f"{critere.id}.junit.xml", tests_attendus(critere.check)
+            )
+        if travers is not None:
+            refus.append(f"{critere.id} échoue pour une mauvaise raison : {travers}")
+            print(f"  FAUX   {titre} : rouge pour une mauvaise raison\n         -> {travers}")
+            continue
+        raison = issue["reason"] or extrait(
+            banc.logs / f"{critere.id}.log", issue["debut"], issue["code"]
+        )
+        criteres.append({"id": critere.id, "resultat": "rouge", "raison": raison})
+        print(f"  rouge  {titre}\n         -> {raison}")
+    return criteres, verts, refus
 
 
 TEST_NAME = re.compile(r"^test_[A-Za-z0-9_]*$")

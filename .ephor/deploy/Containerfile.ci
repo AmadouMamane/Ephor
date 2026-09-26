@@ -39,8 +39,14 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
 COPY --from=secrets /usr/bin/gitleaks /usr/local/bin/gitleaks
 # Une image qui prétend porter l'outil sans le porter serait pire que pas d'image : la
 # construction échoue ici plutôt que la CI trois semaines plus tard. Même règle pour une
-# autorité déposée mais écartée par le système (fichier qui n'est pas du PEM).
+# autorité déposée mais écartée par le système : fichier qui n'est pas du PEM, ou qui ne finit
+# pas par .crt (le « ca.pem » que livre souvent l'IT serait ignoré sans un mot).
 RUN gitleaks version && git --version && make --version | head -1 && uv --version \
+ && for f in /usr/local/share/ca-certificates/entreprise/*; do \
+      case "$f" in *.crt|*/README.md) ;; \
+        *) echo "autorité ignorée par le système : $f (extension .crt attendue)" >&2; exit 1 ;; \
+      esac; \
+    done \
  && for c in /usr/local/share/ca-certificates/entreprise/*.crt; do \
       [ -e "$c" ] || continue; \
       l="$(sed -n '/BEGIN CERTIFICATE/{n;p;q;}' "$c" | tr -d '\r')"; \

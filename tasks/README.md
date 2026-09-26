@@ -14,9 +14,11 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
 2. **Voir échouer.** Vous relisez, puis vous lancez `make task-check ID=FEAT-001`. Il vérifie
    la forme du contrat, puis lance chaque critère une fois sur le code actuel, comme le juge
    le fera. **Tous doivent échouer** : un critère déjà vert ferait déclarer l'agent VÉRIFIÉ
-   sans qu'il ait rien fait, et il est refusé. Lisez la raison affichée pour chacun : une
-   faute de frappe dans un test le fait échouer aussi, mais pour une mauvaise raison. Alors
-   seulement il écrit `tasks/FEAT-001/rouge.json`.
+   sans qu'il ait rien fait, et il est refusé. Un rouge pour une mauvaise raison l'est
+   aussi, quand il se reconnaît : preuve introuvable, test pytest désigné qui n'a jamais
+   tourné (nom mal écrit) ou qui passe déjà. Pour le reste, lisez la raison affichée pour
+   chacun : elle doit dire que le comportement manque. Alors seulement il écrit
+   `tasks/FEAT-001/rouge.json`. Relancé sans que rien ait changé, il n'y touche plus.
 3. **Approuver.** Vous commitez le dossier entier (contrat, tests, `rouge.json`) sur la
    branche principale. **Ce commit est l'approbation** : le juge refuse tout contrat absent
    de la base ou différent de sa version approuvée, et toute tâche sans contrôle rouge, ou

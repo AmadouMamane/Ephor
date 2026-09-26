@@ -58,7 +58,8 @@ def test_le_doctor_reconnait_un_certificat_refuse(tmp_path: Path) -> None:
     env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
     doctor = ["bash", str(ROOT / ".ephor" / "scripts" / "doctor.sh")]
     sortie = subprocess.run(doctor, capture_output=True, text=True, env=env).stdout
-    assert "refuse son certificat" in sortie and "UV_SYSTEM_CERTS=true" in sortie
+    assert "refuse son certificat (invalid peer certificate: UnknownIssuer" in sortie
+    assert "UV_SYSTEM_CERTS=true" in sortie
     assert "ne parvient pas à résoudre" not in sortie
     # Une autre panne garde son message, avec la ligne qui dit quelque chose.
     fake_uv.write_text(

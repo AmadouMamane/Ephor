@@ -1,9 +1,9 @@
 {
   "version": 1,
   "tache": "EXEMPLE-001",
-  "date": "2026-09-26T13:55:58+00:00",
-  "commit": "979250c0031a5e56d8712eb5286e966f8444f2a0",
-  "moteur_sha256": "72d48235a1ccbdcd14b506df3c5b5caeff71d457915d7d7bc5310ab13f916cf6",
+  "date": "2026-09-26T17:38:13+00:00",
+  "commit": "4135465142254b0b5595042fa2fcc92dd1575732",
+  "moteur_sha256": "d9ca68c3c254c83bbba3369f99bc4f4c9999badbd0ca31d4b2ef05e6be29bb51",
   "preuves": {
     "tasks/EXEMPLE-001/contract.json": "ec3262cff695fa51ca5e55787d8f35f54489cb1b083f15ac7099724cf5488787",
     "tasks/EXEMPLE-001/test_exemple_001.py": "6c4c5e6b1120ef7b0041597681d4ef6db5f8d23c38c34e583966e7fd23148dfc"

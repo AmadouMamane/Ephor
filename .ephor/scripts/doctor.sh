@@ -127,7 +127,10 @@ if command -v uv >/dev/null 2>&1; then
     # Le dépôt répond, mais uv ne reconnaît pas qui l'a signé : un proxy qui déchiffre le
     # trafic, ou un JFrog signé par l'autorité de l'entreprise. uv garde ses propres racines
     # et ne lit pas le trousseau du poste (mesuré le 26/09/2026 : « UnknownIssuer »).
-    warn "uv joint le dépôt de paquets, mais refuse son certificat (proxy qui déchiffre, ou autorité de l'entreprise)" \
+    # La cause exacte, dite : « UnknownIssuer » appelle l'autorité de l'entreprise, un
+    # certificat « Expired » appelle l'équipe qui tient le dépôt, pas un réglage du poste.
+    CAUSE="$(grep -oE 'invalid peer certificate: [A-Za-z]+|certificate verify failed[^)]*' "$NET_TMP/log" | head -n 1)"
+    warn "uv joint le dépôt de paquets, mais refuse son certificat ($CAUSE : proxy qui déchiffre, ou autorité de l'entreprise)" \
          "export UV_SYSTEM_CERTS=true   (uv lit alors le magasin du poste, où l'IT a posé l'autorité ; .ephor/docs/10, « Certificat de l'entreprise »)"
   else
     # La dernière ligne du journal d'uv est souvent vide, ou un conseil : on prend la

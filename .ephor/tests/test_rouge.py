@@ -9,6 +9,7 @@ et refuse une tâche sans elle, ou dont une preuve a changé depuis.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -200,3 +201,147 @@ def test_l_exemple_porte_une_trace_a_jour() -> None:
     assert set(trace["preuves"]) == presents
     for nom, empreinte in trace["preuves"].items():
         assert judge.sha256((ROOT / nom).read_bytes()) == empreinte, nom
+
+
+# ------------------------------------------------ audit du 26/09/2026 : chaque défaut reproduit
+
+
+def test_relancer_sans_rien_changer_ne_reecrit_pas_la_trace(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Relancer, même juste après avoir commité la trace, réécrivait sa date et son commit :
+    un changement à recommiter, à chaque passage. Elle ne bouge plus tant que les preuves
+    sont les mêmes et que rien n'a changé hors de tasks/ depuis son commit."""
+    git(repo, "switch", "-q", "main")
+    trace = repo / "tasks" / "T-001" / judge.ROUGE
+    avant = trace.read_text(encoding="utf-8")
+    assert task_check(repo, tmp_path / "work") == 0
+    assert "déjà à jour" in capsys.readouterr().out
+    assert trace.read_text(encoding="utf-8") == avant
+    # Le code a bougé sur la branche principale : la trace suit, avec le nouveau commit.
+    (repo / "src" / "autre.py").write_text("X = 1\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "autre travail")
+    assert task_check(repo, tmp_path / "work") == 0
+    apres = json.loads(trace.read_text(encoding="utf-8"))
+    assert apres["commit"] == git(repo, "rev-parse", "HEAD").strip()
+
+
+def test_une_preuve_introuvable_est_refusee_avant_de_rien_lancer(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Un chemin de preuve mal écrit faisait échouer le critère sur « fichier absent » : un
+    rouge pour une mauvaise raison, et une trace écrite quand même."""
+    contrat = contrat_de(repo)
+    contrat["criteria"][1]["check"] = ["{python}", "tasks/T-001/check_c2_faute.py"]
+    sur_main(repo, contrat, {})
+    assert task_check(repo, tmp_path / "work") == 1
+    sortie = capsys.readouterr().out
+    assert "C2 : preuve introuvable, tasks/T-001/check_c2_faute.py" in sortie
+    assert "contrôle rouge : chaque critère" not in sortie, "rien n'a été lancé"
+    assert not (repo / "tasks" / "T-001" / judge.ROUGE).exists()
+
+
+def test_un_test_pytest_mal_nomme_est_un_faux_rouge(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mesuré avec pytest : un nom de test mal écrit laisse un rapport sans aucun test. Un
+    test qui importe une fonction pas encore écrite, lui, est un vrai rouge."""
+    test = (
+        "import sys\nsys.path.insert(0, '.')\nfrom src.metrics import accuracy\n\n\n"
+        "def test_lots():\n    assert abs(accuracy([(9, 10), (1, 100)]) - 10 / 110) < 1e-12\n"
+    )
+    a_venir = "from src.metrics import precision\n\n\ndef test_precision():\n    assert precision\n"
+    contrat = contrat_de(repo)
+    contrat["criteria"] = [
+        {
+            "id": "C1",
+            "description": "nom de test mal écrit",
+            "check": ["{python}", "-m", "pytest", "-q", "tasks/T-001/test_acc.py::test_lot"],
+        },
+        {
+            "id": "C2",
+            "description": "fonction pas encore écrite",
+            "check": [
+                "{python}",
+                "-m",
+                "pytest",
+                "-q",
+                "tasks/T-001/test_venir.py::test_precision",
+            ],
+        },
+    ]
+    sur_main(repo, contrat, {"tasks/T-001/test_acc.py": test, "tasks/T-001/test_venir.py": a_venir})
+    assert task_check(repo, tmp_path / "work") == 1
+    sortie = capsys.readouterr().out
+    assert "FAUX   C1" in sortie and "test désigné jamais lancé" in sortie
+    assert "rouge  C2" in sortie, "l'import d'une fonction à venir est un vrai rouge"
+    # Corrigé, le contrat passe.
+    contrat["criteria"][0]["check"][-1] = "tasks/T-001/test_acc.py::test_lots"
+    sur_main(repo, contrat, {})
+    assert task_check(repo, tmp_path / "work") == 0
+
+
+def test_la_raison_d_un_script_muet_n_est_pas_la_commande(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le juge recopie la commande en tête du journal, amorce comprise, sur plusieurs lignes :
+    un script muet affichait un morceau de cette amorce en guise de raison."""
+    sur_main(repo, None, {"tasks/T-001/check_c2.py": "raise SystemExit(3)\n"})
+    assert task_check(repo, tmp_path / "work") == 0
+    assert "-> aucune sortie, code de retour 3" in capsys.readouterr().out
+
+
+def test_un_dossier_de_preuve_ouvert_a_l_agent_est_refuse_des_task_check(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contrat = contrat_de(repo)
+    contrat["criteria"][0]["check"] = ["{python}", "-m", "pytest", "-q", "tests/"]
+    sur_main(repo, contrat, {})
+    assert task_check(repo, tmp_path / "work") == 1
+    assert "le dossier tests/, cité par C1, est ouvert" in capsys.readouterr().out
+
+
+def test_un_makefile_d_avant_la_1_1_recoit_la_commande_directe(
+    repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Un projet mis à jour sans reprendre le nouveau Makefile lance encore `validate` sous
+    le nom de `make task-check`. Les deux messages donnent la commande qui écrit la trace."""
+    assert judge.main(["validate", "--task-id", "T-001", "--repo", str(repo)]) == 0
+    assert "python3 .ephor/judge.py rouge --task-id T-001" in capsys.readouterr().out
+    git(repo, "switch", "-q", "main")
+    git(repo, "rm", "-q", f"tasks/T-001/{judge.ROUGE}")
+    git(repo, "commit", "-qm", "sans trace")
+    git(repo, "switch", "-q", "task/T-001")
+    git(repo, "rebase", "-q", "main")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    _, report = run_judge(repo)
+    assert any("python3 .ephor/judge.py rouge --task-id T-001" in r for r in report["reasons"])
+
+
+def test_les_empreintes_d_un_grand_dossier_restent_rapides(repo: Path) -> None:
+    """Un processus git par fichier : 7 s pour un dossier de 400 fichiers, à chaque
+    jugement (mesuré le 26/09/2026). Une seule lecture groupée maintenant."""
+    git(repo, "switch", "-q", "main")
+    for i in range(400):
+        (repo / "tasks" / "T-001" / f"donnee_{i}.txt").write_text(f"{i}\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "données")
+    contrat = judge.load_contract(repo / "tasks" / "T-001" / "contract.json", "T-001")
+    debut = time.monotonic()
+    empreintes = judge.preuves_rouges(repo, "HEAD", contrat, "T-001")
+    assert time.monotonic() - debut < 3
+    assert len(empreintes) == 403
+    assert empreintes["tasks/T-001/donnee_7.txt"] == judge.sha256(b"7\n")
+
+
+def test_un_dossier_pytest_sans_test_est_un_faux_rouge(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contrat = contrat_de(repo)
+    contrat["criteria"][0]["check"] = ["{python}", "-m", "pytest", "-q", "tasks/T-001/vide/"]
+    sur_main(repo, contrat, {})
+    (repo / "tasks" / "T-001" / "vide").mkdir()
+    (repo / "tasks" / "T-001" / "vide" / "LISEZMOI.md").write_text("pas de test ici\n")
+    assert task_check(repo, tmp_path / "work") == 1
+    assert "pytest n'a lancé aucun test" in capsys.readouterr().out

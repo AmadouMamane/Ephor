@@ -352,8 +352,20 @@ if [ "$MAKE_EN_RETARD" = "1" ] || [ "$REGLAGES_EN_RETARD" = "1" ]; then
   if [ "$MAKE_EN_RETARD" = "1" ]; then
     cibles() { grep -hoE '^[a-zA-Z0-9_.-]+:' "$1" | tr -d ':' | { grep -v '^\.' || true; } | LC_ALL=C sort -u; }
     MANQUANTES="$(LC_ALL=C comm -13 <(cibles Makefile) <(cibles Makefile.ephor-new) | tr '\n' ' ' | sed 's/ *$//')"
+    # Une cible qui existe déjà n'est pas « absente », même quand sa recette a changé : en
+    # 1.1, « make task-check » d'un Makefile resté en 1.0 ne vérifiait que la forme, et le
+    # juge réclamait une trace que cette recette n'écrit jamais. Seules les recettes qui
+    # appellent le moteur sont comparées : « test » ou « lint » sont celles du projet.
+    recette() { awk -v t="$2:" 'index($0, t) == 1 { dedans = 1; next } dedans && /^\t/ { print; next } dedans { exit }' "$1"; }
+    CHANGEES=""
+    for c in $(LC_ALL=C comm -12 <(cibles Makefile) <(cibles Makefile.ephor-new)); do
+      NEUVE="$(recette Makefile.ephor-new "$c")"
+      case "$NEUVE" in *.ephor/*) ;; *) continue ;; esac
+      [ "$NEUVE" = "$(recette Makefile "$c")" ] || CHANGEES="$CHANGEES $c"
+    done
     echo "  Makefile : diff Makefile Makefile.ephor-new"
     if [ -n "$MANQUANTES" ]; then echo "    cibles d'Ephor absentes du vôtre : $MANQUANTES"; fi
+    if [ -n "$CHANGEES" ]; then echo "    cibles d'Ephor dont la recette a changé :$CHANGEES — reprenez-les"; fi
   fi
   if [ "$REGLAGES_EN_RETARD" = "1" ]; then
     echo "  .claude/settings.json : diff .claude/settings.json .claude/settings.json.ephor-new"

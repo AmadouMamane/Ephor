@@ -45,7 +45,11 @@ d'un patch quelconque dans son périmètre. L'exemple livré en avait un (EXEMPL
 - Le contrôle dit que les critères échouaient **le jour du contrôle**. Si la branche
   principale change ensuite le code qu'ils testent, ils peuvent passer au vert sans l'agent :
   le juge ne les rejoue pas, il signale seulement que la base a bougé.
-- Un échec pour une mauvaise raison (import cassé, faute de frappe) compte comme rouge. La
-  raison est affichée ; la lire reste un acte humain.
+- Un échec pour une mauvaise raison est refusé quand il se reconnaît : preuve introuvable,
+  dossier de preuve ouvert à l'agent, test pytest désigné jamais lancé (nom ou chemin mal
+  écrit : pytest rend alors un rapport sans aucun test, mesuré le 26/09/2026) ou déjà vert.
+  Un test qui importe une fonction pas encore écrite reste un vrai rouge. Le reste (une
+  faute dans le corps d'un script) compte comme rouge : la raison est affichée, la lire
+  reste un acte humain.
 - L'opérateur peut écrire la trace à la main. Il n'est pas l'adversaire que le juge vise :
   l'agent, lui, ne peut pas.

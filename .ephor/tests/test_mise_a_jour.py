@@ -192,6 +192,26 @@ def test_un_makefile_qui_lance_deja_le_juge_n_est_pas_inerte(
     assert ".PHONY" not in manquantes[0]
 
 
+def test_une_cible_d_ephor_dont_la_recette_a_change_est_nommee(
+    tmp_path: Path, version_suivante: Path
+) -> None:
+    """En 1.1, `task-check` a changé de recette sans changer de nom. Le bilan ne nommait que
+    les cibles ABSENTES : un projet qui gardait son Makefile lançait encore l'ancienne
+    recette, qui n'écrit jamais la trace que le juge réclame. Les cibles propres au projet
+    (`test`, dont la recette n'appelle pas le moteur) ne sont pas nommées."""
+    cible = projet_equipe(tmp_path / "noderepo")
+    makefile = version_suivante / "Makefile"
+    texte = makefile.read_text(encoding="utf-8")
+    assert ".ephor/judge.py rouge" in texte and "\t@$(PY) pytest -q" in texte
+    texte = texte.replace(".ephor/judge.py rouge", ".ephor/judge.py rouge --verbeux")
+    texte = texte.replace("\t@$(PY) pytest -q", "\t@$(PY) pytest -q -x", 1)
+    makefile.write_text(texte, encoding="utf-8")
+    git(version_suivante, "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+        "commit", "-qam", "recettes changées")  # fmt: skip
+    sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
+    assert "cibles d'Ephor dont la recette a changé : task-check — reprenez-les" in sortie
+
+
 def test_une_simple_mention_d_ephor_ne_fait_pas_taire_le_geste_0(tmp_path: Path) -> None:
     """Trouvé en relecture : le script conseille d'exclure `.ephor/` de flake8, et un refus
     d'écrire dans `.ephor/hooks/` est une règle de permission ordinaire. L'un ou l'autre

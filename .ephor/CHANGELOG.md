@@ -3,6 +3,25 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.1.1 — 26 septembre 2026
+
+Audit de la 1.1.0, chaque défaut reproduit puis couvert par un test.
+
+- `make task-check` refuse un rouge pour une mauvaise raison quand il se reconnaît : preuve
+  introuvable, dossier de preuve ouvert à l'agent, test pytest désigné qui n'a jamais
+  tourné (nom mal écrit) ou qui passe déjà, dossier sans test. Il écrivait la trace.
+- Relancé sans que rien ait changé, même juste après avoir commité, il ne réécrit plus la
+  trace : sa date seule changeait, à recommiter à chaque passage.
+- La raison d'un script muet est la sienne (« aucune sortie, code de retour 3 »), plus un
+  morceau de la commande.
+- Les empreintes des preuves se lisent en une fois : 7 s pour un dossier de 400 fichiers,
+  à chaque jugement, contre 0,15 s maintenant.
+- La mise à jour d'un projet nomme les cibles d'Ephor dont la recette a changé, pas
+  seulement les absentes : un `make task-check` resté en 1.0 n'écrivait jamais la trace
+  que le juge réclame. Le juge et `judge.py validate` donnent la commande directe.
+- L'image de CI refuse un certificat d'entreprise qui ne finit pas par `.crt` (un `ca.pem`
+  était ignoré sans un mot) ; `make doctor` cite l'erreur exacte d'uv.
+
 ## 1.1.0 — 26 septembre 2026
 
 **Rouge d'abord.** Un critère déjà vert avant le travail faisait déclarer l'agent VÉRIFIÉ
@@ -30,8 +49,8 @@ normale.
 `bootstrap_existing_repo.sh --mettre-a-jour`, puis :
 
 - **le `Makefile`** : la recette de `task-check` a changé (elle appelle `judge.py rouge`)
-  et `ci-image` prend deux variables. Le bilan dépose un `Makefile.ephor-new` : reprenez
-  ces deux cibles ;
+  et `ci-image` prend deux variables. Le bilan dépose un `Makefile.ephor-new` et, depuis
+  la 1.1.1, nomme ces deux cibles : reprenez-les ;
 - **chaque contrat déjà commité** : `make task-check ID=<ID>` sur la branche principale,
   puis commitez le `rouge.json` qu'il écrit. Sans lui, le juge refuse la tâche. Un critère
   qu'il trouve déjà vert est à resserrer ou à retirer.
