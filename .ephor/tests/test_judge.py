@@ -854,6 +854,90 @@ def test_l_image_de_ci_porte_les_outils_qu_elle_promet() -> None:
     assert epingle.group(1) in dedans.stdout, "la version dans l'image doit être l'épinglée"
 
 
+@pytest.mark.container
+@pytest.mark.skipif(engine() is None, reason="ni podman ni docker prêts")
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="openssl absent")
+def test_l_image_de_ci_reconnait_l_autorite_de_l_entreprise(tmp_path: Path) -> None:
+    """Derrière un proxy qui déchiffre, ou face à un JFrog signé en interne, uv refusait le
+    dépôt de paquets (« invalid peer certificate: UnknownIssuer », mesuré le 26/09/2026).
+    L'autorité déposée dans autorites/ doit être reconnue par uv, Python et git, et un
+    fichier qui n'est pas du PEM doit faire échouer la construction, pas passer en silence."""
+    moteur = engine()
+    assert moteur is not None
+    contexte = tmp_path / "contexte"
+    shutil.copytree(ROOT / ".ephor" / "deploy", contexte)
+    ca = tmp_path / "ca"
+    (ca / "simple" / "idna").mkdir(parents=True)
+    (ca / "simple" / "idna" / "index.html").write_text("<html><body></body></html>")
+
+    def openssl(*args: str) -> None:
+        subprocess.run(["openssl", *args], cwd=ca, capture_output=True, check=True)
+
+    openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out",
+            "ca.crt", "-days", "1", "-subj", "/CN=Autorite de test",
+            "-addext", "basicConstraints=critical,CA:TRUE",
+            "-addext", "keyUsage=critical,keyCertSign,cRLSign")  # fmt: skip
+    openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "srv.key", "-out", "srv.csr",
+            "-subj", "/CN=localhost")  # fmt: skip
+    (ca / "ext.cnf").write_text(
+        "subjectAltName=DNS:localhost\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n"
+    )
+    openssl("x509", "-req", "-in", "srv.csr", "-CA", "ca.crt", "-CAkey", "ca.key",
+            "-CAcreateserial", "-out", "srv.crt", "-days", "1", "-extfile", "ext.cnf")  # fmt: skip
+
+    def construit(tag: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [moteur, "build", "-f", str(contexte / "Containerfile.ci"), "-t", tag, str(contexte)],
+            capture_output=True,
+            text=True,
+            timeout=1800,
+            check=False,
+        )
+
+    shutil.copy(ca / "ca.crt", contexte / "autorites" / "entreprise.crt")
+    build = construit("ephor-ci:autorite-test")
+    assert build.returncode == 0, (build.stdout + build.stderr)[-2000:]
+    # Un faux dépôt HTTPS signé par l'autorité, dans le conteneur lui-même, sans réseau.
+    sonde = (
+        "cd /ca && python3 -c 'import http.server, ssl; "
+        's = http.server.ThreadingHTTPServer(("127.0.0.1", 8443), '
+        "http.server.SimpleHTTPRequestHandler); "
+        "c = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); "
+        'c.load_cert_chain("srv.crt", "srv.key"); '
+        "s.socket = c.wrap_socket(s.socket, server_side=True); s.serve_forever()' "
+        ">/dev/null 2>&1 & "
+        "for i in $(seq 50); do python3 -c 'import socket; "
+        'socket.create_connection(("127.0.0.1", 8443), 0.2)\' 2>/dev/null && break; '
+        "sleep 0.2; done; "
+        "echo idna > /tmp/r.in; "
+        "UV_HTTP_TIMEOUT=10 uv pip compile --no-cache --default-index "
+        "https://localhost:8443/simple /tmp/r.in -o /tmp/r.txt 2>&1; "
+        "python3 -c 'import urllib.request; "
+        'print("python", urllib.request.urlopen("https://localhost:8443/simple/idna/").status)\' '
+        "2>&1; git ls-remote https://localhost:8443/depot.git 2>&1; true"
+    )
+    dedans = subprocess.run(
+        [moteur, "run", "--rm", "--network", "none", "-v", f"{ca}:/ca:ro",
+         "--entrypoint", "sh", "ephor-ci:autorite-test", "-c", sonde],
+        capture_output=True, text=True, timeout=300, check=False,
+    )  # fmt: skip
+    sortie = dedans.stdout + dedans.stderr
+    assert "no versions of idna" in sortie, sortie  # uv a joint le dépôt : TLS accepté
+    assert "python 200" in sortie, sortie
+    assert "repository 'https://localhost:8443/depot.git/' not found" in sortie, sortie
+
+    # Un certificat au format DER : le système l'écarterait sans bruit.
+    der = subprocess.run(
+        ["openssl", "x509", "-in", str(ca / "ca.crt"), "-outform", "DER"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    (contexte / "autorites" / "entreprise.crt").write_bytes(der)
+    refus = construit("ephor-ci:autorite-der")
+    assert refus.returncode != 0
+    assert "autorité écartée" in refus.stdout + refus.stderr
+
+
 # ------------------------------------------------ des preuves qui vont au bout (ADR 0005)
 
 

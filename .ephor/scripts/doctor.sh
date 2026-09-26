@@ -123,8 +123,16 @@ if command -v uv >/dev/null 2>&1; then
   NET_TMP="$(mktemp -d "${TMPDIR:-/tmp}/doctor.XXXXXX")"
   if printf 'idna\n' | UV_HTTP_TIMEOUT=15 uv pip compile --no-cache - -o "$NET_TMP/req.txt" >"$NET_TMP/log" 2>&1; then
     ok "uv atteint un dépôt de paquets"
+  elif grep -qE 'invalid peer certificate|certificate verify failed' "$NET_TMP/log"; then
+    # Le dépôt répond, mais uv ne reconnaît pas qui l'a signé : un proxy qui déchiffre le
+    # trafic, ou un JFrog signé par l'autorité de l'entreprise. uv garde ses propres racines
+    # et ne lit pas le trousseau du poste (mesuré le 26/09/2026 : « UnknownIssuer »).
+    warn "uv joint le dépôt de paquets, mais refuse son certificat (proxy qui déchiffre, ou autorité de l'entreprise)" \
+         "export UV_SYSTEM_CERTS=true   (uv lit alors le magasin du poste, où l'IT a posé l'autorité ; .ephor/docs/10, « Certificat de l'entreprise »)"
   else
-    warn "uv ne parvient pas à résoudre un paquet depuis le réseau ($(tail -n 1 "$NET_TMP/log"))" \
+    # La dernière ligne du journal d'uv est souvent vide, ou un conseil : on prend la
+    # dernière qui dit quelque chose.
+    warn "uv ne parvient pas à résoudre un paquet depuis le réseau ($(grep -v '^[[:space:]]*$' "$NET_TMP/log" | grep -v '^hint:' | tail -n 1))" \
          "dépôt injoignable ou non configuré — c'est LE point bloquant, à remonter AVANT tout le reste"
   fi
   rm -rf "$NET_TMP"

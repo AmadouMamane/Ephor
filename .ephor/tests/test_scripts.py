@@ -37,6 +37,42 @@ def test_doctor_no_longer_cries_wolf_about_the_network(tmp_path: Path) -> None:
     assert "uv atteint un dépôt de paquets" in result.stdout
 
 
+def test_le_doctor_reconnait_un_certificat_refuse(tmp_path: Path) -> None:
+    """Derrière un proxy qui déchiffre, uv joint le dépôt mais refuse son certificat
+    (« invalid peer certificate: UnknownIssuer », mesuré le 26/09/2026). Le diagnostic disait
+    « dépôt injoignable » avec, entre parenthèses, la dernière ligne du journal : un conseil
+    d'uv ou une ligne vide. Il nomme maintenant la cause et le réglage."""
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    fake_uv = shim / "uv"
+    fake_uv.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "--version" ]; then echo "uv 0.0.0"; exit 0; fi\n'
+        "cat >/dev/null\n"
+        "echo '  Caused by: invalid peer certificate: UnknownIssuer' >&2\n"
+        "echo '' >&2\n"
+        "echo 'hint: Consider enabling use of system TLS certificates' >&2\n"
+        "exit 2\n"
+    )
+    fake_uv.chmod(0o755)
+    env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}")
+    doctor = ["bash", str(ROOT / ".ephor" / "scripts" / "doctor.sh")]
+    sortie = subprocess.run(doctor, capture_output=True, text=True, env=env).stdout
+    assert "refuse son certificat" in sortie and "UV_SYSTEM_CERTS=true" in sortie
+    assert "ne parvient pas à résoudre" not in sortie
+    # Une autre panne garde son message, avec la ligne qui dit quelque chose.
+    fake_uv.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "--version" ]; then echo "uv 0.0.0"; exit 0; fi\n'
+        "cat >/dev/null\n"
+        "echo '  Caused by: dns error: failed to lookup address' >&2\n"
+        "echo '' >&2\n"
+        "exit 2\n"
+    )
+    sortie = subprocess.run(doctor, capture_output=True, text=True, env=env).stdout
+    assert "ne parvient pas à résoudre un paquet depuis le réseau (  Caused by: dns error" in sortie
+
+
 def test_bootstrap_is_idempotent_and_never_overwrites(tmp_path: Path) -> None:
     target = tmp_path / "existant"
     (target / "pkg").mkdir(parents=True)

@@ -16,7 +16,8 @@ GITLAB_URL=https://gitlab.interne GITLAB_PROJECT=groupe/projet make gitlab-check
 La commande lit l'API, ne modifie rien, et dit pour chaque réglage `OK`, `À FAIRE` (avec
 l'endroit où cliquer) ou `INCONNU` (droits insuffisants, ou fonction absente de l'offre).
 Elle sort en 0 seulement si tout est en place. Derrière un proxy : `HTTPS_PROXY`.
-Certificat d'entreprise refusé : `SSL_CERT_FILE=<autorité de l'entreprise>`.
+Certificat d'entreprise refusé : `SSL_CERT_FILE=<autorité de l'entreprise>` (fichier PEM ;
+le poste, l'image et Podman : `.ephor/docs/10-installation.md`, « Certificat de l'entreprise »).
 
 **Portée.** Écrite d'après la documentation de l'API GitLab et essayée contre un faux
 serveur, pas encore contre une instance réelle. Si elle répond `INCONNU` là où l'interface

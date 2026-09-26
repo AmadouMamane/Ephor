@@ -18,13 +18,31 @@ ARG GITLEAKS=zricethezav/gitleaks:v8.30.1
 FROM ${GITLEAKS} AS secrets
 
 FROM ${BASE}
+# L'autorité de l'entreprise. Derrière un proxy qui déchiffre le trafic, ou face à un JFrog
+# signé en interne, uv refuse le dépôt de paquets (« invalid peer certificate:
+# UnknownIssuer », mesuré le 26/09/2026). Déposez le certificat PUBLIC de l'autorité (PEM,
+# extension .crt) dans .ephor/deploy/autorites/ avant `make ci-image` ; sans lui, rien ne
+# change. Posé avant l'installation : le paquet ca-certificates l'ajoute au magasin du système.
+COPY autorites/ /usr/local/share/ca-certificates/entreprise/
 # git : le juge compare des commits, la CI calcule une base de fusion.
 # make : la CI lance `make sec`, et l'image de base n'a pas make. Cette ligne de CI
 # n'avait donc jamais pu s'exécuter — « command not found », pas « scan absent ».
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends git make ca-certificates \
+ && update-ca-certificates >/dev/null \
  && rm -rf /var/lib/apt/lists/*
+# uv garde ses propres racines, et `requests` celles de certifi : ni l'un ni l'autre ne lit
+# le magasin du système. Ces deux variables les y ramènent, autorité comprise.
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 COPY --from=secrets /usr/bin/gitleaks /usr/local/bin/gitleaks
 # Une image qui prétend porter l'outil sans le porter serait pire que pas d'image : la
-# construction échoue ici plutôt que la CI trois semaines plus tard.
-RUN gitleaks version && git --version && make --version | head -1 && uv --version
+# construction échoue ici plutôt que la CI trois semaines plus tard. Même règle pour une
+# autorité déposée mais écartée par le système (fichier qui n'est pas du PEM).
+RUN gitleaks version && git --version && make --version | head -1 && uv --version \
+ && for c in /usr/local/share/ca-certificates/entreprise/*.crt; do \
+      [ -e "$c" ] || continue; \
+      l="$(sed -n '/BEGIN CERTIFICATE/{n;p;q;}' "$c" | tr -d '\r')"; \
+      { [ -n "$l" ] && grep -qF "$l" "$SSL_CERT_FILE"; } \
+        || { echo "autorité écartée : $c (PEM attendu)" >&2; exit 1; }; \
+    done
