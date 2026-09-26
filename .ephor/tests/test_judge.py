@@ -818,6 +818,16 @@ def test_une_image_de_registre_prive_dit_quoi_faire(
     assert "login" not in str(simple.value)
 
 
+def bases_miroir() -> list[str]:
+    """Les bases de l'image, prises sur un miroir quand le poste le dit : au bureau, ni
+    Docker Hub ni ghcr.io ne répondent. Mêmes variables que `make ci-image`."""
+    args: list[str] = []
+    for variable, argument in (("EPHOR_CI_BASE", "BASE"), ("EPHOR_CI_GITLEAKS", "GITLEAKS")):
+        if os.environ.get(variable):
+            args += ["--build-arg", f"{argument}={os.environ[variable]}"]
+    return args
+
+
 @pytest.mark.container
 @pytest.mark.skipif(engine() is None, reason="ni podman ni docker prêts")
 def test_l_image_de_ci_porte_les_outils_qu_elle_promet() -> None:
@@ -832,7 +842,7 @@ def test_l_image_de_ci_porte_les_outils_qu_elle_promet() -> None:
     assert epingle, "la version de gitleaks doit être épinglée dans la recette"
     tag = "ephor-ci:test"
     build = subprocess.run(
-        [moteur, "build", "-f", str(recette), "-t", tag, str(recette.parent)],
+        [moteur, "build", "-f", str(recette), *bases_miroir(), "-t", tag, str(recette.parent)],
         capture_output=True,
         text=True,
         timeout=1800,
@@ -887,7 +897,16 @@ def test_l_image_de_ci_reconnait_l_autorite_de_l_entreprise(tmp_path: Path) -> N
 
     def construit(tag: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [moteur, "build", "-f", str(contexte / "Containerfile.ci"), "-t", tag, str(contexte)],
+            [
+                moteur,
+                "build",
+                "-f",
+                str(contexte / "Containerfile.ci"),
+                *bases_miroir(),
+                "-t",
+                tag,
+                str(contexte),
+            ],
             capture_output=True,
             text=True,
             timeout=1800,

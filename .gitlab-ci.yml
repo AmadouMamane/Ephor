@@ -5,8 +5,8 @@
 #   Étage 3, branche principale et nuit : tout, plus les scans lourds. Ne bloque personne,
 #                              mais un échec s'y voit.
 # En entreprise : construisez l'image UNE fois (`make ci-image`, recette dans
-# .ephor/deploy/Containerfile.ci : uv, git, make, gitleaks), poussez-la sur JFrog, épinglez-la par
-# digest et pointez EPHOR_CI_IMAGE dessus. L'image publique ci-dessous n'a NI make NI
+# .ephor/deploy/Containerfile.ci : uv, git, make, gitleaks ; ses bases JFrog par EPHOR_CI_BASE et
+# EPHOR_CI_GITLEAKS), poussez-la sur JFrog, épinglez-la par digest et pointez EPHOR_CI_IMAGE dessus. L'image publique ci-dessous n'a NI make NI
 # gitleaks : la ligne `make sec` ne peut pas y tourner du tout, et depuis que
 # VERIFY_STRICT=1 un scan qui n'a pas tourné est un échec, non un vert.
 # Définissez aussi UV_DEFAULT_INDEX vers le dépôt PyPI de JFrog dans les variables CI/CD.

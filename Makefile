@@ -79,14 +79,17 @@ sec: | $(V) ## Secrets, données personnelles, et le scanner de l'entreprise s'i
 	 fi; \
 	 exit $$s
 
-ci-image: ## Construit l'image de CI et du juge (uv, git, make, gitleaks) : make ci-image [CI_IMAGE=<nom>]
+ci-image: ## Construit l'image de CI et du juge (uv, git, make, gitleaks) : make ci-image [CI_IMAGE=<nom>] [EPHOR_CI_BASE=<image uv>] [EPHOR_CI_GITLEAKS=<image gitleaks>]
 	@moteur="$(RUNTIME)"; \
 	 case "$$moteur" in \
 	   podman|docker) ;; \
 	   *) if command -v podman >/dev/null 2>&1; then moteur=podman; else moteur=docker; fi ;; \
 	 esac; \
 	 echo "construction de $(CI_IMAGE) avec $$moteur"; \
-	 $$moteur build -f .ephor/deploy/Containerfile.ci -t "$(CI_IMAGE)" .ephor/deploy
+	 $$moteur build -f .ephor/deploy/Containerfile.ci \
+	   $(if $(EPHOR_CI_BASE),--build-arg BASE="$(EPHOR_CI_BASE)",) \
+	   $(if $(EPHOR_CI_GITLEAKS),--build-arg GITLEAKS="$(EPHOR_CI_GITLEAKS)",) \
+	   -t "$(CI_IMAGE)" .ephor/deploy
 
 verify: | $(V) ## LA commande. Tout, dans l'ordre, résumé court.
 	@bash .ephor/projet/verify.sh

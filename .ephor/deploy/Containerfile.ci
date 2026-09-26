@@ -7,9 +7,10 @@
 # officielle, ce qui laisse JFrog la recopier comme n'importe quelle autre image — pas de
 # téléchargement à autoriser, pas d'empreinte à vérifier à la main.
 #
-# En entreprise, une fois : remplacez les deux registres par leurs équivalents JFrog, épinglez
-# par digest (`@sha256:...`), construisez, poussez, puis pointez `EPHOR_CI_IMAGE` (CI) et
-# `EPHOR_IMAGE` (juge) vers le résultat. La version de gitleaks est épinglée ici pour
+# En entreprise, une fois : prenez les deux bases sur JFrog, épinglées par digest, sans
+# toucher à ce fichier (`make ci-image EPHOR_CI_BASE=<jfrog>/uv:...@sha256:...
+# EPHOR_CI_GITLEAKS=<jfrog>/gitleaks:v8.30.1@sha256:...`), poussez, puis pointez
+# `EPHOR_CI_IMAGE` (CI) et `EPHOR_IMAGE` (juge) vers le résultat. La version de gitleaks est épinglée ici pour
 # qu'elle soit la même sur le poste et dans la CI : deux versions qui se contredisent,
 # c'est un scan sur lequel on ne peut pas s'appuyer.
 ARG BASE=ghcr.io/astral-sh/uv:python3.12-bookworm-slim
