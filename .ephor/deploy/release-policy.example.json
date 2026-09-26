@@ -1,0 +1,23 @@
+{
+  "example_only": true,
+  "artifact_identity": "<registre-jfrog>/<projet>/<image>@sha256:<digest>",
+  "required_evidence": [
+    "integrated_commit",
+    "judge_report_sha256",
+    "uv_lock_sha256",
+    "judge_verdict_when_risk_eleve",
+    "artifact_digest"
+  ],
+  "stages": ["preproduction", "canary", "production"],
+  "canary": {
+    "traffic_percent": 5,
+    "minimum_observation_seconds": 600,
+    "minimum_requests": 500,
+    "promote_if": "seuils SLO techniques et métier du projet respectés",
+    "insufficient_traffic": "pas de promotion automatique"
+  },
+  "rollback": {
+    "previous_revision_required": true,
+    "data_migration_plan_required": true
+  }
+}

@@ -1,0 +1,186 @@
+# CI GitLab d'Ephor — la forge de référence.
+#   Étage 1, merge request   : vérification rapide, tests d'Ephor, garde des contrôles,
+#                              et le JUGE sur toute branche task/<ID>.
+#   Étage 2, train de fusion : la suite hors tests lents, sur le résultat combiné.
+#   Étage 3, branche principale et nuit : tout, plus les scans lourds. Ne bloque personne,
+#                              mais un échec s'y voit.
+# En entreprise : construisez l'image UNE fois (`make ci-image`, recette dans
+# .ephor/deploy/Containerfile.ci : uv, git, make, gitleaks), poussez-la sur JFrog, épinglez-la par
+# digest et pointez EPHOR_CI_IMAGE dessus. L'image publique ci-dessous n'a NI make NI
+# gitleaks : la ligne `make sec` ne peut pas y tourner du tout, et depuis que
+# VERIFY_STRICT=1 un scan qui n'a pas tourné est un échec, non un vert.
+# Définissez aussi UV_DEFAULT_INDEX vers le dépôt PyPI de JFrog dans les variables CI/CD.
+#
+# CE QUE CETTE PORTE NE PEUT PAS FAIRE SEULE. Le job `juge` prend le juge de la branche
+# cible : une branche qui réécrit .ephor/judge.py ne se juge plus elle-même. Mais une merge
+# request peut aussi réécrire CE fichier, et GitLab lance la CI de la branche proposée. Pour
+# que la porte fasse vraiment foi, sortez ce fichier de la portée des branches : réglage du
+# projet « Fichier de configuration CI/CD » pointé vers un projet protégé
+# (`.gitlab-ci.yml@groupe/controles`), ou politique d'exécution de pipeline, ou au minimum
+# approbation obligatoire des propriétaires (.ephor/docs/CODEOWNERS.example). Fiche et contrôle :
+# .ephor/docs/12-gitlab.md, et `make gitlab-check`.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+stages: [verify, merge-train, deep]
+
+variables:
+  EPHOR_CI_IMAGE: "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+  UV_LINK_MODE: copy
+  VERIFY_STRICT: "1"
+  GIT_DEPTH: "0"
+
+default:
+  image: $EPHOR_CI_IMAGE
+  interruptible: true
+  before_script:
+    - command -v git >/dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null; }
+    - uv sync --all-extras
+  cache:
+    key: uv-$CI_COMMIT_REF_SLUG
+    paths: [.uv-cache/]
+
+.merge_request:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"
+
+.git_only:
+  cache: []
+  before_script:
+    - command -v git >/dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null; }
+
+verify:
+  extends: .merge_request
+  stage: verify
+  timeout: 15m
+  variables:
+    PYTEST_MARK: "not slow and not integration and not flaky"
+  script:
+    - bash .ephor/projet/verify.sh
+    # Les secrets et les données personnelles : `make sec` ne tournait que sur le poste,
+    # où un rouge pouvait passer inaperçu. Exige make ET gitleaks
+    # dans l'image du job : .ephor/deploy/Containerfile.ci les met, l'image publique ne les a pas.
+    - make sec
+    # Les tests d'Ephor ne vivent que dans son dépôt. Ce fichier, déposé dans un projet
+    # `controles` (.ephor/docs/12-gitlab.md), sert aussi les projets équipés, qui ne les ont
+    # pas : lancés sans condition, pytest y sortait en 4 et le job rougissait partout.
+    - if [ -d .ephor/tests ]; then uv run pytest -q -p no:randomly .ephor/tests -m "not container"; fi
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths: [.verify/]
+
+juge:
+  extends: .git_only
+  stage: verify
+  timeout: 30m
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_BRANCH_NAME =~ /^task\//
+  variables:
+    UV_CACHE_DIR: /tmp/uv-cache
+  script:
+    - git fetch --quiet origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - TASK_ID="${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME#task/}"; TASK_ID="${TASK_ID%%/*}"
+    # Le juge qui fait foi est celui de la branche CIBLE, jamais celui de la branche jugée :
+    # sinon une branche qui réécrit .ephor/judge.py se jugerait elle-même, et passerait.
+    # Le vérificateur vient d'un endroit que l'agent ne touche pas.
+    - rm -rf /tmp/juge-de-base && mkdir -p /tmp/juge-de-base
+    - git archive "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" .ephor | tar -x -C /tmp/juge-de-base
+    - >-
+      python3 /tmp/juge-de-base/.ephor/judge.py check --repo "$CI_PROJECT_DIR" --task-id "$TASK_ID"
+      --base "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+      --workdir /tmp/juge --report-dir "$CI_PROJECT_DIR/reports/juge"
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths: [reports/juge/]
+    reports:
+      junit: reports/juge/junit.xml
+
+garde-controles:
+  extends: [.merge_request, .git_only]
+  stage: verify
+  allow_failure:
+    exit_codes: [3]
+  script:
+    - git fetch --quiet origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    # La liste des zones vient du moteur de la branche CIBLE, comme le juge : cette CI ne
+    # recopie plus de liste à la main (elle avait déjà pris du retard sur celle du juge).
+    - rm -rf /tmp/garde-de-base && mkdir -p /tmp/garde-de-base
+    - git archive "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" .ephor | tar -x -C /tmp/garde-de-base
+    - |
+      if [ ! -f /tmp/garde-de-base/.ephor/zones.txt ]; then
+        echo "La branche cible précède la liste unique des zones (Ephor < 0.10) : impossible de vérifier, revue humaine obligatoire."
+        exit 3
+      fi
+    - python3 /tmp/garde-de-base/.ephor/judge.py garde --repo "$CI_PROJECT_DIR" --base "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+
+train:
+  stage: merge-train
+  timeout: 25m
+  rules:
+    - if: $CI_MERGE_REQUEST_EVENT_TYPE == "merge_train"
+  variables:
+    PYTEST_MARK: "not slow and not flaky"
+  script:
+    - bash .ephor/projet/verify.sh
+
+# Étage 3. Aucune ligne ne finit par « || echo », qui laisserait le travail vert quoi qu'il
+# arrive. Deux travaux :
+# `deep` doit tenir, et rougit la branche principale quand il ne tient pas ; `signaux` surveille,
+# et un échec y est marqué (orange) au lieu d'être avalé.
+deep:
+  stage: deep
+  timeout: 1h
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  interruptible: false
+  script:
+    - bash .ephor/projet/verify.sh
+    - make sec
+    # Les tests d'Ephor ne vivent que dans son dépôt. Ce fichier, déposé dans un projet
+    # `controles` (.ephor/docs/12-gitlab.md), sert aussi les projets équipés, qui ne les ont
+    # pas : lancés sans condition, pytest y sortait en 4 et le job rougissait partout.
+    - if [ -d .ephor/tests ]; then uv run pytest -q -p no:randomly .ephor/tests -m "not container"; fi
+  artifacts:
+    when: on_failure
+    expire_in: 7 days
+    paths: [.verify/]
+
+signaux:
+  stage: deep
+  timeout: 2h
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+  interruptible: false
+  allow_failure: true
+  script:
+    # Tous les signaux tournent, puis le travail dit lesquels ont échoué.
+    - |
+      echec=""
+      instable=0
+      for i in $(seq 1 10); do bash .ephor/scripts/pytest_ci.sh -q -m flaky || { echo "instable au tour $i"; instable=1; }; done
+      [ "$instable" = 0 ] || echec="$echec tests-instables"
+      uv run pip-audit || echec="$echec vulnérabilités"
+      # Un mutmut mort au démarrage sortait en silence : on exige son rapport de fin.
+      { uv run mutmut run > mutants-full.log 2>&1 && grep -q "mutations/second" mutants-full.log; } || echec="$echec mutation"
+      if [ -n "${SNYK_TOKEN:-}" ]; then uvx snyk-agent-scan==0.6.4 --ci || echec="$echec agents"; fi
+      if [ -n "$echec" ]; then echo "signaux en échec :$echec"; exit 1; fi
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths: [mutants-full.log]
+
+# Détection de secrets native de GitLab : décommentez si votre instance fournit ses images.
+# include:
+#   - template: Jobs/Secret-Detection.gitlab-ci.yml
+# secret_detection:
+#   stage: verify

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": ".ephor/contract.schema.json",
+  "title": "Contrat de tâche",
+  "description": "Documentation et aide à la saisie. Le juge applique ces règles lui-même, plus quelques autres : les chemins autorisés ne touchent aucune zone de contrôle, les identifiants de critères sont uniques, aucune clé n'apparaît deux fois, returncode ne sert qu'avec expected_output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "objective", "risk", "allowed_paths", "criteria"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[A-Z][A-Z0-9-]{2,50}$", "description": "Identique au nom du dossier tasks/<ID>/"},
+    "objective": {"type": "string", "minLength": 10, "maxLength": 12000, "description": "Comportement observable attendu"},
+    "risk": {"enum": ["faible", "modere", "eleve"], "description": "Décide de la revue : faible = contrôles automatiques seuls ; modéré et élevé = évaluateur, et mutation pour élevé. Élevé : chaque critère doit prouver qu'il est allé au bout, et tout silencieux ajouté (noqa, type: ignore, skip...) est refusé."},
+    "allowed_paths": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "description": "Chemin exact, ou préfixe terminé par /"}
+    },
+    "criteria": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "description", "check"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,20}$"},
+          "description": {"type": "string", "minLength": 3},
+          "check": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "Commande sans shell ; {python} désigne l'interpréteur. Un test pytest ou un script Python doit prouver qu'il est allé au bout (rapport de tests, jeton de fin) ; toute autre commande n'est jugée que sur son code de retour, et elle est refusée sur un risque élevé. Ne mets pas --junitxml : le juge le demande lui-même."},
+          "max_duration_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 7200, "description": "Durée maximale de CE critère. Dépassée, le critère échoue (« trop lent ») et le juge coupe la commande. Horloge murale sur un poste chargé : prendre 10x la durée observée, jamais un micro-benchmark. En conteneur, la mesure inclut le démarrage du conteneur (de l'ordre d'une seconde) : la même valeur ne donne donc pas le même verdict en local et en conteneur."},
+          "stdin": {"type": "string", "description": "Entrée donnée à la commande par le juge"},
+          "expected_output": {"type": "string", "description": "Sortie exacte attendue (sortie standard et erreurs mêlées), comparée à l'octet près de l'extérieur du processus. La preuve la plus solide : le code jugé ne peut pas la fabriquer sans produire le bon comportement."},
+          "returncode": {"type": "integer", "minimum": 0, "maximum": 255, "description": "Code de retour attendu avec expected_output ; défaut : 0"}
+        }
+      }
+    },
+    "setup": {"type": ["array", "null"], "items": {"type": "string", "minLength": 1}, "description": "Installation dans la copie propre, avec réseau"},
+    "verify": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "description": "Vérification complète ; défaut : bash .ephor/projet/verify.sh"},
+    "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 7200, "description": "Budget de temps total ; défaut : 900"},
+    "budget_tokens": {"type": "integer", "minimum": 1, "maximum": 100000000, "description": "Plafond de tokens facturables (entrée + écriture de cache + sortie) pour la tâche. Dépassé, Ephor pose AGENT_STOP. Absent : pas de plafond."}
+  }
+}

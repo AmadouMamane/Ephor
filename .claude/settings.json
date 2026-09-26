@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(make *)",
+      "Bash(uv sync *)",
+      "Bash(uv run pytest *)",
+      "Bash(uv run ruff *)",
+      "Bash(uv run mypy *)",
+      "Bash(uv run lint-imports *)",
+      "Bash(uv run mutmut *)",
+      "Bash(python3 .ephor/judge.py check *)",
+      "Bash(python3 .ephor/judge.py validate *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git switch *)",
+      "Bash(git restore *)",
+      "Bash(rg *)",
+      "Bash(fd *)",
+      "Bash(jq *)",
+      "Bash(bash .ephor/scripts/*)"
+    ],
+    "ask": [
+      "Bash(git push *)",
+      "Bash(glab *)",
+      "Bash(gh *)",
+      "Bash(podman *)",
+      "Bash(docker *)",
+      "Bash(kubectl *)",
+      "Bash(gcloud *)",
+      "Bash(curl *)",
+      "Bash(wget *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/id_rsa*)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.ssh/**)",
+      "Read(~/.netrc)",
+      "Edit(.claude/**)",
+      "Edit(.github/**)",
+      "Edit(.gitlab/**)",
+      "Edit(.opencode/**)",
+      "Edit(opencode.json)",
+      "Edit(.vscode/**)",
+      "Edit(.gitlab-ci.yml)",
+      "Edit(.pre-commit-config.yaml)",
+      "Edit(.gitleaks.toml)",
+      "Edit(Makefile)",
+      "Edit(AGENTS.md)",
+      "Edit(CLAUDE.md)",
+      "Edit(.ephor/**)",
+      "Edit(tasks/**)",
+      "Edit(.git/config)",
+      "Edit(.git/hooks/**)",
+      "Edit(.git/info/**)",
+      "Edit(GNUmakefile)",
+      "Edit(makefile)",
+      "Edit(.mcp.json)",
+      "Edit(CLAUDE.local.md)",
+      "Bash(rm *)",
+      "Bash(git push --force *)",
+      "Bash(git reset --hard *)",
+      "Bash(git update-ref *)",
+      "Bash(git config *)",
+      "Bash(make task-new *)",
+      "Bash(make adapters *)",
+      "Bash(make fetch-docs *)",
+      "Bash(python3 .ephor/fetch_docs.py *)",
+      "Bash(python3 .ephor/judge.py new *)",
+      "WebFetch"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": false,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "allowWrite": ["~/.cache/uv", "~/.cache/ephor"]
+    }
+  },
+  "env": {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTEST_ADDOPTS": "-p no:cacheprovider",
+    "MAX_THINKING_TOKENS": "16000"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/kill-switch.sh\"",
+            "statusMessage": "bouton d'arrêt",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/block-secrets.sh\"",
+            "statusMessage": "contrôle anti-secret",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/write-guard.sh\"",
+            "statusMessage": "zones de contrôle",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/scope-guard.sh\"",
+            "statusMessage": "périmètre du contrat",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/refs-guard.sh\"",
+            "statusMessage": "dépôts de référence",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/shell-guard.sh\"",
+            "statusMessage": "écriture par le terminal",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/filter-output.sh\"",
+            "statusMessage": "sortie de test compacte",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/steer.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/budget.sh\"",
+            "statusMessage": "budget de la tâche",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/checkpoint.sh\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

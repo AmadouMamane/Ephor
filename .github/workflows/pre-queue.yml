@@ -1,0 +1,111 @@
+# ÉTAGE 1 — pré-fusion. Variante GitHub de .gitlab-ci.yml, pour un dépôt hébergé sur GitHub.
+# Budget : quelques minutes. Même commande qu'en local, en mode strict, et les tests d'Ephor
+# au complet : les tests en conteneur sont la seule mesure du juge sous Docker Linux.
+name: pre-queue
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+permissions:
+  contents: read
+concurrency:
+  group: pre-queue-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  fast:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      VERIFY_STRICT: "1"
+      PYTEST_MARK: "not slow and not integration and not flaky"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+      - run: uv sync --all-extras
+      - name: vérification complète, la même commande qu'en local
+        run: bash .ephor/projet/verify.sh
+      - name: tests d'Ephor, conteneurs compris (le juge sous Docker Linux)
+        run: make ephor-test
+      - name: secrets
+        # Compte d'organisation : l'action exige une variable GITLEAKS_LICENSE.
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # La version du poste et de l'image de CI (.ephor/deploy/Containerfile.ci).
+          # Sans elle, l'action prend la 8.24.3, qui ne lit pas `[[allowlists]]` : les
+          # faux secrets des tests remontaient au scan complet de la nuit (26/09/2026).
+          GITLEAKS_VERSION: 8.30.1
+      - name: garde des contrôles
+        # La liste des zones vient du moteur de la branche CIBLE, comme le juge : cette CI ne
+        # recopie plus de liste à la main (elle avait déjà pris du retard sur celle du juge).
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          [ -n "$BASE_SHA" ] || exit 0
+          mkdir -p "$RUNNER_TEMP/garde-de-base"
+          git archive "$BASE_SHA" .ephor | tar -x -C "$RUNNER_TEMP/garde-de-base"
+          if [ ! -f "$RUNNER_TEMP/garde-de-base/.ephor/zones.txt" ]; then
+            echo "::warning::La branche cible précède la liste unique des zones (Ephor < 0.10) : revue humaine obligatoire."
+            exit 0
+          fi
+          set +e
+          python3 "$RUNNER_TEMP/garde-de-base/.ephor/judge.py" garde --repo . --base "$BASE_SHA"
+          code=$?
+          if [ "$code" = 3 ]; then
+            echo "::warning::Zones de contrôle touchées ou silencieux ajoutés : revue humaine obligatoire (détail ci-dessus)."
+            exit 0
+          fi
+          exit "$code"
+      - name: détail des tests d'Ephor en échec
+        if: failure()
+        run: |
+          for f in .verify/ephor.txt .verify/test.txt; do
+            if [ -f "$f" ]; then echo "== $f"; grep -E "^(FAILED|ERROR)|^E  " "$f" | head -40; tail -n 5 "$f"; fi
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: verify-${{ github.sha }}
+          path: .verify/
+          # .verify/ est un dossier caché : sans cette option, rien n'est envoyé, en silence.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  juge:
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'task/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+      - name: juge du contrat de la tâche
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          task_id="${HEAD_REF#task/}"
+          task_id="${task_id%%/*}"
+          # Le juge de la branche CIBLE, jamais celui de la branche jugée.
+          mkdir -p "$RUNNER_TEMP/juge-de-base"
+          git archive "origin/$BASE_REF" .ephor | tar -x -C "$RUNNER_TEMP/juge-de-base"
+          python3 "$RUNNER_TEMP/juge-de-base/.ephor/judge.py" check --repo "$GITHUB_WORKSPACE" \
+            --task-id "$task_id" --base "origin/$BASE_REF" \
+            --workdir "$RUNNER_TEMP/juge" --report-dir "$RUNNER_TEMP/juge-rapport"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: juge-${{ github.sha }}
+          path: ${{ runner.temp }}/juge-rapport/
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,0 +1,55 @@
+// Les clés chat.* sont générées depuis .claude/settings.json par .ephor/adapters.py (make adapters).
+// Vos autres clés sont conservées ; vos commentaires, eux, ne le sont pas.
+// Les zones de contrôle ne sont VOLONTAIREMENT pas listées ici : une entrée
+// `false` fait demander, et dans la vue « agents » cette question devient un
+// bouton qui lève le refus du garde-fou. Détail : .ephor/docs/11-trois-agents.md.
+{
+  "chat.useClaudeHooks": true,
+  "chat.useAgentsMdFile": true,
+  "chat.tools.global.autoApprove": false,
+  "chat.tools.terminal.autoApprove": {
+    "/^make\\b/": true,
+    "/^uv sync\\b/": true,
+    "/^uv run pytest\\b/": true,
+    "/^uv run ruff\\b/": true,
+    "/^uv run mypy\\b/": true,
+    "/^uv run lint-imports\\b/": true,
+    "/^uv run mutmut\\b/": true,
+    "/^python3 \\.ephor\\/judge\\.py check\\b/": true,
+    "/^python3 \\.ephor\\/judge\\.py validate\\b/": true,
+    "/^git status\\b/": true,
+    "/^git diff\\b/": true,
+    "/^git log\\b/": true,
+    "/^git show\\b/": true,
+    "/^git add\\b/": true,
+    "/^git commit\\b/": true,
+    "/^git switch\\b/": true,
+    "/^git restore\\b/": true,
+    "/^rg\\b/": true,
+    "/^fd\\b/": true,
+    "/^jq\\b/": true,
+    "/^bash \\.ephor\\/scripts\\/.*/": true,
+    "/^git push\\b/": false,
+    "/^glab\\b/": false,
+    "/^gh\\b/": false,
+    "/^podman\\b/": false,
+    "/^docker\\b/": false,
+    "/^kubectl\\b/": false,
+    "/^gcloud\\b/": false,
+    "/^curl\\b/": false,
+    "/^wget\\b/": false,
+    "/^rm\\b/": false,
+    "/^git push --force\\b/": false,
+    "/^git reset --hard\\b/": false,
+    "/^git update-ref\\b/": false,
+    "/^git config\\b/": false,
+    "/^make task-new\\b/": false,
+    "/^make adapters\\b/": false,
+    "/^make fetch-docs\\b/": false,
+    "/^python3 \\.ephor\\/fetch_docs\\.py\\b/": false,
+    "/^python3 \\.ephor\\/judge\\.py new\\b/": false
+  },
+  "chat.tools.edits.autoApprove": {
+    "**/*": true
+  }
+}

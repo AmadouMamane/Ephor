@@ -1,0 +1,4 @@
+{
+  "_aide": "Dépôts qu'on a le droit de LIRE pour travailler, jamais d'écrire. Écrit par l'opérateur : l'agent ne peut pas modifier ce fichier. Chemins absolus, ~ et ${VARIABLE} acceptés. Ce fichier est au projet : une mise à jour d'Ephor ne le remplace jamais. Voir .ephor/docs/06-exploitation.md.",
+  "depots": []
+}

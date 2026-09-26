@@ -1,0 +1,27 @@
+.verify/
+AGENT_STOP
+.claude/settings.local.json
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+dist/
+build/
+*.egg-info/
+.env
+.env.*
+!.env.example
+.import_linter_cache/
+mutants/
+.mutmut-cache
+.uv-cache/
+reports/
+# opencode installe ses dépendances de greffon dans le dépôt
+.opencode/node_modules/
+.opencode/package.json
+.opencode/package-lock.json
+.opencode/bun.lock

@@ -1,0 +1,46 @@
+# Première barrière, locale. Volontairement RAPIDE : un pre-commit lent est
+# un pre-commit qu'on contourne avec --no-verify, donc un pre-commit inutile.
+repos:
+  # ruff du projet (uv.lock), pas une copie téléchargée par pre-commit : sinon deux versions
+  # de ruff se contredisent entre le poste, pre-commit et la CI.
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (version du projet)
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format (version du projet)
+        entry: uv run ruff format
+        language: system
+        types: [python]
+  # gitleaks : le hook OFFICIEL se compile depuis les sources Go et échoue derrière un
+  # proxy d'entreprise restrictif (proxy.golang.org bloqué) — cas courant en banque.
+  # On utilise donc le binaire système s'il est installé, et on ne bloque pas s'il ne
+  # l'est pas : la vraie barrière anti-secret est le hook PreToolUse de l'agent et le
+  # job CI, pas le pre-commit. Installez-le : `brew install gitleaks`.
+  - repo: local
+    hooks:
+      - id: gitleaks
+        name: secrets (gitleaks, binaire système)
+        entry: bash -c 'command -v gitleaks >/dev/null 2>&1 && exec gitleaks protect --staged --no-banner --redact -v || { echo "gitleaks absent — contrôle ignoré (brew install gitleaks)"; exit 0; }'
+        language: system
+        pass_filenames: false
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-json
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: local
+    hooks:
+      - id: arch
+        name: contrats de direction des dépendances
+        entry: uv run lint-imports
+        language: system
+        pass_filenames: false

@@ -1,0 +1,30 @@
+# Image de CI (et du juge) : la base uv d'Ephor, plus git et gitleaks.
+#
+# Pourquoi elle existe. `make sec` refuse maintenant de passer pour vert quand gitleaks
+# manque : un scan qui n'a pas tourné ne dit rien. Restait à donner l'outil à la CI, et
+# c'est plus facile à dire qu'à faire : gitleaks n'est pas dans Debian, et le réseau de
+# l'entreprise n'atteint ni GitHub ni Docker Hub. On prend donc le binaire dans l'image
+# officielle, ce qui laisse JFrog la recopier comme n'importe quelle autre image — pas de
+# téléchargement à autoriser, pas d'empreinte à vérifier à la main.
+#
+# En entreprise, une fois : remplacez les deux registres par leurs équivalents JFrog, épinglez
+# par digest (`@sha256:...`), construisez, poussez, puis pointez `EPHOR_CI_IMAGE` (CI) et
+# `EPHOR_IMAGE` (juge) vers le résultat. La version de gitleaks est épinglée ici pour
+# qu'elle soit la même sur le poste et dans la CI : deux versions qui se contredisent,
+# c'est un scan sur lequel on ne peut pas s'appuyer.
+ARG BASE=ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+ARG GITLEAKS=zricethezav/gitleaks:v8.30.1
+
+FROM ${GITLEAKS} AS secrets
+
+FROM ${BASE}
+# git : le juge compare des commits, la CI calcule une base de fusion.
+# make : la CI lance `make sec`, et l'image de base n'a pas make. Cette ligne de CI
+# n'avait donc jamais pu s'exécuter — « command not found », pas « scan absent ».
+RUN apt-get update -qq \
+ && apt-get install -y -qq --no-install-recommends git make ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=secrets /usr/bin/gitleaks /usr/local/bin/gitleaks
+# Une image qui prétend porter l'outil sans le porter serait pire que pas d'image : la
+# construction échoue ici plutôt que la CI trois semaines plus tard.
+RUN gitleaks version && git --version && make --version | head -1 && uv --version

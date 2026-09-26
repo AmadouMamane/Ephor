@@ -1,0 +1,27 @@
+# À copier dans .gitlab/CODEOWNERS après avoir remplacé les groupes par de vrais propriétaires.
+# L'approbation obligatoire des propriétaires s'active dans les réglages du projet GitLab
+# (fonction des offres Premium et Ultimate). Ce fichier seul n'impose rien.
+
+[Contrôles d'Ephor][1]
+/.gitlab-ci.yml @groupe/plateforme
+/.gitlab/ @groupe/plateforme
+/.claude/ @groupe/plateforme
+/.opencode/ @groupe/plateforme
+/.github/ @groupe/plateforme
+/.vscode/ @groupe/plateforme
+/.gitleaks.toml @groupe/plateforme
+/.ephor/ @groupe/plateforme
+/Makefile @groupe/plateforme
+/AGENTS.md @groupe/plateforme
+/CLAUDE.md @groupe/plateforme
+
+[Contrats et tests d'acceptation][1]
+/tasks/ @groupe/qualite
+
+[Livraison][1]
+/.ephor/deploy/ @groupe/livraison
+/.ephor/projet/release-policy.json @groupe/livraison
+
+[Dépendances][1]
+/pyproject.toml @groupe/plateforme
+/uv.lock @groupe/plateforme

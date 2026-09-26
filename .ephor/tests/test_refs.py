@@ -1,0 +1,227 @@
+"""Dépôts de référence : ce qu'on déclare, ce qu'on lit, ce qu'on refuse d'écrire."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from conftest import EPHOR, ROOT, git
+
+sys.path.insert(0, str(EPHOR))
+
+import refs
+
+HOOK = ROOT / ".ephor" / "hooks" / "refs-guard.sh"
+
+
+def declare(repo: Path, depots: list[dict[str, str]]) -> None:
+    (repo / refs.CONFIG).parent.mkdir(parents=True, exist_ok=True)
+    (repo / refs.CONFIG).write_text(json.dumps({"depots": depots}), encoding="utf-8")
+
+
+def make_repo(path: Path, fichier: str = "schema.py") -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / fichier).write_text("class Message:\n    def valider(self): ...\n", encoding="utf-8")
+    git(path, "init", "-q", "-b", "main")
+    git(path, "config", "user.email", "test@example.invalid")
+    git(path, "config", "user.name", "Ephor test")
+    git(path, "add", "-A")
+    git(path, "commit", "-qm", "schéma")
+    return path
+
+
+def test_nothing_declared_is_not_an_error(tmp_path: Path) -> None:
+    assert refs.load(tmp_path) == []
+    assert "aucun dépôt de référence" in refs.listing(tmp_path)
+
+
+def test_a_declared_repository_carries_its_commit(tmp_path: Path) -> None:
+    source = make_repo(tmp_path / "producteurs")
+    travail = tmp_path / "travail"
+    declare(travail, [{"nom": "producteurs", "chemin": str(source), "pourquoi": "les messages"}])
+    (ref,) = refs.load(travail)
+    assert ref.nom == "producteurs"
+    assert len(refs.state(ref)) == 7  # commit court, dépôt propre
+    (source / "schema.py").write_text("# modifié\n", encoding="utf-8")
+    assert "modifié" in refs.state(ref)
+
+
+def test_the_home_and_the_environment_are_expanded(tmp_path: Path, monkeypatch: Any) -> None:
+    source = make_repo(tmp_path / "transporteurs")
+    monkeypatch.setenv("DEPOTS_LCL", str(tmp_path))
+    travail = tmp_path / "travail"
+    declare(travail, [{"nom": "transporteurs", "chemin": "${DEPOTS_LCL}/transporteurs"}])
+    assert refs.load(travail)[0].chemin == source.resolve()
+
+
+@pytest.mark.parametrize(
+    ("depot", "message"),
+    [
+        ({"nom": "Producteurs", "chemin": "/tmp/x"}, "nom invalide"),
+        ({"nom": "producteurs"}, "chemin manquant"),
+        ({"nom": "producteurs", "chemin": "../voisin"}, "absolu"),
+    ],
+)
+def test_a_bad_declaration_is_refused(tmp_path: Path, depot: dict[str, str], message: str) -> None:
+    declare(tmp_path, [depot])
+    with pytest.raises(refs.RefsError, match=message):
+        refs.load(tmp_path)
+
+
+def test_a_reference_cannot_be_the_work_repository(tmp_path: Path) -> None:
+    """Se déclarer soi-même comme référence rendrait tout le dépôt intouchable... ou pas."""
+    travail = tmp_path / "travail"
+    declare(travail, [{"nom": "soi", "chemin": str(travail)}])
+    with pytest.raises(refs.RefsError, match="dépôt de travail"):
+        refs.load(travail)
+    declare(travail, [{"nom": "dedans", "chemin": str(travail / "src")}])
+    with pytest.raises(refs.RefsError, match="dépôt de travail"):
+        refs.load(travail)
+
+
+def test_a_duplicate_name_is_refused(tmp_path: Path) -> None:
+    declare(tmp_path, [{"nom": "a", "chemin": "/tmp/un"}, {"nom": "a", "chemin": "/tmp/deux"}])
+    with pytest.raises(refs.RefsError, match="deux fois"):
+        refs.load(tmp_path)
+
+
+def test_it_knows_what_falls_inside_a_reference(tmp_path: Path) -> None:
+    source = make_repo(tmp_path / "producteurs")
+    travail = tmp_path / "travail"
+    declare(travail, [{"nom": "producteurs", "chemin": str(source)}])
+    chargés = refs.load(travail)
+    assert refs.inside(chargés, source / "schemas" / "message.py") is not None
+    assert refs.inside(chargés, source) is not None
+    assert refs.inside(chargés, tmp_path / "ailleurs" / "x.py") is None
+
+
+def test_the_map_of_an_unknown_repository_says_which_ones_exist(tmp_path: Path) -> None:
+    declare(tmp_path, [])
+    assert refs.main(["--repo", str(tmp_path), "carte", "--nom", "inconnu"]) == 2
+
+
+def test_a_detour_designates_the_same_place(tmp_path: Path) -> None:
+    """Lien symbolique, `..`, `~`, casse : quatre façons d'écrire le même chemin."""
+    source = make_repo(tmp_path / "amont")
+    travail = tmp_path / "travail"
+    travail.mkdir()
+    declare(travail, [{"nom": "amont", "chemin": str(source)}])
+    chargés = refs.load(travail)
+    raccourci = travail / "raccourci"
+    raccourci.symlink_to(source)
+    assert refs.inside(chargés, raccourci / "schema.py") is not None
+    assert refs.inside(chargés, source / ".." / "amont" / "schema.py") is not None
+    assert refs.inside(chargés, Path("../amont/schema.py"), travail) is not None
+    if refs.CASSE_IGNOREE:
+        assert refs.inside(chargés, Path(str(source).upper()) / "schema.py") is not None
+
+
+def test_an_impossible_path_is_refused_not_a_crash(tmp_path: Path) -> None:
+    declare(tmp_path, [{"nom": "amont", "chemin": "/tmp/pas\x00possible"}])
+    with pytest.raises(refs.RefsError, match="interdit"):
+        refs.load(tmp_path)
+    # Le juge appelle commits() : il doit apprendre le problème, pas tomber avec.
+    assert "__erreur__" in refs.commits(tmp_path)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="hooks bash")
+def test_the_guard_refuses_to_write_into_a_reference(tmp_path: Path) -> None:
+    """Le juge ne verra jamais ce fichier : s'il n'est pas refusé ici, il ne l'est nulle part."""
+    source = make_repo(tmp_path / "producteurs")
+    travail = tmp_path / "travail"
+    declare(travail, [{"nom": "producteurs", "chemin": str(source)}])
+    for module in ("refs.py", "repo_map.py"):
+        (travail / ".ephor" / module).write_text(
+            (EPHOR / module).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+    def ecrire(cible: Path) -> subprocess.CompletedProcess[str]:
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(travail))
+        return subprocess.run(
+            [str(HOOK)],
+            input=json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(cible)}}),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+            check=False,
+        )
+
+    refuse = ecrire(source / "schema.py")
+    assert refuse.returncode == 2
+    assert "lecture seule" in refuse.stderr
+    assert ecrire(travail / "src" / "moteur.py").returncode == 0
+
+    # Les détours désignent le même fichier : ils doivent recevoir la même réponse.
+    raccourci = travail / "raccourci"
+    raccourci.symlink_to(source)
+    assert ecrire(raccourci / "schema.py").returncode == 2
+    assert ecrire(source / ".." / source.name / "schema.py").returncode == 2
+
+    # Un autre outil, un autre champ : le nom de l'outil ne décide de rien.
+    autre = subprocess.run(
+        [str(HOOK)],
+        input=json.dumps({"tool_name": "mcp__fs__write", "tool_input": {"path": str(source)}}),
+        capture_output=True,
+        text=True,
+        env=dict(os.environ, CLAUDE_PROJECT_DIR=str(travail)),
+        timeout=30,
+        check=False,
+    )
+    assert autre.returncode == 2
+
+    # Déclaration illisible : ce qui sort du dépôt est refusé, jamais en silence, avec la
+    # raison et la consigne de ne pas contourner.
+    (travail / refs.CONFIG).write_text("{pas du json", encoding="utf-8")
+    dehors = ecrire(tmp_path / "ailleurs" / "x.py")
+    assert dehors.returncode == 2
+    assert "inutilisable" in dehors.stderr and "illisible" in dehors.stderr
+    assert "Ne contourne pas" in dehors.stderr
+    assert ecrire(raccourci / "schema.py").returncode == 2, "un lien qui sort du dépôt en sort"
+    # Mais le travail DANS le dépôt continue : aucune référence ne peut s'y trouver. Le
+    # 24/09/2026, une déclaration cassée bloquait tout, et l'agent est passé par le terminal.
+    assert ecrire(travail / "src" / "moteur.py").returncode == 0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="hooks bash")
+def test_a_reference_is_read_with_the_copilot_panel_tools(tmp_path: Path) -> None:
+    """Le panneau de Copilot lit avec `read_file` : ce nom manquait, et une lecture était
+    jugée comme une écriture — refusée dans un dépôt de référence, fait pour être lu."""
+    source = make_repo(tmp_path / "producteurs")
+    travail = tmp_path / "travail"
+    declare(travail, [{"nom": "producteurs", "chemin": str(source)}])
+    (travail / ".ephor" / "refs.py").write_text(
+        (EPHOR / "refs.py").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    for outil, args in (
+        ("read_file", {"filePath": str(source / "schema.py")}),
+        ("list_dir", {"path": str(source)}),
+    ):
+        lecture = subprocess.run(
+            [str(HOOK)],
+            input=json.dumps(
+                {"toolName": outil, "toolArgs": args, "workingDirectory": str(travail)}
+            ),
+            capture_output=True,
+            text=True,
+            env=dict(os.environ, CLAUDE_PROJECT_DIR=str(travail)),
+            timeout=30,
+            check=False,
+        )
+        assert lecture.returncode == 0, f"{outil} : {lecture.stderr}"
+
+
+def test_an_unset_variable_is_named(tmp_path: Path, monkeypatch: Any) -> None:
+    """Sans variable, le chemin restait « ${X}/y » et le message parlait d'un chemin pas
+    absolu : personne ne comprenait qu'il fallait exporter une variable."""
+    monkeypatch.delenv("DEPOTS_ABSENTS", raising=False)
+    declare(tmp_path, [{"nom": "metrics", "chemin": "${DEPOTS_ABSENTS}/metrics"}])
+    with pytest.raises(refs.RefsError, match="DEPOTS_ABSENTS") as erreur:
+        refs.load(tmp_path)
+    assert "non définie" in str(erreur.value)

@@ -1,0 +1,8 @@
+# Exceptions au juge des données personnelles (.ephor/personal_data.py).
+#
+# Une ligne par exception, validée par un humain — jamais par un agent : ce fichier est
+# sous .ephor/, que l'agent ne peut pas modifier. Ce fichier est au PROJET : une mise à jour
+# d'Ephor ne le remplace jamais.
+#   chemin/du/fichier.py        -> tout le fichier est exempté (à éviter)
+#   chemin/du/fichier.py:42     -> seulement cette ligne (à préférer)
+# Écris la raison en commentaire au-dessus, avec la date et qui a validé.

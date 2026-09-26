@@ -1,0 +1,26 @@
+{
+  "id": "EXEMPLE-001",
+  "objective": "ItemService.register refuse un libellé vide ou fait uniquement d'espaces en levant ValueError, et n'enregistre alors rien. Un libellé valide reste nettoyé de ses espaces de bord.",
+  "risk": "faible",
+  "allowed_paths": ["src/app/service.py", "tests/"],
+  "criteria": [
+    {
+      "id": "C1",
+      "description": "Un libellé vide ou blanc lève ValueError",
+      "check": ["uv", "run", "pytest", "-q", "-p", "no:randomly", "tasks/EXEMPLE-001/test_exemple_001.py::test_rejects_blank_label"]
+    },
+    {
+      "id": "C2",
+      "description": "Rien n'est enregistré après un refus",
+      "check": ["uv", "run", "pytest", "-q", "-p", "no:randomly", "tasks/EXEMPLE-001/test_exemple_001.py::test_nothing_stored_on_refusal"]
+    },
+    {
+      "id": "C3",
+      "description": "Un libellé valide reste nettoyé",
+      "check": ["uv", "run", "pytest", "-q", "-p", "no:randomly", "tasks/EXEMPLE-001/test_exemple_001.py::test_valid_label_is_still_trimmed"]
+    }
+  ],
+  "setup": ["uv", "sync", "--all-extras"],
+  "verify": ["bash", ".ephor/projet/verify.sh"],
+  "timeout_seconds": 900
+}

@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "bash \"__RACINE_DU_GREFFON__/hooks/relais.sh\" kill-switch.sh block-secrets.sh write-guard.sh scope-guard.sh refs-guard.sh shell-guard.sh read-guard.sh",
+        "timeout": 80
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "bash \"__RACINE_DU_GREFFON__/hooks/relais.sh\" steer.sh",
+        "timeout": 15
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "bash \"__RACINE_DU_GREFFON__/hooks/relais.sh\" budget.sh checkpoint.sh",
+        "timeout": 65
+      }
+    ]
+  }
+}

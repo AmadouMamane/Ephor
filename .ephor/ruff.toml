@@ -1,0 +1,49 @@
+# Règles de lint d'Ephor, pour ce dossier seul.
+#
+# ruff prend, pour chaque fichier, la configuration la plus proche. Dans un projet équipé,
+# le code d'Ephor est donc jugé sur CES règles, pas sur celles du projet : le lint du
+# projet ne remonte plus les fichiers d'Ephor, et Ephor ne dépend pas du goût du projet.
+# (Un dossier caché ne suffit pas : pytest et mypy le sautent, ruff non — mesuré.)
+#
+# Autonome exprès : pas de `extend` vers le pyproject.toml du projet, qui peut manquer,
+# ou ne pas avoir les mêmes règles.
+line-length = 100
+target-version = "py311"
+# Le cache hors du moteur, à la racine du projet. Rangé dans .ephor/.ruff_cache, il faisait
+# écrire chaque `make verify` dans une zone de contrôle : refusé par le bac à sable de Claude
+# Code, et vu comme une retouche par la sentinelle (mesuré le 25/09/2026).
+cache-dir = "../.ruff_cache"
+src = [".", "tests"]
+
+[lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "TID", "PTH", "RUF", "S", "T20"]
+ignore = ["S101"]  # assert autorisé dans les tests
+
+[lint.per-file-ignores]
+# Le juge lance des sous-processus et écrit sur la console : c'est son métier.
+# UP017 : il reste compatible avec le Python 3.9 livré par Apple.
+# S314 : le rapport de tests d'une preuve pytest est lu avec la bibliothèque standard
+# (pas de defusedxml, le juge n'a aucune dépendance) APRÈS refus de tout DOCTYPE ou entité.
+"judge.py" = ["S603", "S607", "S314", "T20", "UP017"]
+# Le générateur d'adaptateurs écrit son compte rendu sur la console : c'est son métier.
+"adapters.py" = ["T20"]
+# Le compteur de tokens écrit son résultat sur la console : c'est son métier.
+"usage.py" = ["T20"]
+# L'aspirateur de docs télécharge (schéma vérifié avant) et rend compte sur la console.
+"fetch_docs.py" = ["S310", "T20"]
+# Le tableau de bord écrit son résultat sur la console : c'est son métier.
+"score.py" = ["T20"]
+# Le juge des données personnelles écrit ses constats sur la console : c'est son métier.
+"personal_data.py" = ["T20"]
+# Les dépôts de référence : on interroge git sur chacun, et on rend compte sur la console.
+"refs.py" = ["S603", "S607", "T20"]
+# Le contrôle GitLab lit l'API (schéma vérifié avant), demande à git son remote, et rend
+# compte sur la console.
+"gitlab_check.py" = ["S310", "S603", "S607", "T20"]
+# Le générateur de manifeste écrit sur la console et appelle git.
+# UP017 : comme le juge, il est lancé par `python3` et doit tourner sur le 3.9 d'Apple.
+# Sans cette ligne, `ruff --fix` réécrivait `timezone.utc` en `datetime.UTC` — du 3.11 —
+# et le fichier plantait à l'import sur un Mac resté en Python 3.9. Corrigé trois fois de suite
+# avant qu'on comprenne que c'était l'outil de formatage qui défaisait la correction.
+"deploy/manifest.py" = ["S603", "S607", "T20", "UP017"]
+"tests/**" = ["S", "T20"]

@@ -1,0 +1,96 @@
+[project]
+name = "app"
+version = "0.1.0"
+description = "Projet sous harnais agentique"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "pytest>=8",
+  "pytest-cov>=5",
+  "pytest-xdist>=3",       # parallélisme local
+  "pytest-randomly>=3",    # ordre aléatoire : casse les dépendances entre tests
+  "import-linter>=2",      # contrats de direction des dépendances (tests structurels)
+  "hypothesis>=6",         # property-based : trouve ce que l'agent n'a pas imaginé
+  "mutmut>=3",             # mutation testing : vérifie que les tests VERRAIENT une régression
+  "pip-audit>=2",          # vulnérabilités des dépendances (appelé par la CI post-merge)
+]
+
+# Poste d'entreprise : dépôt PyPI interne (JFrog). Décommentez, remplacez l'URL, puis
+# régénérez le verrou (`uv lock`) : un verrou produit contre pypi.org garde ses URLs.
+# [[tool.uv.index]]
+# name = "jfrog"
+# url = "https://<instance-jfrog>/artifactory/api/pypi/<depot-pypi>/simple"
+# default = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/app"]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E","F","W","I","N","UP","B","A","C4","SIM","TID","PTH","RUF","S","T20"]
+# T20 interdit print() : tout log passe par providers.logger (invariant de goût)
+# S = bandit : sécurité de base
+ignore = ["S101"]  # assert autorisé dans les tests
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "T20"]
+# Tests d'acceptation des contrats : mêmes règles que les tests.
+"tasks/**" = ["S", "T20"]
+# Le code d'Ephor a ses propres règles : .ephor/ruff.toml, que ruff lit pour ce dossier.
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+files = ["src", "tests"]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+  "slow: test lent, exclu de l'étage pré-file",
+  "integration: nécessite une dépendance externe",
+  "flaky: mis en quarantaine, ne bloque pas la file de merge",
+  "container: nécessite podman ou docker (tests d'Ephor)",
+]
+
+# ------------------------------------------------- import-linter : LE garde-fou
+# C'est la traduction mécanique de la section 3 d'AGENTS.md.
+# Un agent ne peut pas violer la direction des dépendances sans faire rougir `make arch`.
+[tool.importlinter]
+root_package = "app"
+include_external_packages = true  # requis dès qu'un contrat "forbidden" vise un module externe
+
+[[tool.importlinter.contracts]]
+name = "Couches strictes (une couche n'importe jamais au-dessus d'elle)"
+type = "layers"
+layers = ["app.ui", "app.runtime", "app.service", "app.repo", "app.config", "app.types"]
+
+[[tool.importlinter.contracts]]
+name = "Les transverses passent par providers uniquement"
+type = "forbidden"
+source_modules = ["app.service", "app.repo"]
+forbidden_modules = ["logging", "os", "random", "datetime"]
+allow_indirect_imports = true  # seul l'import DIRECT est interdit ; passer par providers est la voie légale
+
+# ---------------------------------------------------- mutmut (mutation testing)
+# mutmut 3 se configure ici ; `mutmut run` filtre ensuite par NOM de mutant
+# (ex. `mutmut run "src.app.service.*"`), pas par chemin.
+[tool.mutmut]
+source_paths = ["src/"]
+also_copy = ["pyproject.toml"]

@@ -1,0 +1,102 @@
+# ÉTAGE 3 — après fusion, et chaque nuit. Ne bloque personne : la fusion est déjà faite.
+# Mais un échec s'y VOIT : aucune étape ne finit par « || echo », qui la laisserait verte
+# quoi qu'il arrive, et les tests d'Ephor y tournent au complet. Deux travaux :
+#   ephor   — ce qui doit tenir : vérification stricte, tests d'Ephor conteneurs compris,
+#             secrets, données personnelles. Rouge = à réparer.
+#   signaux — ce qu'on surveille sans en faire une porte : tests instables, vulnérabilités,
+#             mutation. Une étape en échec y est marquée en échec (continue-on-error) au lieu
+#             d'être avalée ; le travail, lui, ne rougit pas pour un signal.
+name: post-merge
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * *"
+permissions:
+  contents: read
+jobs:
+  ephor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      VERIFY_STRICT: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+      - run: uv sync --all-extras
+      - name: vérification complète, stricte, tests lents compris
+        run: bash .ephor/projet/verify.sh
+      - name: tests d'Ephor, conteneurs compris (le juge sous Docker Linux)
+        run: make ephor-test
+      - name: secrets
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # La version du poste et de l'image de CI (.ephor/deploy/Containerfile.ci).
+          # Sans elle, l'action prend la 8.24.3, qui ne lit pas `[[allowlists]]` : les
+          # faux secrets des tests remontaient au scan complet de la nuit (26/09/2026).
+          GITLEAKS_VERSION: 8.30.1
+      - name: données personnelles dans les journaux
+        run: python3 -B .ephor/personal_data.py
+      - name: détail des tests d'Ephor en échec
+        if: failure()
+        run: |
+          for f in .verify/ephor.txt .verify/test.txt; do
+            if [ -f "$f" ]; then echo "== $f"; grep -E "^(FAILED|ERROR)|^E  " "$f" | head -40; tail -n 5 "$f"; fi
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: verify-post-merge-${{ github.sha }}
+          path: .verify/
+          # .verify/ est un dossier caché : sans cette option, rien n'est envoyé, en silence.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  signaux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+      - run: uv sync --all-extras
+      - name: tests en quarantaine, dix répétitions
+        continue-on-error: true
+        run: |
+          instable=0
+          for i in $(seq 1 10); do
+            bash .ephor/scripts/pytest_ci.sh -q -m flaky || { echo "::warning::instable au tour $i"; instable=1; }
+          done
+          exit "$instable"
+      - name: vulnérabilités des dépendances
+        continue-on-error: true
+        run: uv run pip-audit
+      - name: score de mutation, passe complète
+        continue-on-error: true
+        run: |
+          uv run mutmut run > mutants-full.log 2>&1
+          # Un mutmut mort au démarrage sortait en silence : on exige son rapport de fin.
+          grep -q "mutations/second" mutants-full.log || { tail -n 30 mutants-full.log; exit 1; }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mutants-${{ github.sha }}
+          path: mutants-full.log
+          if-no-files-found: warn
+          retention-days: 30
+      - name: chaîne d'approvisionnement des agents (MCP, skills, réglages)
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          if [ -n "$SNYK_TOKEN" ]; then uvx snyk-agent-scan==0.6.4 --ci; fi

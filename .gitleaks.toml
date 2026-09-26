@@ -1,0 +1,30 @@
+# Réglage gitleaks du dépôt. Zone de contrôle : un agent ne peut pas s'y ajouter une ligne
+# (règle `Edit(.gitleaks.toml)` dans .claude/settings.json, et `.gitleaks.toml` dans les
+# zones protégées du juge), sinon il lui suffirait d'autoriser son propre secret.
+#
+# Pourquoi ce fichier plutôt que `.gitleaksignore` : une empreinte gitleaks contient le
+# COMMIT. gitleaks relit tout l'historique, donc chaque nouveau commit qui touche le
+# fichier de test fabrique une empreinte de plus, et la liste devient fausse le jour même.
+#
+# Chaque exemption est ancrée (`^…$`) ET limitée à un seul fichier de test, les deux
+# ensemble. Sans l'ancrage, un VRAI secret commençant par les mêmes caractères passerait,
+# n'importe où dans le dépôt.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Fausses valeurs fabriquées pour vérifier que block-secrets.sh refuse bien."
+condition = "AND"
+paths = ['''^\.ephor/tests/test_hooks\.py$''']
+regexes = [
+  '''^glpat-AbCdEfGhIjKlMnOpQrSt$''',
+  '''^abcdef0123456789abcd$''',
+]
+
+# Le faux GitLab des tests de `make gitlab-check` réclame un jeton, et gitleaks le reconnaît
+# à son préfixe. Même règle qu'au-dessus : la valeur exacte, dans ce seul fichier.
+[[allowlists]]
+description = "Faux jeton du faux GitLab contre lequel make gitlab-check est testé."
+condition = "AND"
+paths = ['''^\.ephor/tests/test_gitlab_check\.py$''']
+regexes = ['''^glpat-jeton-de-test-ne-pas$''']

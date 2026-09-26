@@ -1,0 +1,52 @@
+# Les zones de contrôle d'Ephor — LA liste qui fait foi, dans le moteur.
+#
+# Ce que l'agent n'écrit jamais : ses propres consignes et garde-fous, la CI, le juge, les
+# contrats, et, sur le poste, les réglages des agents eux-mêmes. Elle alimente le juge,
+# les gardes (édition et terminal), la sentinelle et la garde des contrôles de la CI.
+#
+# Pourquoi ici, et pas dans .claude/settings.json : une défense ne lit pas sa politique dans
+# un fichier que l'agent peut écrire. Mesuré le 25/09/2026 : la sentinelle lisait ses zones
+# dans les réglages, et un agent qui en retirait une règle la rendait aveugle. Les réglages
+# du projet peuvent AJOUTER des zones (leurs refus Edit(...)) ; ils ne peuvent pas en retirer.
+#
+# Forme : une entrée par ligne. « x/ » : ce dossier et tout ce qu'il contient ; « x » : ce
+# fichier. Relatif : dans le dépôt. « ~/ » : sur le poste, hors de tout dépôt. « ! » en tête :
+# exception, pour le poste seulement.
+
+# --- dans le dépôt
+.git/
+.github/
+.gitlab/
+.gitlab-ci.yml
+.claude/
+.opencode/
+opencode.json
+.vscode/
+.mcp.json
+.ephor/
+tasks/
+# GNU make lit GNUmakefile, puis makefile, AVANT Makefile : l'un ou l'autre détourne
+# `make judge` et `make verify` (mesuré le 25/09/2026 : faux « VÉRIFIÉ »).
+Makefile
+GNUmakefile
+makefile
+AGENTS.md
+CLAUDE.md
+CLAUDE.local.md
+.pre-commit-config.yaml
+.gitleaks.toml
+
+# --- sur le poste : là où vivent les réglages et les greffons des agents
+~/.claude/
+~/.claude.json
+~/.copilot/
+~/.config/opencode/
+~/.vscode/
+# VS Code exécute SA copie du greffon Copilot, rangée ici, pas l'original (mesuré le 24/09).
+~/Library/Application Support/Code/
+~/Library/Application Support/Code - Insiders/
+~/.config/Code/
+~/.config/Code - Insiders/
+# Ce que Claude Code demande à l'agent d'écrire lui-même : sa mémoire, ses plans.
+!~/.claude/projects/*/memory/
+!~/.claude/plans/
