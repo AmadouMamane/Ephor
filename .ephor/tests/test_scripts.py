@@ -507,10 +507,25 @@ def test_le_bac_a_sable_de_claude_code_est_la_frontiere_du_terminal(tmp_path: Pa
     shutil.copy(ROOT / ".claude" / "settings.json", copie / ".claude")
     git(copie, "init", "-q", "-b", "main")
     doctor = ["bash", str(copie / ".ephor" / "scripts" / "doctor.sh")]
-    actif = subprocess.run(doctor, capture_output=True, text=True, timeout=180, check=False)
+    # Un poste Mac, où rien n'est à installer. Sous Linux, le diagnostic lance bubblewrap pour
+    # de vrai : la machine Ubuntu de GitHub, sans bubblewrap ni socat, répondait « SAUTÉ »
+    # (26/09/2026). Ce cas-là a son propre test, juste en dessous.
+    mac = tmp_path / "mac"
+    mac.mkdir()
+    vrai_uname = shutil.which("uname")
+    (mac / "uname").write_text(
+        f'#!/bin/sh\nif [ "$1" = "-s" ]; then echo Darwin; else exec {vrai_uname} "$@"; fi\n'
+    )
+    (mac / "uname").chmod(0o755)
+    env = dict(os.environ, PATH=f"{mac}{os.pathsep}{os.environ['PATH']}")
+    actif = subprocess.run(
+        doctor, capture_output=True, text=True, env=env, timeout=180, check=False
+    )
     assert "[ OK ] bac à sable de Claude Code" in actif.stdout
     (copie / ".claude" / "settings.local.json").write_text('{"sandbox": {"enabled": false}}')
-    coupe = subprocess.run(doctor, capture_output=True, text=True, timeout=180, check=False)
+    coupe = subprocess.run(
+        doctor, capture_output=True, text=True, env=env, timeout=180, check=False
+    )
     assert "[WARN] bac à sable de Claude Code coupé" in coupe.stdout
 
 
