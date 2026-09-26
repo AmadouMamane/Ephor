@@ -35,3 +35,26 @@ pages du web entrées comme données (`make fetch-docs`), tableau de bord des ju
 (`make score`), installation et mise à jour dans un dépôt existant.
 
 Ce qui n'a pas encore tourné en conditions réelles est listé à la fin du `README.md`.
+
+### Un projet déjà équipé d'une version d'avant la 1.0
+
+`bootstrap_existing_repo.sh --mettre-a-jour` remplace le moteur (`.ephor/`). Trois choses
+restent à reprendre à la main dans `.claude/settings.json` (le bilan les signale par le
+`.ephor-new`) : la garde `write-guard.sh` déclarée pour Claude Code, le bloc `sandbox`
+(ADR 0008), et les refus `.git/config`, `.git/hooks/**`, `.git/info/**`, `GNUmakefile`,
+`makefile`, `.mcp.json`, `CLAUDE.local.md` ; et, pour opencode, `.opencode/plugins/ephor.js`.
+Tant qu'ils manquent, Claude Code et opencode n'appliquent pas la liste des zones à
+l'édition ; la sentinelle et le juge, eux, la lisent déjà. Puis `make adapters`, et
+`make copilot-install` sur chaque poste : l'ordre des gardes du greffon a changé.
+
+Deux règles du juge peuvent faire refuser ou échouer une tâche qui passait :
+
+- un critère qui cite un **dossier** ouvert à l'écriture par `allowed_paths` (`pytest tests/`
+  avec `tests/` dans le périmètre) est refusé — citez les fichiers de preuve un par un, ou
+  resserrez le périmètre ;
+- une vérification qui réécrit un fichier suivi de la copie fait échouer le jugement,
+  puisque ce qui a été vérifié ne serait plus ce qui sera livré.
+
+Un projet équipé avant que tout Ephor tienne dans `.ephor/` : le script reprend lui-même
+ses réglages à leur nouvelle adresse, puis donne la commande qui retire les anciens
+fichiers.
