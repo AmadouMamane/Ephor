@@ -202,6 +202,12 @@ def check_manifest(manifest_path: Path, policy_path: Path) -> list[str]:
     # qui n'existe pas encore (canary, seuils, retour arrière). Le valider contre lui-même
     # donnerait un « conforme » qui ne veut rien dire.
     if policy.get("example_only"):
+        if policy_path.name == "release-policy.json":
+            # Recopié à sa place, pas encore rempli : lui redonner sa place tournait en rond.
+            return [
+                f"{policy_path} est encore le modèle livré avec Ephor : remplissez-le avec les "
+                "règles de l'entreprise, puis retirez la ligne « example_only »."
+            ]
         return [
             f"{policy_path} est le modèle livré avec Ephor, pas une politique. Sa place : "
             ".ephor/projet/release-policy.json, remplie avec les règles de l'entreprise, "

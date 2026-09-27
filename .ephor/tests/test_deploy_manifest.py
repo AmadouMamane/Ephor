@@ -218,3 +218,17 @@ def test_un_rapport_lu_dans_verify_est_dit_pour_ce_qu_il_est(tmp_path: Path) -> 
     commande += ["--report", str(rapport)]
     sortie = subprocess.run(commande, capture_output=True, text=True, check=False)
     assert sortie.returncode == 0 and "ATTENTION" not in sortie.stderr
+
+
+def test_le_modele_recopie_sans_etre_rempli_dit_quoi_faire(tmp_path: Path) -> None:
+    """Le modèle copié à sa place mais pas rempli : le message disait « sa place :
+    .ephor/projet/release-policy.json » à qui venait de l'y mettre."""
+    manifeste = tmp_path / "m.json"
+    manifeste.write_text(json.dumps({"judge_status": "verified_needs_review"}), encoding="utf-8")
+    modele = Path(delivery_manifest.__file__).parent / "release-policy.example.json"
+    politique = tmp_path / ".ephor" / "projet" / "release-policy.json"
+    politique.parent.mkdir(parents=True)
+    politique.write_text(modele.read_text(encoding="utf-8"), encoding="utf-8")
+    erreurs = delivery_manifest.check_manifest(manifeste, politique)
+    assert erreurs and "encore le modèle" in erreurs[0]
+    assert "Sa place" not in erreurs[0]

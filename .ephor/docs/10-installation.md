@@ -114,7 +114,7 @@ echo '{"tool_input":{"content":"key = \"AKIAIOSFODNN7EXAMPLE\""}}' \
 
 # 3. le refus de journaliser une donnée client
 printf 'import logging\nlog = logging.getLogger(__name__)\ndef f(c):\n    log.info(f"{c.iban}")\n' > /tmp/fuite.py
-python3 -c "import sys; sys.path.insert(0,'.ephor'); import personal_data as p; print('attendu 1, obtenu', len(p.scan_source(open('/tmp/fuite.py').read())))"
+python3 -B -c "import sys; sys.path.insert(0,'.ephor'); import personal_data as p; print('attendu 1, obtenu', len(p.scan_source(open('/tmp/fuite.py').read())))"
 
 # 4. les dépôts voisins déclarés en lecture seule (vide au départ, c'est normal)
 make refs
