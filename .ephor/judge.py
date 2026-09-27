@@ -949,6 +949,10 @@ def writable_proofs(repo: Path, base: str, contract: Contract) -> list[str]:
 # le juge la lit sur la base, où l'agent ne peut pas écrire, et ne relance rien.
 ROUGE = "rouge.json"
 COMMANDE_ROUGE = "python3 .ephor/judge.py rouge --task-id"
+# Ce que `make task-new` écrit à la place du contrat et des tests : laissé tel quel, un
+# « rouge » qui ne prouve rien (le test d'un squelette échoue toujours).
+A_ECRIRE = "A ECRIRE"
+SQUELETTE = "critère à écrire"
 
 
 def preuves_rouges(repo: Path, arbre: str, contract: Contract, task_id: str) -> dict[str, str]:
@@ -2287,6 +2291,17 @@ def recevabilite(copy: Path, arbre: str, contract: Contract) -> list[str]:
     un dossier de preuve ouvert à l'agent (le juge le refuserait), une preuve introuvable (le
     critère échouerait sur « fichier absent », pas sur le comportement qui manque)."""
     problemes = open_dirs(copy, arbre, contract)
+    a_ecrire = [
+        nom
+        for nom, texte in [("objective", contract.objective)]
+        + [(c.id, c.description) for c in contract.criteria]
+        if texte.lstrip().upper().startswith(A_ECRIRE)
+    ]
+    if a_ecrire:
+        problemes.append(
+            f"le contrat est encore le squelette de make task-new : « {A_ECRIRE} » dans"
+            f" {', '.join(a_ecrire)}"
+        )
     for critere in contract.criteria:
         forme = forme_de_preuve(critere)
         index = position_script(critere.check)
@@ -2487,17 +2502,24 @@ def lancer_en_rouge(
             print(f"  VERT   {titre} : passe déjà")
             continue
         travers = None
-        if issue["forme"] == "rapport":
+        journal = banc.logs / f"{critere.id}.log"
+        if issue["code"] in (126, 127) and issue["forme"] != "rapport":
+            # Le code des coquilles pour « introuvable » et « pas exécutable ».
+            travers = (
+                f"commande introuvable ou non exécutable (code {issue['code']}) : le critère"
+                " échoue avant de rien tester"
+            )
+        elif issue["forme"] == "rapport":
             travers = rouge_de_travers(
                 banc.logs / f"{critere.id}.junit.xml", tests_attendus(critere.check)
             )
+            if travers is None and SQUELETTE in journal.read_text("utf-8", "replace"):
+                travers = "test encore à écrire : c'est celui du squelette de make task-new"
         if travers is not None:
             refus.append(f"{critere.id} échoue pour une mauvaise raison : {travers}")
             print(f"  FAUX   {titre} : rouge pour une mauvaise raison\n         -> {travers}")
             continue
-        raison = issue["reason"] or extrait(
-            banc.logs / f"{critere.id}.log", issue["debut"], issue["code"]
-        )
+        raison = issue["reason"] or extrait(journal, issue["debut"], issue["code"])
         criteres.append({"id": critere.id, "resultat": "rouge", "raison": raison})
         print(f"  rouge  {titre}\n         -> {raison}")
     return criteres, verts, refus
@@ -2508,8 +2530,7 @@ TEST_NAME = re.compile(r"^test_[A-Za-z0-9_]*$")
 
 def skeleton_test(task_id: str, tests: list[str]) -> str:
     body = "".join(
-        f'\n\ndef {name}() -> None:\n    pytest.fail("critère à écrire : {name}")\n'
-        for name in tests
+        f'\n\ndef {name}() -> None:\n    pytest.fail("{SQUELETTE} : {name}")\n' for name in tests
     )
     return (
         f'"""Tests d\'acceptation de {task_id}.\n\n'
@@ -2549,13 +2570,13 @@ def cmd_new(args: argparse.Namespace) -> int:
     test_name = f"test_{task_id.lower().replace('-', '_')}.py"
     data: dict[str, Any] = {
         "id": task_id,
-        "objective": "A ECRIRE : le comportement observable attendu, en deux ou trois phrases.",
+        "objective": f"{A_ECRIRE} : le comportement observable attendu, en deux ou trois phrases.",
         "risk": "faible",
         "allowed_paths": ["src/", "tests/"],
         "criteria": [
             {
                 "id": "C1",
-                "description": "A ECRIRE : un critère qu'un tiers peut trancher sans débat.",
+                "description": f"{A_ECRIRE} : un critère qu'un tiers peut trancher sans débat.",
                 "check": [
                     "uv",
                     "run",

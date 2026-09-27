@@ -17,8 +17,9 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
    fera. Un travail en cours pas commité ailleurs n'y entre pas : ce n'est pas ce que l'agent
    recevra, et il le dit. Lancez-le sur la branche principale. **Tous doivent échouer** : un critère déjà vert ferait déclarer l'agent VÉRIFIÉ
    sans qu'il ait rien fait, et il est refusé. Un rouge pour une mauvaise raison l'est
-   aussi, quand il se reconnaît : preuve introuvable, test pytest désigné qui n'a jamais
-   tourné (nom mal écrit) ou qui passe déjà. Pour le reste, lisez la raison affichée pour
+   aussi, quand il se reconnaît : preuve introuvable, commande introuvable, test pytest
+   désigné qui n'a jamais tourné (nom mal écrit) ou qui passe déjà, squelette de
+   `make task-new` pas encore rempli. Pour le reste, lisez la raison affichée pour
    chacun : elle doit dire que le comportement manque. Alors seulement il écrit
    `tasks/FEAT-001/rouge.json`. Relancé sans que rien ait changé, il n'y touche plus.
 3. **Approuver.** Vous commitez le dossier entier (contrat, tests, `rouge.json`) sur la

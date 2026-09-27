@@ -49,7 +49,9 @@ d'un patch quelconque dans son périmètre. L'exemple livré en avait un (EXEMPL
   le juge ne les rejoue pas, il signale seulement que la base a bougé.
 - Un échec pour une mauvaise raison est refusé quand il se reconnaît : preuve introuvable,
   dossier de preuve ouvert à l'agent, test pytest désigné jamais lancé (nom ou chemin mal
-  écrit : pytest rend alors un rapport sans aucun test, mesuré le 26/09/2026) ou déjà vert.
+  écrit : pytest rend alors un rapport sans aucun test, mesuré le 26/09/2026) ou déjà vert,
+  commande introuvable (code 126 ou 127), squelette de `make task-new` pas rempli (texte
+  « A ECRIRE », test qui échoue sur « critère à écrire ») — ces deux-là depuis le 27/09/2026.
   Un test qui importe une fonction pas encore écrite reste un vrai rouge. Le reste (une
   faute dans le corps d'un script) compte comme rouge : la raison est affichée, la lire
   reste un acte humain.

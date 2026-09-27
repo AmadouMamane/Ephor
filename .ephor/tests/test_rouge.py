@@ -384,3 +384,50 @@ def test_le_rouge_ne_se_lance_pas_sur_une_branche_de_tache(
     assert "task/T-001" in capsys.readouterr().out
     assert (repo / "tasks" / "T-001" / judge.ROUGE).is_file()
     assert git(repo, "status", "--porcelain") == ""
+
+
+def test_le_squelette_de_task_new_n_est_pas_approuvable(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le squelette laissé tel quel passait : `pytest.fail("critère à écrire")` échoue, donc
+    « rouge », et la trace s'écrivait pour un contrat « A ECRIRE » (vu sur un dépôt d'essai)."""
+    git(repo, "switch", "-q", "main")
+    assert judge.main(["new", "--task-id", "T-002", "--repo", str(repo)]) == 0
+    capsys.readouterr()
+    code = judge.main(
+        ["rouge", "--task-id", "T-002", "--repo", str(repo), "--workdir", str(tmp_path / "w")]
+    )
+    assert code == 1
+    sortie = capsys.readouterr().out
+    assert "squelette de make task-new" in sortie and "objective" in sortie
+    assert not (repo / "tasks" / "T-002" / judge.ROUGE).exists()
+    # Textes écrits, test laissé vide : le test est refusé à son tour, lui seul.
+    contrat = json.loads((repo / "tasks" / "T-002" / "contract.json").read_text())
+    contrat["objective"] = "Un objectif enfin rédigé par l'opérateur."
+    contrat["criteria"][0]["description"] = "un critère rédigé"
+    contrat["criteria"][0]["check"] = ["{python}", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+    contrat["criteria"][0]["check"].append("tasks/T-002/test_t_002.py::test_c1")
+    contrat.pop("setup")
+    (repo / "tasks" / "T-002" / "contract.json").write_text(json.dumps(contrat))
+    code = judge.main(
+        ["rouge", "--task-id", "T-002", "--repo", str(repo), "--workdir", str(tmp_path / "w")]
+    )
+    assert code == 1
+    sortie = capsys.readouterr().out
+    assert "FAUX   C1" in sortie and "test encore à écrire" in sortie
+
+
+def test_une_commande_introuvable_est_un_faux_rouge(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Code 127 : la commande n'existe pas, le critère échoue avant de rien tester. C'était un
+    « rouge » comme un autre, et la trace s'écrivait."""
+    contrat = contrat_de(repo)
+    contrat["criteria"][0]["check"] = ["bash", "tasks/T-001/verifie.sh"]
+    contrat["criteria"][1]["check"] = ["commande-ephor-qui-n-existe-pas", "--vite"]
+    sur_main(repo, contrat, {})
+    assert task_check(repo, tmp_path / "work") == 1
+    sortie = capsys.readouterr().out
+    assert "FAUX   C1" in sortie and "FAUX   C2" in sortie
+    assert "commande introuvable" in sortie
+    assert not (repo / "tasks" / "T-001" / judge.ROUGE).exists()
