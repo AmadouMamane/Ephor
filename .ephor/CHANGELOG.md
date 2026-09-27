@@ -3,6 +3,42 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.1.2 — 27 septembre 2026
+
+Audit de la 1.1.1 : chaque fonctionnalité essayée sur un projet neuf, sur un dépôt existant
+et en conteneur, chaque défaut reproduit puis couvert par un test.
+
+- **Faux « VÉRIFIÉ » par un travail en cours.** `make task-check` lançait les critères sur
+  le dossier tel quel. Un refactor pas commité qui cassait la fonction faisait échouer un
+  critère que la branche principale satisfaisait déjà : la tâche commitée seule, l'agent
+  sortait VÉRIFIÉ sans rien faire. Le contrôle tourne maintenant sur le code commité, plus
+  les seules preuves de la tâche ; le reste est nommé et laissé de côté. Il refuse aussi de
+  tourner sur une branche `task/…`, où il retirait la trace commitée.
+- `make task-check` refuse deux autres rouges pour une mauvaise raison : le squelette de
+  `make task-new` pas rempli (« A ECRIRE », test « critère à écrire ») et une commande
+  introuvable (code 126 ou 127). Il écrivait la trace.
+- Le juge dit quand le contrôle rouge a été fait sur un commit que la base ne contient pas
+  (autre branche, trace recopiée d'un autre dépôt) : il se taisait.
+- `make task-check` est refusé aux agents, comme `make task-new` : `Bash(make *)` le leur
+  laissait sans question.
+- La garde du terminal voit `git config` et `git remote` qui écrivent `.git/config`, où un
+  `core.hooksPath` fait lancer par git le code de l'agent. Sous Copilot, ça passait.
+- `make score` compte des tâches, d'après le dernier jugement de chacune : une tâche
+  rejugée trois fois pesait comme trois tâches.
+- `make review` trouve l'approbation sur `master`, comme le juge ; `make delivery-check`
+  ne redonne plus sa place au modèle de politique qu'on vient d'y copier.
+- La CI GitHub : le scan complet de la nuit se lance aussi à la main (`workflow_dispatch`).
+
+### Mettre à jour un projet équipé de la 1.1
+
+`bootstrap_existing_repo.sh --mettre-a-jour`, puis :
+
+- **`.claude/settings.json`** : deux refus en plus, `Bash(make task-check *)` et
+  `Bash(python3 .ephor/judge.py rouge *)`. Reprenez-les du `.ephor-new`, puis
+  `make adapters` pour opencode et VS Code. Le greffon Copilot n'a pas changé.
+- **un contrôle rouge fait avec un travail en cours pas commité** : refaites-le
+  (`make task-check ID=<ID>` sur la branche principale), et commitez la trace.
+
 ## 1.1.1 — 26 septembre 2026
 
 Audit de la 1.1.0, chaque défaut reproduit puis couvert par un test.
