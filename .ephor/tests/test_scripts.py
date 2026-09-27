@@ -583,3 +583,29 @@ def test_le_doctor_voit_le_bac_a_sable_saute_sous_linux(tmp_path: Path) -> None:
     # Coupé par le poste : rien à essayer, le diagnostic le dit comme avant.
     (copie / ".claude" / "settings.local.json").write_text('{"sandbox": {"enabled": false}}')
     assert "[WARN] bac à sable de Claude Code coupé" in diagnostic()
+
+
+def test_la_revue_trouve_le_contrat_sur_master_comme_le_juge(tmp_path: Path) -> None:
+    """`make review` ne cherchait l'approbation que sur `main` : sur un dépôt dont la branche
+    principale s'appelle `master`, il annonçait « c'est l'approbation qui manque » alors que
+    le juge, lui, trouvait le contrat (vu le 27/09/2026)."""
+    cible = tmp_path / "depot"
+    cible.mkdir()
+    git(cible, "init", "-q", "-b", "master")
+    git(cible, "config", "user.email", "test@example.invalid")
+    git(cible, "config", "user.name", "Ephor test")
+    bootstrap(cible)
+    (cible / "tasks" / "T-001").mkdir(parents=True)
+    (cible / "tasks" / "T-001" / "contract.json").write_text('{"risk": "modere"}\n')
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "base")
+    sortie = subprocess.run(
+        ["bash", ".ephor/scripts/review.sh", "T-001"],
+        cwd=cible,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert "approbation qui manque" not in sortie.stderr
+    assert "Niveau de risque   : modere" in sortie.stdout

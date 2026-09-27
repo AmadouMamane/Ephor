@@ -21,6 +21,13 @@ fi
 # « faible » pour faire sauter le contrôle des secrets et le score de mutation — le juge
 # refuserait le contrat modifié ensuite, mais les contrôles chers auraient déjà été sautés
 # et l'affichage aurait menti à l'opérateur.
+# Sans BASE, les mêmes candidats que le juge, dans le même ordre : `main` seul faisait dire
+# « l'approbation manque » sur un dépôt en `master`, où le juge trouvait le contrat.
+if [ -z "${BASE:-}" ]; then
+  for REF in main master origin/main origin/master; do
+    if git rev-parse --verify -q "$REF^{commit}" >/dev/null 2>&1; then BASE="$REF"; break; fi
+  done
+fi
 BASE="${BASE:-main}"
 APPROUVE="$(mktemp)"
 trap 'rm -f "$APPROUVE"' EXIT
