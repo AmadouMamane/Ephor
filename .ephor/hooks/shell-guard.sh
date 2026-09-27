@@ -15,7 +15,9 @@
 # document en ligne (`python3 - <<EOF`), `find -delete`, `git apply` et `patch` (le
 # correctif est lu, même à noms entre guillemets), un formateur qui réécrit en place
 # (`uv run ruff check --fix`), et ce que le réseau ou une archive déposent (`curl -o`,
-# `wget -O`, `tar -C`, `unzip -d`, `cp -t`). Les
+# `wget -O`, `tar -C`, `unzip -d`, `cp -t`) ; depuis le 27/09/2026, `git config` et
+# `git remote` qui écrivent .git/config (un `core.hooksPath` ou un `core.fsmonitor` y fait
+# lancer par git le code de l'agent, au prochain commit de l'opérateur). Les
 # zones sont celles du moteur (.ephor/zones.txt), plus celles que les réglages ajoutent. La
 # sentinelle signale le détour en fin de tour ; le juge, qui refuse tout correctif touchant
 # ces zones, reste la barrière. `make doctor` le dit à l'opérateur.
@@ -254,6 +256,43 @@ def correctif_lu(chemin, base):
         return None
 
 
+CONFIG_ECRIT = {"--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section", "-e", "--edit"}
+CONFIG_LIT = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list", "--get-color", "--get-colorbool", "--blob"}
+CONFIG_VALEUR = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value"}
+
+
+def git_config(args):
+    """Le fichier qu'un `git config` ÉCRIT, ou rien pour une lecture. Par défaut .git/config,
+    où un hook ou un moniteur de fichiers se plante : git les lance ensuite lui-même."""
+    cible, positionnels, ecrit, lit, j = os.path.join(racine, ".git", "config"), [], False, False, 0
+    while j < len(args):
+        a = args[j]
+        nom_option = a.split("=", 1)[0]
+        if nom_option in {"--global", "--system"}:
+            return None  # hors du dépôt : ni zone, ni affaire de cette garde
+        if nom_option == "--worktree":
+            cible = os.path.join(racine, ".git", "config.worktree")
+        ecrit = ecrit or nom_option in CONFIG_ECRIT
+        lit = lit or nom_option in CONFIG_LIT
+        if nom_option in CONFIG_VALEUR and "=" not in a:
+            if a in {"-f", "--file"} and j + 1 < len(args):
+                cible = args[j + 1]
+            j += 2
+            continue
+        if nom_option in {"-f", "--file"}:
+            cible = a.split("=", 1)[1]
+        elif not a.startswith("-"):
+            positionnels.append(a)
+        j += 1
+    # Depuis git 2.46, une sous-commande : `git config set x y`, `git config get x`.
+    sous = positionnels[0] if positionnels else ""
+    if sous in {"set", "unset", "rename-section", "remove-section", "edit"}:
+        return cible
+    if sous in {"get", "list"} or lit:
+        return None
+    return cible if ecrit or len(positionnels) >= 2 else None
+
+
 def programme(mots):
     """(nom du programme, ses arguments), après affectations, préfixes et lanceurs."""
     while mots:
@@ -450,6 +489,12 @@ def cibles(texte, profondeur=0, base=None):
                 for a in args[1:]:
                     if not a.startswith("-"):
                         yield ici(a), "git " + sous
+            elif sous == "config":
+                fichier = git_config(args[1:])
+                if fichier:
+                    yield ici(fichier), "git config"
+            elif sous == "remote" and args[1:2] and args[1] in {"add", "set-url", "rename", "remove", "rm", "set-head", "set-branches"}:
+                yield os.path.join(racine, ".git", "config"), "git remote " + args[1]
             elif sous in {"apply", "am"} and not {"--check", "--stat", "--numstat", "--summary"} & set(args):
                 for fichier in [a for a in args[1:] if not a.startswith("-")] + ([entree] if entree else []):
                     texte_correctif = correctif_lu(fichier, base)

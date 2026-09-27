@@ -842,6 +842,13 @@ ECRITURES_EN_ZONE = [
     "cd .ephor && tar -xf ../a.tar",
     "unzip -o a.zip -d .claude",
     "ls >& .ephor/x",
+    # `git config` écrit .git/config, où un hook ou un moniteur de fichiers se plante (27/09/2026) :
+    "git config core.hooksPath /tmp/crochets",
+    "git config --local core.fsmonitor 'sh -c x'",
+    "cd src && git config --unset user.name",
+    "git config set core.pager 'sh x'",
+    "git config --file .ephor/x.cfg a.b c",
+    "git remote add ailleurs https://exemple.invalid/x.git",
 ]
 COMMANDES_ORDINAIRES = [
     "git status --short -- .vscode/settings.json && git diff -- .vscode/settings.json",
@@ -869,6 +876,12 @@ COMMANDES_ORDINAIRES = [
     "wget -O /tmp/page.html https://exemple.invalid/Makefile",
     "tar -czf /tmp/sauvegarde.tgz .ephor",
     "ls 1>&2",
+    "git config --get user.name",
+    "git config user.email",
+    "git config -l",
+    "git config get core.editor",
+    "git config --global user.name Moi",
+    "git remote -v",
 ]
 
 
