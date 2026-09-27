@@ -3,6 +3,13 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.1.3 — 27 septembre 2026
+
+Relecture des textes : des formulations neutres, partageables telles quelles (exemples du
+code, documentation d'installation, commentaires de la CI). Aucun changement de
+comportement. Dans un projet équipé, `bootstrap_existing_repo.sh --mettre-a-jour` suffit :
+rien d'autre à reprendre.
+
 ## 1.1.2 — 27 septembre 2026
 
 Audit de la 1.1.1 : chaque fonctionnalité essayée sur un projet neuf, sur un dépôt existant
