@@ -119,7 +119,7 @@ Quatre indicateurs suffisent. Au-delà, personne ne les regarde.
 
 | Indicateur | Où le prendre | Ce qu'il révèle |
 |---|---|---|
-| Taux de tâches vérifiées par le juge | `make score` | le débit réel, pas l'activité |
+| Taux de tâches vérifiées par le juge | `make score` (dernier jugement de chaque tâche ; les jugements eux-mêmes sont comptés à part) | le débit réel, pas l'activité |
 | Coût par critère satisfait | `make score` (tokens du dernier relevé ÷ critères satisfaits) | la seule métrique de coût qui a du sens |
 | Score de mutation sur les zones à risque | `make mutants` | la solidité du vérificateur |
 | Taux de régression post-merge | étage 3 de la CI | ce que la vérification a laissé passer |

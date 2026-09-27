@@ -52,6 +52,11 @@ def read_journal(repo: Path, task: str | None = None) -> list[dict[str, Any]]:
     return entries
 
 
+def tache(entry: dict[str, Any]) -> str:
+    """L'identifiant de la tâche, toujours en texte : un journal abîmé ne la dédouble pas."""
+    return str(entry.get("task_id", "?"))
+
+
 def percent(part: int, whole_count: int) -> str:
     return f"{100 * part // whole_count} %" if whole_count else "—"
 
@@ -64,9 +69,8 @@ def cost_per_criterion(entries: list[dict[str, Any]]) -> tuple[int, int, int]:
     """
     last: dict[str, dict[str, Any]] = {}
     for entry in entries:
-        task = str(entry.get("task_id", ""))
         if entier(entry.get("billable_tokens")):
-            last[task] = entry
+            last[tache(entry)] = entry
     tokens = sum(entier(entry.get("billable_tokens")) for entry in last.values())
     passed = sum(entier(entry.get("criteria_passed")) for entry in last.values())
     return tokens, passed, len(last)
@@ -79,10 +83,17 @@ def report(entries: list[dict[str, Any]]) -> str:
             "Lancez `make judge TASK=<ID>` : chaque verdict y laisse une ligne.\n"
             "Méthode et indicateurs : .ephor/docs/09-evaluer-ephor.md."
         )
-    tasks = sorted({str(entry.get("task_id", "?")) for entry in entries})
-    verified = sum(1 for entry in entries if entry.get("status") == VERIFIED)
-    criteria = sum(entier(entry.get("criteria_total")) for entry in entries)
-    passed = sum(entier(entry.get("criteria_passed")) for entry in entries)
+    # Une tâche compte une fois, pour son DERNIER jugement : c'est le débit, pas l'activité
+    # (.ephor/docs/09). Compter les jugements faisait peser comme trois tâches une tâche
+    # rejugée trois fois, et baisser le taux à chaque essai d'un agent qui finit par réussir.
+    dernier: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        dernier[tache(entry)] = entry
+    tasks = sorted(dernier)
+    finals = list(dernier.values())
+    verified = sum(1 for entry in finals if entry.get("status") == VERIFIED)
+    criteria = sum(entier(entry.get("criteria_total")) for entry in finals)
+    passed = sum(entier(entry.get("criteria_passed")) for entry in finals)
     tokens, billed_passed, measured = cost_per_criterion(entries)
     trend = "".join(SYMBOLS.get(str(entry.get("status")), "✗") for entry in entries[-12:])
     since = str(entries[0].get("finished_at") or "?")[:10]
@@ -90,14 +101,15 @@ def report(entries: list[dict[str, Any]]) -> str:
     lines = [
         f"score d'Ephor · {len(entries)} jugement(s) sur {len(tasks)} tâche(s) · depuis {since}",
         "",
-        f"  tâches vérifiées      {verified:>3} / {len(entries):<3}"
-        f"  {percent(verified, len(entries)):<6}  {trend}",
+        f"  tâches vérifiées      {verified:>3} / {len(tasks):<3}"
+        f"  {percent(verified, len(tasks)):<6}  (dernier jugement de chacune)",
         f"  critères satisfaits   {passed:>3} / {criteria:<3}  {percent(passed, criteria)}",
+        f"  jugements             {len(entries):>3}        {trend}",
     ]
     aside = [
-        f"{sum(1 for entry in entries if entry.get('status') == status)} {label}"
+        f"{sum(1 for entry in finals if entry.get('status') == status)} {label}"
         for status, label in ASIDE.items()
-        if any(entry.get("status") == status for entry in entries)
+        if any(entry.get("status") == status for entry in finals)
     ]
     if aside:
         lines.insert(3, "       dont             " + " · ".join(aside))
@@ -115,7 +127,7 @@ def report(entries: list[dict[str, Any]]) -> str:
         "  par tâche",
     ]
     for task in tasks:
-        runs = [entry for entry in entries if entry.get("task_id") == task]
+        runs = [entry for entry in entries if tache(entry) == task]
         ok = sum(1 for entry in runs if entry.get("status") == VERIFIED)
         seconds = sum(float(entry.get("seconds") or 0) for entry in runs)
         lines.append(

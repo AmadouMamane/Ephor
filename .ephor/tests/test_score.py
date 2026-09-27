@@ -72,8 +72,11 @@ def test_the_four_indicators_come_from_the_journal(tmp_path: Path) -> None:
     write_journal(tmp_path, JOURNAL)
     text = score.report(score.read_journal(tmp_path))
     assert "4 jugement(s) sur 2 tâche(s)" in text
-    assert "1 / 4" in text  # une seule tâche vérifiée sur quatre jugements
-    assert "6 / 9" in text  # critères satisfaits, tous jugements confondus
+    # Des TÂCHES, d'après le dernier jugement de chacune : FEAT-001 a fini vérifiée, FEAT-002
+    # refusée. Compter les jugements (1 / 4) mesurait l'activité, que la doc 09 écarte : une
+    # tâche rejugée trois fois pesait comme trois tâches.
+    assert "tâches vérifiées        1 / 2" in text
+    assert "3 / 3" in text  # critères satisfaits, au dernier jugement de chaque tâche
     # Coût : le dernier relevé de chaque tâche (90 000), divisé par ses critères satisfaits.
     assert "30 000 tokens" in text
     # Ce que le journal ne sait pas, il ne l'invente pas.
@@ -107,3 +110,19 @@ def test_one_task_can_be_looked_at_alone(tmp_path: Path) -> None:
     entries = score.read_journal(tmp_path, "FEAT-001")
     assert len(entries) == 3
     assert "1 tâche(s)" in score.report(entries)
+
+
+def test_une_tache_rejugee_ne_fait_pas_baisser_le_debit(tmp_path: Path) -> None:
+    """Deux tâches, toutes deux finies vérifiées, l'une après deux essais : 2 / 2, pas 2 / 4."""
+    autre = {**JOURNAL[2], "task_id": "FEAT-003"}
+    write_journal(tmp_path, [*JOURNAL[:3], autre])
+    text = score.report(score.read_journal(tmp_path))
+    assert "tâches vérifiées        2 / 2    100 %" in text
+    assert "✗✗✓✓" in text, "les jugements restent visibles, en tendance"
+
+
+def test_un_identifiant_abime_ne_fausse_pas_le_detail(tmp_path: Path) -> None:
+    write_journal(tmp_path, [{**JOURNAL[2], "task_id": 5}])
+    assert "5" + " " * 15 + "1 jugement(s)   1 vérifié(s)" in score.report(
+        score.read_journal(tmp_path)
+    )
