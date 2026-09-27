@@ -43,7 +43,8 @@ bibliothèque standard, compatible avec le Python 3.9 livré par Apple.
    sur la base la trace du **contrôle rouge** (`tasks/<ID>/rouge.json`, écrite par
    `make task-check`) : chaque critère y a été vu échouer avant le travail, et aucune preuve
    n'a changé depuis. Absente ou périmée, la tâche est refusée ; il ne relance rien pour
-   autant. Si le code de la base a bougé depuis ce contrôle, le verdict le dit.
+   autant. Si le code de la base a bougé depuis ce contrôle, ou si le contrôle a été fait
+   sur un commit que la base ne contient pas, le verdict le dit.
 2. **Périmètre.** Il calcule le patch entre la base et l'état courant du dossier, commits,
    modifications et nouveaux fichiers compris, sans toucher à votre index Git. Tout fichier
    hors de `allowed_paths` est refusé. Les zones de contrôle le sont toujours : celles de

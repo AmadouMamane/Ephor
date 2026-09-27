@@ -2052,6 +2052,14 @@ def cmd_check(args: argparse.Namespace) -> int:
                 f"  info  {bouge} fichier(s) hors tasks/ ont changé sur la base depuis le contrôle"
                 " rouge : les critères n'y ont pas été rejoués (à regarder en revue)"
             )
+        elif bouge is None:
+            # Contrôle lancé sur une autre branche, ou trace recopiée d'un autre dépôt (celle
+            # d'EXEMPLE-001 dans un projet neuf) : rien ne dit sur quel code ils ont échoué.
+            lines.append(
+                f"  info  contrôle rouge fait sur un commit absent de l'histoire de la base"
+                f" ({str(rouge.get('commit'))[:7]}) : rien ne dit sur quel code les critères"
+                f" ont échoué ; make task-check ID={task_id} sur la branche principale le refait"
+            )
 
         patch, paths = snapshot(repo, base)
         report.update(changed_paths=paths, patch_sha256=sha256(patch))

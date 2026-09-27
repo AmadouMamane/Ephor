@@ -40,7 +40,8 @@ d'un patch quelconque dans son périmètre. L'exemple livré en avait un (EXEMPL
 - Un test retouché sur la branche principale après le contrôle fait refuser la tâche
   jusqu'à ce que `make task-check` soit relancé : c'est le but.
 - Le juge compte les fichiers changés hors de `tasks/` entre le contrôle et la base, et le
-  dit au verdict, pour la revue.
+  dit au verdict, pour la revue. Un contrôle fait sur un commit que la base ne contient pas
+  (autre branche, trace recopiée d'un autre dépôt) est dit aussi (27/09/2026).
 
 ## Limites
 

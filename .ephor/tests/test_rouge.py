@@ -431,3 +431,23 @@ def test_une_commande_introuvable_est_un_faux_rouge(
     assert "FAUX   C1" in sortie and "FAUX   C2" in sortie
     assert "commande introuvable" in sortie
     assert not (repo / "tasks" / "T-001" / judge.ROUGE).exists()
+
+
+def test_un_controle_fait_ailleurs_que_sur_la_base_est_signale(
+    repo: Path, run_judge: Runner
+) -> None:
+    """Le contrôle lancé sur une autre branche, puis la tâche reportée sur la principale : le
+    juge ne pouvait rien dire du code vu échouer, et se taisait."""
+    git(repo, "switch", "-q", "main")
+    chemin = repo / "tasks" / "T-001" / judge.ROUGE
+    trace = json.loads(chemin.read_text(encoding="utf-8"))
+    trace["commit"] = "0123456789abcdef0123456789abcdef01234567"
+    chemin.write_text(json.dumps(trace, indent=2) + "\n")
+    git(repo, "commit", "-qam", "trace venue d'une autre branche")
+    git(repo, "switch", "-q", "task/T-001")
+    git(repo, "rebase", "-q", "main")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    code, _ = run_judge(repo)
+    assert code == 0
+    resume = (repo / ".verify" / "judge" / "T-001" / "latest" / "summary.txt").read_text()
+    assert "absent de l'histoire de la base (0123456)" in resume
