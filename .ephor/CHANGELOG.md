@@ -68,7 +68,7 @@ sans cette trace, ou dont une preuve a changé depuis (ADR 0009). EXEMPLE-001 pe
 critère C3, vert avant tout travail : ce qui doit seulement rester vrai va dans la suite
 normale.
 
-**Au bureau.**
+**En entreprise.**
 - `make doctor` lance bubblewrap pour de vrai sous Linux : sans lui ou sans socat, ou
   quand il ne peut pas démarrer, Claude Code saute son bac à sable avec un simple
   avertissement, et le diagnostic le dit maintenant (ADR 0008).

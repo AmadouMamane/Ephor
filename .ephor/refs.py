@@ -52,7 +52,7 @@ class RefsError(Exception):
 
 
 def resolve(raw: str) -> Path:
-    """`~/dev/x` et `${LCL_REPOS}/x` sont acceptés : la config est partagée, pas les postes."""
+    """`~/dev/x` et `${DEPOTS}/x` sont acceptés : la config est partagée, pas les postes."""
     return Path(os.path.expandvars(raw)).expanduser()
 
 

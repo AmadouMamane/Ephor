@@ -29,7 +29,7 @@ pas cette recette, allez droit à [`.ephor/docs/10-installation.md`](.ephor/docs
 — sa partie 2 ne parle que de ce cas.
 
 ```bash
-mkdir -p ~/dev && cp -R ephor ~/dev/mon-projet && cd ~/dev/mon-projet   # hors iCloud
+mkdir -p ~/dev && cp -R ephor ~/dev/mon-projet && cd ~/dev/mon-projet   # hors dossier synchronisé
 rm -rf .git .venv .verify                # sans ça : historique d'Ephor hérité, venv périmé, git init ignoré
 git init -b main && git add -A && git commit -m "chore: base Ephor"
 brew install jq ripgrep fd uv            # confort ; sans jq les garde-fous lisent le JSON avec python3

@@ -823,8 +823,8 @@ def test_une_image_de_registre_prive_dit_quoi_faire(
 
 
 def bases_miroir() -> list[str]:
-    """Les bases de l'image, prises sur un miroir quand le poste le dit : au bureau, ni
-    Docker Hub ni ghcr.io ne répondent. Mêmes variables que `make ci-image`."""
+    """Les bases de l'image, prises sur un miroir quand le poste le dit : derrière un réseau
+    filtré, ni Docker Hub ni ghcr.io ne répondent. Mêmes variables que `make ci-image`."""
     args: list[str] = []
     for variable, argument in (("EPHOR_CI_BASE", "BASE"), ("EPHOR_CI_GITLEAKS", "GITLEAKS")):
         if os.environ.get(variable):

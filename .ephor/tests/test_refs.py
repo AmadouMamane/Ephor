@@ -54,9 +54,9 @@ def test_a_declared_repository_carries_its_commit(tmp_path: Path) -> None:
 
 def test_the_home_and_the_environment_are_expanded(tmp_path: Path, monkeypatch: Any) -> None:
     source = make_repo(tmp_path / "transporteurs")
-    monkeypatch.setenv("DEPOTS_LCL", str(tmp_path))
+    monkeypatch.setenv("DEPOTS_EQUIPE", str(tmp_path))
     travail = tmp_path / "travail"
-    declare(travail, [{"nom": "transporteurs", "chemin": "${DEPOTS_LCL}/transporteurs"}])
+    declare(travail, [{"nom": "transporteurs", "chemin": "${DEPOTS_EQUIPE}/transporteurs"}])
     assert refs.load(travail)[0].chemin == source.resolve()
 
 

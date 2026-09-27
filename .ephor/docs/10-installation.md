@@ -9,15 +9,16 @@
 
 ## Partie 1 — Machine libre (Mac Apple Silicon)
 
-### Étape 0 — Ne travaillez pas dans iCloud Drive
+### Étape 0 — Ne travaillez pas dans un dossier synchronisé (iCloud Drive, OneDrive…)
 
 ```bash
 mkdir -p ~/dev && cd ~/dev
 ```
 
-Un dépôt git dans iCloud Drive est une mauvaise idée : synchronisation permanente du
-répertoire `.git`, conflits de fichiers, et surtout **éviction locale** — iCloud
-décharge les fichiers peu utilisés et ne laisse qu'un pointeur. Un agent qui lit un
+Un dépôt git dans un dossier synchronisé (iCloud Drive, OneDrive, Dropbox) est une mauvaise
+idée : synchronisation permanente du répertoire `.git`, conflits de fichiers, et surtout
+**éviction locale** — le service décharge les fichiers peu utilisés et ne laisse qu'un
+pointeur. Un agent qui lit un
 fichier évincé obtient une erreur ou une attente. Sortez le projet de la zone synchronisée.
 
 ### Étape 1 — Outils de base
@@ -170,8 +171,8 @@ là : la revue et la fusion restent à vous.
 | Pièce | Réglage |
 |---|---|
 | **Podman** | `podman machine init` puis `podman machine start`. Le juge l'utilise avec `make judge TASK=<ID> RUNTIME=podman`. Gardez le projet sous votre dossier personnel : la machine virtuelle de Podman ne voit que lui. |
-| **Image de CI et du juge** | `make ci-image` construit `.ephor/deploy/Containerfile.ci` : la base uv, plus `git`, `make` et `gitleaks` épinglé. Ses deux bases viennent de ghcr.io et de Docker Hub ; au bureau, prenez-les sur JFrog sans toucher à la recette : `make ci-image EPHOR_CI_BASE=<jfrog>/uv:python3.12-bookworm-slim@sha256:<digest> EPHOR_CI_GITLEAKS=<jfrog>/gitleaks:v8.30.1@sha256:<digest>`. La construction lance aussi `apt-get` vers `deb.debian.org` : il lui faut le proxy ou un miroir Debian (pas encore mesuré au bureau). Poussez l'image sur JFrog, épinglez-la par digest, puis pointez `EPHOR_CI_IMAGE` (CI) et `EPHOR_IMAGE` (juge) dessus. L'image publique par défaut n'a ni `make` ni `gitleaks` : la ligne `make sec` de la CI ne peut pas y tourner. |
-| **Tests d'Ephor en conteneur** | Dans le dépôt d'Ephor, `make ephor-test` lance trois tests sous Podman ou Docker, sautés si aucun n'est prêt. Ils téléchargent `python:3.12-slim` (Docker Hub) et construisent l'image de CI. Au bureau : `export EPHOR_TEST_IMAGE=<jfrog>/python:3.12-slim`, plus `EPHOR_CI_BASE` et `EPHOR_CI_GITLEAKS` comme ci-dessus. Mesuré le 26/09/2026 avec des copies locales des trois images : les trois tests les prennent, et une adresse fausse fait échouer la construction. |
+| **Image de CI et du juge** | `make ci-image` construit `.ephor/deploy/Containerfile.ci` : la base uv, plus `git`, `make` et `gitleaks` épinglé. Ses deux bases viennent de ghcr.io et de Docker Hub ; derrière un réseau filtré, prenez-les sur JFrog sans toucher à la recette : `make ci-image EPHOR_CI_BASE=<jfrog>/uv:python3.12-bookworm-slim@sha256:<digest> EPHOR_CI_GITLEAKS=<jfrog>/gitleaks:v8.30.1@sha256:<digest>`. La construction lance aussi `apt-get` vers `deb.debian.org` : il lui faut le proxy ou un miroir Debian (pas encore mesuré derrière un proxy d'entreprise). Poussez l'image sur JFrog, épinglez-la par digest, puis pointez `EPHOR_CI_IMAGE` (CI) et `EPHOR_IMAGE` (juge) dessus. L'image publique par défaut n'a ni `make` ni `gitleaks` : la ligne `make sec` de la CI ne peut pas y tourner. |
+| **Tests d'Ephor en conteneur** | Dans le dépôt d'Ephor, `make ephor-test` lance trois tests sous Podman ou Docker, sautés si aucun n'est prêt. Ils téléchargent `python:3.12-slim` (Docker Hub) et construisent l'image de CI. Derrière un réseau filtré : `export EPHOR_TEST_IMAGE=<jfrog>/python:3.12-slim`, plus `EPHOR_CI_BASE` et `EPHOR_CI_GITLEAKS` comme ci-dessus. Mesuré le 26/09/2026 avec des copies locales des trois images : les trois tests les prennent, et une adresse fausse fait échouer la construction. |
 | **Image du juge** | `export EPHOR_IMAGE=<registre-jfrog>/<chemin>/uv:python3.12-bookworm-slim@sha256:<digest>`, en arm64 ou multi-architecture, avec `uv` et `git`. |
 | **Image qui ne tourne pas en root** | Mesuré le 24/09/2026 sur Mac avec Podman 6.1.2 (machine `applehv`, sans droits root) : une image qui tourne en uid 1000 juge comme les autres, **sans** `--userns=keep-id`, et les fichiers écrits vous appartiennent. Sous Linux (Fedora 44, SELinux actif, mesuré le même jour), elle échouait en « Permission denied » : le juge y pose maintenant seul `--userns=keep-id --user <votre uid>`, et les verdicts sont ceux du local. Si une image meurt pourtant en « Permission denied » : `export EPHOR_CONTAINER_ARGS="--userns=keep-id --user $(id -u):$(id -g)"` — `--userns=keep-id` seul ne suffit pas, l'image garde son utilisateur. |
 | **Registre privé** | Le juge télécharge l'image une fois, avant la première étape. Registre JFrog privé : `podman login <registre>` d'abord. `make doctor` dit si l'image est déjà sur le poste. |

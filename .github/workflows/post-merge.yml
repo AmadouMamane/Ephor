@@ -13,8 +13,8 @@ on:
   schedule:
     - cron: "0 3 * * *"
   # À la main aussi (onglet Actions, ou `gh workflow run post-merge.yml`) : le scan complet
-  # de la nuit se rejoue sans attendre 3 h, et GitHub peut retarder ou sauter une nuit —
-  # la première du dépôt d'équipe, le 27/09/2026, n'est jamais partie.
+  # de la nuit se rejoue sans attendre 3 h, et GitHub peut retarder ou sauter une tâche
+  # planifiée (constaté le 27/09/2026).
   workflow_dispatch:
 permissions:
   contents: read
