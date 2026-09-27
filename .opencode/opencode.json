@@ -45,10 +45,12 @@
       "git update-ref *": "deny",
       "git config *": "deny",
       "make task-new *": "deny",
+      "make task-check *": "deny",
       "make adapters *": "deny",
       "make fetch-docs *": "deny",
       "python3 .ephor/fetch_docs.py *": "deny",
-      "python3 .ephor/judge.py new *": "deny"
+      "python3 .ephor/judge.py new *": "deny",
+      "python3 .ephor/judge.py rouge *": "deny"
     },
     "edit": {
       "*": "allow",

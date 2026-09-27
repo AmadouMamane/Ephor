@@ -73,10 +73,12 @@
       "Bash(git update-ref *)",
       "Bash(git config *)",
       "Bash(make task-new *)",
+      "Bash(make task-check *)",
       "Bash(make adapters *)",
       "Bash(make fetch-docs *)",
       "Bash(python3 .ephor/fetch_docs.py *)",
       "Bash(python3 .ephor/judge.py new *)",
+      "Bash(python3 .ephor/judge.py rouge *)",
       "WebFetch"
     ]
   },

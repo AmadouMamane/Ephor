@@ -44,10 +44,12 @@
     "/^git update-ref\\b/": false,
     "/^git config\\b/": false,
     "/^make task-new\\b/": false,
+    "/^make task-check\\b/": false,
     "/^make adapters\\b/": false,
     "/^make fetch-docs\\b/": false,
     "/^python3 \\.ephor\\/fetch_docs\\.py\\b/": false,
-    "/^python3 \\.ephor\\/judge\\.py new\\b/": false
+    "/^python3 \\.ephor\\/judge\\.py new\\b/": false,
+    "/^python3 \\.ephor\\/judge\\.py rouge\\b/": false
   },
   "chat.tools.edits.autoApprove": {
     "**/*": true

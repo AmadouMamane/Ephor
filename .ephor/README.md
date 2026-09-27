@@ -282,7 +282,8 @@ Ce qui reste, et qui suffit en pratique :
   l'extérieur du processus : le code jugé ne peut pas la fabriquer sans la produire.
 - **Restreindre `allowed_paths` au strict nécessaire.** Un `src/__init__.py` dans le
   périmètre sans raison est un risque gratuit. Le choix des chemins est un acte humain,
-  c'est exactement pour cela que `make task-new` n'est pas donné aux agents.
+  c'est exactement pour cela que `make task-new` et `make task-check` ne sont pas donnés
+  aux agents.
 - **Lire le patch.** Le verdict nomme les silencieux ajoutés (`noqa`, `type: ignore`,
   `skip`…), les fichiers qui s'exécutent sans être appelés, et les critères jugés sur leur
   seul code de retour : c'est là que la revue regarde d'abord. Le juge ne fusionne rien ; la revue humaine est le dernier maillon.

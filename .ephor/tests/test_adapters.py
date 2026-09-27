@@ -650,3 +650,23 @@ def test_l_installation_date_le_dossier_pour_que_vs_code_refasse_sa_copie(tmp_pa
     os.utime(hooks, (1_000_000_000, 1_000_000_000))
     subprocess.run(["bash", str(script)], env=env, capture_output=True, check=True, timeout=120)
     assert hooks.stat().st_mtime > 1_000_000_000, "le dossier doit changer de date"
+
+
+def test_les_gestes_de_l_operateur_sont_refuses_aux_trois_outils() -> None:
+    """`make task-check` écrit la trace qui fait l'approbation avec le contrat : un geste de
+    l'opérateur, comme `make task-new`. `Bash(make *)` le laissait à l'agent sans question
+    (vu le 27/09/2026)."""
+    reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    opencode = json.loads((ROOT / ".opencode" / "opencode.json").read_text(encoding="utf-8"))
+    vscode = adapters.sans_commentaires(
+        (ROOT / ".vscode" / "settings.json").read_text(encoding="utf-8")
+    )
+    for geste in (
+        "make task-new *",
+        "make task-check *",
+        "python3 .ephor/judge.py new *",
+        "python3 .ephor/judge.py rouge *",
+    ):
+        assert f"Bash({geste})" in reglages["permissions"]["deny"], geste
+        assert opencode["permission"]["bash"][geste] == "deny", geste
+    assert "make task-check" in vscode
