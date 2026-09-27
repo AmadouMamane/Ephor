@@ -1,7 +1,7 @@
 """Rouge d'abord : chaque critère doit échouer AVANT le travail, et le juge le vérifie.
 
 Un critère déjà vert sur la branche principale fait déclarer l'agent VÉRIFIÉ sans qu'il ait
-rien fait. `make task-check` lance donc chaque critère une fois, sur le code actuel, et
+rien fait. `make task-check` lance donc chaque critère une fois, sur le code commité, et
 n'écrit sa trace (`tasks/<ID>/rouge.json`) que si tous échouent. Le juge la lit sur la base
 et refuse une tâche sans elle, ou dont une preuve a changé depuis.
 """
@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from conftest import FIX, ROOT, git, judge, trace_rouge
+from conftest import CHECK_C2, FIX, ROOT, WRONG, git, judge, trace_rouge
 
 Runner = Callable[..., tuple[int, dict[str, Any]]]
 
@@ -345,3 +345,42 @@ def test_un_dossier_pytest_sans_test_est_un_faux_rouge(
     (repo / "tasks" / "T-001" / "vide" / "LISEZMOI.md").write_text("pas de test ici\n")
     assert task_check(repo, tmp_path / "work") == 1
     assert "pytest n'a lancé aucun test" in capsys.readouterr().out
+
+
+# ------------------------------------------------ audit du 27/09/2026 : chaque défaut reproduit
+
+
+def test_un_travail_en_cours_non_commite_ne_fait_pas_le_rouge(
+    repo: Path, run_judge: Runner, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le contrôle rouge tournait sur le dossier TEL QUEL, travail en cours compris. Un
+    refactor pas commité qui cassait la fonction faisait échouer un critère que la base
+    satisfaisait déjà : l'opérateur commitait la tâche seule, et l'agent sortait VÉRIFIÉ
+    sans rien faire (reproduit le 27/09/2026). Il tourne maintenant sur le code commité ;
+    seules les preuves de la tâche sont prises dans le dossier."""
+    git(repo, "switch", "-q", "main")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    git(repo, "commit", "-qam", "la fonction existe déjà")
+    (repo / "src" / "metrics.py").write_text(WRONG)  # refactor en cours, pas commité
+    (repo / "src" / "brouillon.py").write_text("X = 1\n")  # nouveau, pas commité non plus
+    (repo / "tasks" / "T-001" / "check_c2.py").write_text(CHECK_C2 + "print('fin')\n")
+    assert task_check(repo, tmp_path / "work") == 1
+    sortie = capsys.readouterr().out
+    assert "VERT   C1" in sortie and "VERT   C2" in sortie, sortie
+    assert "src/brouillon.py" in sortie and "src/metrics.py" in sortie, "ce qui est écarté est dit"
+    # Le travail en cours n'a pas été touché.
+    assert (repo / "src" / "metrics.py").read_text() == WRONG
+
+
+def test_le_rouge_ne_se_lance_pas_sur_une_branche_de_tache(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Relancé sur la branche de la tâche, le travail de l'agent faisait passer les critères :
+    la trace commitée était retirée du dossier, et le juge refusait ensuite la tâche pour une
+    zone de contrôle modifiée."""
+    (repo / "src" / "metrics.py").write_text(FIX)
+    git(repo, "commit", "-qam", "travail de l'agent")
+    assert task_check(repo, tmp_path / "work") == 2
+    assert "task/T-001" in capsys.readouterr().out
+    assert (repo / "tasks" / "T-001" / judge.ROUGE).is_file()
+    assert git(repo, "status", "--porcelain") == ""

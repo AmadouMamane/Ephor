@@ -798,15 +798,22 @@ def resolve_base(repo: Path, base: str | None) -> tuple[str, str]:
     raise JudgeError(f"base introuvable ({', '.join(candidates)}) : précisez --base")
 
 
-def snapshot(repo: Path, base: str) -> tuple[bytes, list[str]]:
-    """Patch entre la base et l'état courant du dossier, sans toucher à l'index de l'utilisateur."""
+def snapshot(repo: Path, base: str, seulement: Sequence[str] = ()) -> tuple[bytes, list[str]]:
+    """Patch entre la base et l'état courant du dossier, sans toucher à l'index de l'utilisateur.
+
+    `seulement` le restreint à ces chemins, pris à la lettre (ni joker, ni motif)."""
     with tempfile.TemporaryDirectory(prefix="ephor-index-") as tmp:
         env = {"GIT_INDEX_FILE": str(Path(tmp) / "index")}
         git(repo, "read-tree", "HEAD", env=env)
         git(repo, "add", "-A", "--", ".", env=env)
         # Les rapports du juge ne font jamais partie du patch, ignorés ou non par le dépôt.
         git(repo, "rm", "-r", "--cached", "--ignore-unmatch", "--quiet", "--", ".verify", env=env)
-        names = git(repo, "diff", "--cached", "--name-only", "-z", "--no-renames", base, env=env)
+        if seulement:
+            env["GIT_LITERAL_PATHSPECS"] = "1"
+        cibles = ["--", *seulement] if seulement else []
+        names = git(
+            repo, "diff", "--cached", "--name-only", "-z", "--no-renames", base, *cibles, env=env
+        )
         patch = git(
             repo,
             "diff",
@@ -817,6 +824,7 @@ def snapshot(repo: Path, base: str) -> tuple[bytes, list[str]]:
             "--no-textconv",
             "--no-renames",
             base,
+            *cibles,
             env=env,
         )
     paths = sorted({item.decode("utf-8", errors="strict") for item in names.split(b"\0") if item})
@@ -936,7 +944,7 @@ def writable_proofs(repo: Path, base: str, contract: Contract) -> list[str]:
 # --------------------------------------------------------------------------- rouge d'abord
 
 # Un critère déjà vert avant le travail fait déclarer l'agent VÉRIFIÉ sans qu'il ait rien
-# fait. `make task-check` lance donc chaque critère une fois sur le code actuel, AVANT
+# fait. `make task-check` lance donc chaque critère une fois sur le code commité, AVANT
 # l'approbation : tous doivent échouer. Il en garde la trace ici, commitée avec le contrat ;
 # le juge la lit sur la base, où l'agent ne peut pas écrire, et ne relance rien.
 ROUGE = "rouge.json"
@@ -2291,21 +2299,54 @@ def recevabilite(copy: Path, arbre: str, contract: Contract) -> list[str]:
     return problemes
 
 
+def preuves_du_dossier(
+    repo: Path, arbre: str, contract: Contract, task_id: str, chemins: Sequence[str]
+) -> tuple[list[str], list[str]]:
+    """(preuves de la tâche, le reste) parmi ces chemins modifiés du dossier.
+
+    Les preuves : le dossier de la tâche, les fichiers et les dossiers que ses critères
+    citent. Pas encore commitées quand l'opérateur lance le contrôle, elles y entrent. Le
+    reste — un travail en cours, un brouillon — n'est pas ce que l'agent recevra : il reste
+    dehors."""
+    fichiers = set(cited_paths(repo, arbre, contract))
+    dossiers = {dossier for _, dossier in cited_dirs(repo, arbre, contract)}
+    if "." in dossiers:
+        return list(chemins), []
+    prefixes = (f"tasks/{task_id}/", *(dossier.rstrip("/") + "/" for dossier in dossiers))
+    retenus = [c for c in chemins if c in fichiers or c.startswith(prefixes)]
+    return retenus, [c for c in chemins if c not in retenus]
+
+
 def cmd_rouge(args: argparse.Namespace) -> int:
     """`make task-check` : la forme du contrat, puis chaque critère lancé une fois sur le code
-    actuel, comme le juge le lancera. Tous doivent échouer, et pour la bonne raison ; alors
+    commité, comme le juge le lancera. Tous doivent échouer, et pour la bonne raison ; alors
     seulement la trace est écrite, à commiter avec le contrat.
 
-    Le code actuel, c'est HEAD plus l'état du dossier : le contrat et ses tests ne sont pas
-    encore commités quand on le lance. Chaque raison est affichée, pour que l'opérateur la
-    lise : ce que le juge sait reconnaître d'un échec de travers (preuve introuvable, test
-    pytest jamais lancé), il le refuse ; le reste, c'est cette lecture.
+    Le code commité, c'est HEAD, plus les preuves de la tâche telles qu'elles sont dans le
+    dossier : le contrat et ses tests ne sont pas encore commités quand on le lance. Le
+    reste du dossier n'y entre pas. Mesuré le 27/09/2026 : un refactor pas commité qui
+    cassait la fonction faisait échouer un critère que la branche principale satisfaisait
+    déjà ; la tâche commitée seule, l'agent sortait VÉRIFIÉ sans rien faire.
+
+    Chaque raison est affichée, pour que l'opérateur la lise : ce que le juge sait
+    reconnaître d'un échec de travers (preuve introuvable, test pytest jamais lancé), il le
+    refuse ; le reste, c'est cette lecture.
     """
     if cmd_validate(args) != 0:
         return 2
     repo = repo_root(args.repo)
     task_path, task_id = resolve_task(repo, args.task_id, args.task)
     contract = load_contract(task_path, task_id)
+    branche = git(repo, "branch", "--show-current").decode().strip()
+    if branche.startswith("task/"):
+        # Sur la branche de la tâche, le travail de l'agent fait passer les critères : la
+        # trace commitée était retirée du dossier, et le juge refusait ensuite la tâche.
+        print(
+            f"REFUS : vous êtes sur {branche}. Le contrôle rouge se fait sur la branche"
+            " principale, AVANT le travail de l'agent : ici, son travail ferait passer les"
+            " critères. git switch main, puis relancez."
+        )
+        return 2
     trace_path = task_path.parent / ROUGE
     run_id = uuid.uuid4().hex[:12]
     report_dir = repo / ".verify" / "rouge" / task_id
@@ -2320,7 +2361,17 @@ def cmd_rouge(args: argparse.Namespace) -> int:
     verts: list[str] = []
     refus: list[str] = []
     try:
-        patch, _ = snapshot(repo, head)
+        _, modifies = snapshot(repo, head)
+        retenus, ecartes = preuves_du_dossier(repo, head, contract, task_id, modifies)
+        patch = snapshot(repo, head, retenus)[0] if retenus else b""
+        if ecartes:
+            montres = ", ".join(ecartes[:5]) + (
+                f" et {len(ecartes) - 5} autre(s)" if len(ecartes) > 5 else ""
+            )
+            print(
+                f"laissé(s) de côté, pas commité(s) et hors des preuves de la tâche : {montres}."
+                " Le contrôle tourne sur le code commité, celui que l'agent recevra."
+            )
         runtime = choose_runtime(args.runtime, args.image)
         logs.mkdir(parents=True)
         preuves.mkdir()
@@ -2335,7 +2386,7 @@ def cmd_rouge(args: argparse.Namespace) -> int:
         if not refus:
             if runtime.kind != "local":
                 ensure_image(runtime, logs / "pull.log")
-            print("contrôle rouge : chaque critère doit ÉCHOUER sur le code actuel")
+            print("contrôle rouge : chaque critère doit ÉCHOUER sur le code commité")
             criteres, verts, refus = lancer_en_rouge(
                 Banc(
                     repo=repo,
@@ -2365,7 +2416,7 @@ def cmd_rouge(args: argparse.Namespace) -> int:
         trace_path.unlink(missing_ok=True)
         if verts:
             print(
-                f"REFUS : {', '.join(verts)} passe(nt) déjà sur le code actuel : l'agent serait"
+                f"REFUS : {', '.join(verts)} passe(nt) déjà sur le code commité : l'agent serait"
                 " VÉRIFIÉ sans rien faire. Resserrez la preuve, ou retirez le critère : ce qui"
                 " doit seulement rester vrai va dans la suite normale, que le juge lance aussi."
             )

@@ -12,8 +12,10 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
    les critères sont créés avec un test vide par critère, qu'il ne reste qu'à remplir.
    Sans plan sous la main, `make task-new ID=FEAT-001` donne un squelette à compléter.
 2. **Voir échouer.** Vous relisez, puis vous lancez `make task-check ID=FEAT-001`. Il vérifie
-   la forme du contrat, puis lance chaque critère une fois sur le code actuel, comme le juge
-   le fera. **Tous doivent échouer** : un critère déjà vert ferait déclarer l'agent VÉRIFIÉ
+   la forme du contrat, puis lance chaque critère une fois sur le code **commité**, plus les
+   preuves de la tâche (ce dossier, les fichiers que les critères citent), comme le juge le
+   fera. Un travail en cours pas commité ailleurs n'y entre pas : ce n'est pas ce que l'agent
+   recevra, et il le dit. Lancez-le sur la branche principale. **Tous doivent échouer** : un critère déjà vert ferait déclarer l'agent VÉRIFIÉ
    sans qu'il ait rien fait, et il est refusé. Un rouge pour une mauvaise raison l'est
    aussi, quand il se reconnaît : preuve introuvable, test pytest désigné qui n'a jamais
    tourné (nom mal écrit) ou qui passe déjà. Pour le reste, lisez la raison affichée pour

@@ -239,6 +239,9 @@ def test_le_juge_tourne_dans_un_depot_node_equipe(tmp_path: Path) -> None:
     depot_node(cible)
     bootstrap(cible)
     (cible / "src" / "taux.py").write_text("def taux(x):\n    return x\n", encoding="utf-8")
+    # Ephor et le code commités d'abord : le contrôle rouge tourne sur le code commité.
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "Ephor installé")
     plan = tmp_path / "plan.json"
     plan.write_text(
         json.dumps(

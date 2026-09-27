@@ -15,7 +15,9 @@ d'un patch quelconque dans son périmètre. L'exemple livré en avait un (EXEMPL
 
 - `make task-check ID=<ID>`, lancé par l'opérateur sur la branche principale avant de
   commiter le contrat, vérifie sa forme, puis lance chaque critère **une fois**, sur le code
-  actuel (HEAD plus l'état du dossier, puisque le contrat n'est pas encore commité), avec
+  commité (HEAD, plus les preuves de la tâche telles qu'elles sont dans le dossier, puisque
+  le contrat et ses tests ne sont pas encore commités ; un autre travail en cours n'y entre
+  pas, voir plus bas), avec
   la machinerie du juge : même copie propre, mêmes formes de preuve. **Tous doivent
   échouer.** La raison de chaque échec est affichée : une faute de frappe fait échouer aussi,
   c'est à l'opérateur de voir que l'échec vient du comportement qui manque.
@@ -51,5 +53,10 @@ d'un patch quelconque dans son périmètre. L'exemple livré en avait un (EXEMPL
   Un test qui importe une fonction pas encore écrite reste un vrai rouge. Le reste (une
   faute dans le corps d'un script) compte comme rouge : la raison est affichée, la lire
   reste un acte humain.
+- Le 27/09/2026, un travail en cours pas commité entrait dans le contrôle : un refactor qui
+  cassait la fonction faisait échouer un critère que la branche principale satisfaisait
+  déjà, et l'agent sortait VÉRIFIÉ sans rien faire. Seules les preuves de la tâche viennent
+  maintenant du dossier ; le reste est nommé et laissé de côté. Et le contrôle refuse de
+  tourner sur une branche `task/…`, où le travail de l'agent ferait passer les critères.
 - L'opérateur peut écrire la trace à la main. Il n'est pas l'adversaire que le juge vise :
   l'agent, lui, ne peut pas.
