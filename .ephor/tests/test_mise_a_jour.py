@@ -1,14 +1,17 @@
-"""Mettre Ephor à jour dans un projet déjà équipé : `--mettre-a-jour` (ADR 0007).
+"""Mettre Ephor à jour dans un projet déjà équipé : `--mettre-a-jour` (ADR 0007 et 0010).
 
 Avant, relancer l'installation depuis la nouvelle version déposait un `.ephor-new` à côté
 de chaque fichier du moteur qui avait changé — des dizaines à reprendre à la main, alors
 que la règle dit « `.ephor/` ne se modifie pas dans un projet, on le remplace ». Ces tests
-tiennent la nouvelle promesse et ses limites : le moteur est remplacé là où git garde
-l'ancien contenu exact, et nulle part ailleurs ; le reste du projet n'est pas touché.
+tiennent la promesse et ses limites : le moteur est remplacé là où git garde l'ancien
+contenu exact ; hors du moteur, un fichier d'Ephor l'est aussi, s'il est en plus une version
+livrée par Ephor, jamais retouchée ; le reste du projet n'est pas touché.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -19,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+import adapters
 from conftest import ROOT, bootstrap, depot_node, git
 
 VERSION = re.compile(r"^Ephor \S+")
@@ -76,6 +80,30 @@ def mettre_a_jour(cible: Path, source: Path, *options: str) -> str:
         text=True,
         check=True,
     ).stdout
+
+
+def makefile_fusionne(cible: Path) -> None:
+    """Le geste 0 d'un vrai dépôt : le Makefile d'Ephor, plus une cible à lui. Ce n'est plus
+    une version livrée par Ephor : une mise à jour ne le remplace pas."""
+    ajoute(cible / "Makefile", "\ndeploy: ## une cible du projet\n\t@echo deploy\n")
+    git(cible, "commit", "-qam", "nos cibles")
+
+
+def version_qui_change_hors_du_moteur(source: Path) -> None:
+    """La version suivante change aussi ce qu'Ephor pose hors de .ephor/ : son greffon
+    d'opencode, un sous-agent, et ses réglages, qui branchent un garde-fou de plus."""
+    ajoute(source / ".opencode" / "plugins" / "ephor.js", "// changé dans la version suivante\n")
+    ajoute(source / ".claude" / "agents" / "planner.md", "\nUne consigne de la version suivante.\n")
+    chemin = source / ".claude" / "settings.json"
+    reglages = json.loads(chemin.read_text(encoding="utf-8"))
+    reglages["hooks"]["Stop"][0]["hooks"].append(
+        {"type": "command", "command": '"${CLAUDE_PROJECT_DIR}/.ephor/hooks/nouveau.sh"'}
+    )
+    chemin.write_text(json.dumps(reglages, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (source / ".ephor" / "hooks" / "nouveau.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+    git(source, "add", "-A")
+    git(source, "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+        "commit", "-qm", "hors du moteur")  # fmt: skip
 
 
 def projet_equipe(cible: Path, *, geste_0: bool = True) -> Path:
@@ -171,6 +199,7 @@ def test_un_makefile_qui_lance_deja_le_juge_n_est_pas_inerte(
     ce geste, un Makefile qui diffère dit seulement que la version d'Ephor a changé : le
     crier à chaque mise à jour apprenait à ignorer le seul message qui compte."""
     cible = projet_equipe(tmp_path / "noderepo")
+    makefile_fusionne(cible)
     sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
     assert "GESTE 0" not in sortie
     assert "cibles d'Ephor absentes du vôtre : nouvelle-cible\n" in sortie, "ni .PHONY ni rien"
@@ -200,6 +229,7 @@ def test_une_cible_d_ephor_dont_la_recette_a_change_est_nommee(
     recette, qui n'écrit jamais la trace que le juge réclame. Les cibles propres au projet
     (`test`, dont la recette n'appelle pas le moteur) ne sont pas nommées."""
     cible = projet_equipe(tmp_path / "noderepo")
+    makefile_fusionne(cible)
     makefile = version_suivante / "Makefile"
     texte = makefile.read_text(encoding="utf-8")
     assert ".ephor/judge.py rouge" in texte and "\t@$(PY) pytest -q" in texte
@@ -286,3 +316,128 @@ def test_depuis_la_meme_version_rien_ne_bouge(tmp_path: Path) -> None:
     sortie = mettre_a_jour(cible, ROOT, "--mettre-a-jour")
     assert "aucun fichier du moteur remplacé" in sortie
     assert git(cible, "status", "--porcelain", "--", ".ephor") == ""
+
+
+def test_ce_qu_ephor_pose_hors_du_moteur_est_remplace_s_il_n_a_jamais_ete_retouche(
+    tmp_path: Path, version_suivante: Path
+) -> None:
+    """Le greffon d'opencode, les réglages et les sous-agents de Claude Code vivent hors de
+    `.ephor/`. Ils restaient en `.ephor-new` à chaque mise à jour, et l'ancienne version
+    tournait : un projet « en 1.1.5 » chargeait le greffon d'opencode de la 1.1.3, sans
+    plafond relevé ni sentinelle (mesuré le 29/09/2026). Une version livrée par Ephor,
+    jamais retouchée, est maintenant remplacée, et le `.ephor-new` d'un passage d'avant part."""
+    cible = projet_equipe(tmp_path / "noderepo")
+    reste = cible / ".opencode" / "plugins" / "ephor.js.ephor-new"
+    reste.write_text("// laissé par une mise à jour d'avant\n", encoding="utf-8")
+    version_qui_change_hors_du_moteur(version_suivante)
+
+    sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
+
+    for rel in (".opencode/plugins/ephor.js", ".claude/agents/planner.md", ".claude/settings.json"):
+        assert (cible / rel).read_bytes() == (version_suivante / rel).read_bytes(), rel
+        assert not (cible / f"{rel}.ephor-new").exists(), rel
+    changes = git(cible, "diff", "--name-only")
+    assert ".opencode/plugins/ephor.js" in changes, "l'ancienne version reste dans git"
+    derive = (cible / ".opencode" / "agents" / "planner.md").read_text(encoding="utf-8")
+    assert "Une consigne de la version suivante." in derive, "les adaptateurs repartent du neuf"
+    bilan = sortie[sortie.index("MISE À JOUR :") :]
+    assert "autre(s) fichier(s) d'Ephor remplacé(s), hors du moteur" in bilan
+    assert ".opencode/plugins/ephor.js" in bilan and "À REPRENDRE" not in bilan
+    assert "relancez opencode" in bilan
+    assert ".ephor-new d'un passage précédent retiré(s)" in bilan
+
+
+def test_une_retouche_du_projet_hors_du_moteur_reste_et_se_donne_a_reprendre(
+    tmp_path: Path, version_suivante: Path
+) -> None:
+    """Un dépôt qui avait déjà ses réglages Claude les a fusionnés avec ceux d'Ephor au
+    geste 0 : ce n'est plus aucune version livrée, rien ne l'écrase. Mais le bilan doit dire
+    que la mise à jour n'est pas finie, et quel garde-fou manque, au lieu de se taire."""
+    cible = projet_equipe(tmp_path / "noderepo")
+    reglages = cible / ".claude" / "settings.json"
+    propres = json.loads(reglages.read_text(encoding="utf-8"))
+    propres["permissions"]["allow"].append("Bash(npm test *)")
+    reglages.write_text(json.dumps(propres, indent=2) + "\n", encoding="utf-8")
+    ajoute(cible / ".opencode" / "plugins" / "ephor.js", "// une retouche du projet\n")
+    git(cible, "commit", "-qam", "nos retouches")
+    version_qui_change_hors_du_moteur(version_suivante)
+
+    sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
+
+    assert "Bash(npm test *)" in reglages.read_text(encoding="utf-8"), "la retouche reste"
+    assert (cible / ".claude" / "settings.json.ephor-new").exists()
+    greffon = (cible / ".opencode" / "plugins" / "ephor.js").read_text(encoding="utf-8")
+    assert greffon.endswith("// une retouche du projet\n")
+    assert "pas une version connue d'Ephor (retouché dans le projet" in sortie
+    bilan = sortie[sortie.index("MISE À JOUR :") :]
+    assert "À REPRENDRE" in bilan
+    assert "hooks d'Ephor que vos réglages ne déclarent pas : Stop : nouveau.sh" in bilan
+    assert "opencode charge l'ancien greffon" in bilan
+    planner = ".claude/agents/planner.md"
+    assert (cible / planner).read_bytes() == (version_suivante / planner).read_bytes(), (
+        "ce que le projet n'a pas retouché est remplacé quand même"
+    )
+
+
+def test_les_versions_actuelles_ont_leur_empreinte() -> None:
+    """Sans elle, une mise à jour ne reconnaîtrait pas la version qu'elle doit remplacer, et
+    le fichier resterait en `.ephor-new` pour toujours. À refaire à chaque livraison qui
+    change l'un de ces fichiers : python3 .ephor/scripts/empreintes.py."""
+    resultat = subprocess.run(
+        [sys.executable, "-B", ".ephor/scripts/empreintes.py", "check"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert resultat.returncode == 0, resultat.stdout
+
+
+def test_tout_ce_que_l_installation_pose_hors_du_moteur_a_son_empreinte(tmp_path: Path) -> None:
+    """Un fichier d'Ephor posé hors du moteur sans empreinte ne serait jamais reconnu, donc
+    jamais remplacé. Les réglages du projet, l'état tenu par l'agent et les fichiers que les
+    adaptateurs régénèrent n'en ont pas besoin."""
+    cible = tmp_path / "vide"
+    cible.mkdir()
+    git(cible, "init", "-q", "-b", "main")
+    bootstrap(cible)
+    au_projet = {"PROGRESS.md", "STEER.md", ".gitignore", *adapters.fichiers()}
+    poses = [
+        rel
+        for rel in git(cible, "ls-files", "-o", "--exclude-standard").splitlines()
+        if not rel.startswith(".ephor/") and rel not in au_projet
+    ]
+    liste = (ROOT / ".ephor" / "empreintes.txt").read_text(encoding="utf-8")
+    actuelles = {
+        morceaux[1]: morceaux[0]
+        for morceaux in (ligne.split() for ligne in liste.splitlines())
+        if morceaux[-1:] == ["actuelle"]
+    }
+    assert ".opencode/plugins/ephor.js" in poses
+    for rel in poses:
+        assert rel in actuelles, f"{rel} : posé hors du moteur, sans empreinte"
+        assert hashlib.sha256((cible / rel).read_bytes()).hexdigest() == actuelles[rel], rel
+
+
+def test_le_doctor_dit_qu_une_mise_a_jour_n_est_pas_finie(tmp_path: Path) -> None:
+    """Un `.ephor-new` qui traîne, c'est l'ancienne version qui tourne ; un greffon d'opencode
+    qui n'est pas celui du moteur, c'est opencode qui tourne avec un autre."""
+    cible = projet_equipe(tmp_path / "noderepo")
+
+    def doctor() -> str:
+        return subprocess.run(
+            ["bash", ".ephor/scripts/doctor.sh"],
+            cwd=cible,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+
+    sortie = doctor()
+    assert "aucun .ephor-new en attente" in sortie
+    assert "greffon opencode à la version du moteur" in sortie
+    (cible / ".claude" / "settings.json.ephor-new").write_text("{}\n", encoding="utf-8")
+    ajoute(cible / ".opencode" / "plugins" / "ephor.js", "// une autre version\n")
+    sortie = doctor()
+    assert "1 fichier(s) .ephor-new en attente" in sortie and "(.claude/settings.json)" in sortie
+    assert "greffon opencode (.opencode/plugins/ephor.js) différent" in sortie

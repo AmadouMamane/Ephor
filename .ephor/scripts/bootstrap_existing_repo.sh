@@ -4,13 +4,16 @@
 #     --docs   pose aussi les squelettes de documentation du projet (docs/00 à 06, modèle
 #              d'ADR, fiches de composant). Sans lui, le docs/ du dépôt n'est pas touché.
 #     --mettre-a-jour
-#              fait passer un dépôt déjà équipé à CETTE version d'Ephor (ADR 0007). Un
-#              fichier du moteur (.ephor/ hors projet/) qui a changé est REMPLACÉ si son
+#              fait passer un dépôt déjà équipé à CETTE version d'Ephor (ADR 0007 et 0010).
+#              Un fichier du moteur (.ephor/ hors projet/) qui a changé est REMPLACÉ si son
 #              contenu est exactement celui du dernier commit : l'ancien reste dans
 #              l'historique, et « git diff -- .ephor/ » montre ce qui a changé. Retouché,
 #              pas suivi, lien symbolique ou en lecture seule, il reçoit son .ephor-new
-#              comme avant. Hors de .ephor/, rien ne change : ces fichiers-là peuvent être
-#              au projet.
+#              comme avant. Hors de .ephor/ (greffon d'opencode, réglages et sous-agents de
+#              Claude Code, skills, Makefile), un fichier n'est remplacé que s'il est, en
+#              plus, une version qu'Ephor a livrée, à l'octet près (.ephor/empreintes.txt) :
+#              le projet ne l'a jamais retouché. Sinon, .ephor-new, et le bilan le donne
+#              « à reprendre » : tant qu'il reste, c'est l'ancienne version qui tourne.
 #
 # Ce qui arrive dans le dépôt, et c'est tout :
 #   .ephor/           le moteur : juge, garde-fous, scripts, greffon Copilot, doc d'Ephor
@@ -20,7 +23,8 @@
 #
 # Idempotent : un fichier identique est laissé tel quel ; un fichier existant et différent
 # n'est jamais écrasé, la version d'Ephor est déposée à côté en .ephor-new — sauf, avec
-# --mettre-a-jour, un fichier du moteur dont git garde le contenu exact.
+# --mettre-a-jour, un fichier d'Ephor dont git garde le contenu exact (et, hors du moteur,
+# qui est une version livrée par Ephor).
 # (La version d'origine copiait deux fois hooks et sous-agents : 13 doublons dès le
 # premier passage, puis des dizaines au second.)
 set -euo pipefail
@@ -40,7 +44,7 @@ done
 cd "$DST"
 
 ADDED=0; SAME=0; SIDE=0; KEPT=0; COTE=""; REPRIS=""
-REMPLACES=""; BLOQUES=""; RETIRES=0
+REMPLACES=""; BLOQUES=""; RETIRES=0; HORS_MOTEUR=""; A_REPRENDRE=""
 # Les fichiers suivis déjà modifiés AVANT nous : sans cette photo, un dépôt au travail
 # nous ferait porter le chapeau de ses propres modifications. `--relative` : des chemins
 # lus depuis le projet, qui n'est pas forcément à la racine de son dépôt.
@@ -53,29 +57,58 @@ VERSION_AVANT="$(version_de .ephor/VERSION)"
 A_UN_COMMIT=0
 if git rev-parse --verify -q HEAD >/dev/null 2>&1; then A_UN_COMMIT=1; fi
 
-# Un fichier du moteur peut être remplacé — en mise à jour seulement — si son contenu est
+# Un fichier d'Ephor peut être remplacé — en mise à jour seulement — si son contenu est
 # EXACTEMENT celui du dernier commit : l'ancienne version reste alors dans l'historique, et
 # rien de ce que le projet n'a pas commité ne se perd. On compare les contenus, pas l'avis
 # de git : un fichier marqué skip-worktree paraît intact à `git diff`, et sa retouche
 # disparaissait (trouvé en relecture). Jamais un lien symbolique — c'est sa cible, hors de
 # git, qu'on aurait écrasée — ni un fichier en lecture seule, qui arrêtait la mise à jour
-# à mi-chemin. Hors de .ephor/, jamais : le Makefile, les réglages des agents, les
-# sous-agents peuvent avoir été retouchés et commités par le projet, et rien ne permet de
-# le savoir. `HEAD:./` lit le chemin depuis le dossier courant, pas depuis la racine.
+# à mi-chemin. `HEAD:./` lit le chemin depuis le dossier courant, pas depuis la racine.
+#
+# Hors de .ephor/, une condition de plus : le fichier doit être, à l'octet près, une version
+# qu'Ephor a livrée (.ephor/empreintes.txt de la NOUVELLE version, qui les liste toutes). Le
+# Makefile, les réglages des agents, les sous-agents peuvent avoir été retouchés et commités
+# par le projet : une retouche n'est aucune de ces versions, et garde son .ephor-new. Avant
+# cette liste, rien n'était remplacé hors de .ephor/ — et un projet mis à jour en 1.1.5
+# gardait le greffon d'opencode de la 1.1.3, sans plafond relevé ni sentinelle, avec un
+# .ephor-new que rien ne disait de reprendre (mesuré le 29/09/2026).
 moteur_du_projet() { case "$1" in .ephor/projet/*) return 1 ;; .ephor/*) return 0 ;; esac; return 1; }
 suivi() { git cat-file -e "HEAD:./$1" 2>/dev/null; }
-remplacable() { # remplacable <relatif>
-  if [ "$MAJ" != "1" ] || ! moteur_du_projet "$1"; then return 1; fi
-  if [ -L "$1" ] || [ ! -f "$1" ] || [ ! -w "$1" ]; then return 1; fi
+EMPREINTES="$SRC/.ephor/empreintes.txt"
+empreinte() { # empreinte <fichier> : le sha256 de son contenu
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"
+  fi
+}
+d_ephor() { # d_ephor <relatif> : un fichier qu'Ephor pose hors du moteur ?
+  [ -f "$EMPREINTES" ] && awk -v p="$1" '$1 !~ /^#/ && $2 == p { vu = 1 } END { exit !vu }' "$EMPREINTES"
+}
+version_livree() { # version_livree <relatif> : ce contenu est-il une version livrée par Ephor ?
+  local h
+  [ -f "$EMPREINTES" ] || return 1
+  h="$(empreinte "$1" 2>/dev/null)" || return 1
+  [ -n "$h" ] || return 1
+  grep -qxF "$h $1" "$EMPREINTES" || grep -qxF "$h $1 actuelle" "$EMPREINTES"
+}
+intact_depuis_le_commit() { # le contenu exact du dernier commit ?
   local ancien
   ancien="$(git rev-parse -q --verify "HEAD:./$1" 2>/dev/null)" || return 1
   [ "$(git hash-object -- "$1" 2>/dev/null)" = "$ancien" ]
 }
-pourquoi_pas() { # pourquoi_pas <relatif> : pourquoi un fichier du moteur n'a pas été remplacé
+remplacable() { # remplacable <relatif>
+  [ "$MAJ" = "1" ] || return 1
+  case "$1" in .ephor/projet/*) return 1 ;; esac
+  if [ -L "$1" ] || [ ! -f "$1" ] || [ ! -w "$1" ]; then return 1; fi
+  intact_depuis_le_commit "$1" || return 1
+  moteur_du_projet "$1" || version_livree "$1"
+}
+pourquoi_pas() { # pourquoi_pas <relatif> : pourquoi un fichier d'Ephor n'a pas été remplacé
   if [ -L "$1" ]; then echo "lien symbolique"
   elif [ ! -w "$1" ]; then echo "en lecture seule"
-  elif suivi "$1"; then echo "modifié depuis le dernier commit"
-  else echo "pas suivi par git"
+  elif ! suivi "$1"; then echo "pas suivi par git"
+  elif ! intact_depuis_le_commit "$1"; then echo "modifié depuis le dernier commit"
+  else echo "pas une version connue d'Ephor (retouché dans le projet, ou d'avant la 1.0)"
   fi
 }
 copy() { # copy <relatif>
@@ -86,11 +119,15 @@ copy() { # copy <relatif>
   elif [ ! -L "$rel" ] && cmp -s "$src" "$rel"; then
     SAME=$((SAME+1))
   elif remplacable "$rel"; then
-    cp "$src" "$rel"; echo "  ↻ $rel"; REMPLACES="$REMPLACES $rel"
+    cp "$src" "$rel"; echo "  ↻ $rel"
+    if moteur_du_projet "$rel"; then REMPLACES="$REMPLACES $rel"; else HORS_MOTEUR="$HORS_MOTEUR $rel"; fi
   else
     cp "$src" "$rel.ephor-new"; SIDE=$((SIDE+1)); COTE="$COTE $rel"
     if [ "$MAJ" = "1" ] && moteur_du_projet "$rel"; then
       BLOQUES="$BLOQUES $rel"
+      echo "  ~ $rel $(pourquoi_pas "$rel") : pas remplacé -> $rel.ephor-new"
+    elif [ "$MAJ" = "1" ] && d_ephor "$rel"; then
+      A_REPRENDRE="$A_REPRENDRE $rel"
       echo "  ~ $rel $(pourquoi_pas "$rel") : pas remplacé -> $rel.ephor-new"
     else
       echo "  ~ $rel existe et diffère -> $rel.ephor-new"
@@ -132,9 +169,11 @@ echo "[1/6] le moteur : .ephor/ (juge, garde-fous, scripts, livraison, greffon, 
 # archive), le `find` reste, avec ses exclusions.
 #
 # Restent dehors : les réglages du projet (étape 2) ; les tests d'Ephor, qui se testent
-# dans SON dépôt ; les deux scripts qui n'ont de sens que là-bas ; et les deux fichiers du
-# greffon que les adaptateurs DÉRIVENT des réglages de ce dépôt (étape 6) — copiés ici,
-# ils auraient « différé » au passage suivant, et fabriqué un .ephor-new à chaque relance.
+# dans SON dépôt ; les trois scripts qui n'ont de sens que là-bas (l'installation, la
+# démonstration, et le calcul des empreintes, qui lit l'histoire d'Ephor) ; et les deux
+# fichiers du greffon que les adaptateurs DÉRIVENT des réglages de ce dépôt (étape 6) —
+# copiés ici, ils auraient « différé » au passage suivant, et fabriqué un .ephor-new à
+# chaque relance.
 moteur() {
   if [ -n "$(git -C "$SRC" ls-files .ephor/judge.py 2>/dev/null)" ]; then
     git -C "$SRC" ls-files .ephor
@@ -146,6 +185,7 @@ moteur() {
     case "$f" in
       .ephor/projet/*|.ephor/tests/*) continue ;;
       .ephor/scripts/bootstrap_existing_repo.sh|.ephor/scripts/demo_judge.sh) continue ;;
+      .ephor/scripts/empreintes.py) continue ;;
       .ephor/greffon-copilot/hooks/hooks.json) continue ;;
       .ephor/greffon-copilot/.claude-plugin/plugin.json) continue ;;
     esac
@@ -258,7 +298,7 @@ sed 's/^/  /' .verify/detection.md
 
 echo
 REMPL=""
-[ "$MAJ" = "1" ] && REMPL="$(printf '%s' "$REMPLACES" | wc -w | tr -d ' ') remplacé(s), "
+[ "$MAJ" = "1" ] && REMPL="$(printf '%s' "$REMPLACES$HORS_MOTEUR" | wc -w | tr -d ' ') remplacé(s), "
 echo "Bilan : $ADDED ajouté(s), $REMPL$SAME identique(s), $KEPT réglage(s) du projet gardé(s), $SIDE à fusionner à la main (.ephor-new)."
 [ -n "$COTE" ] && echo "  à fusionner :$COTE"
 # Ce que la racine du dépôt a gagné : c'était l'encombrement le plus visible (dix-sept
@@ -269,9 +309,17 @@ NOUVEAUX="$(LC_ALL=C comm -13 <(printf '%s\n' "$RACINE_AVANT") <(ls -A | LC_ALL=
 # nommés : le .gitignore et les réglages VS Code fusionnés par les adaptateurs.
 APRES="$(git diff --name-only --relative 2>/dev/null || true)"
 TOUCHES="$(printf '%s\n' "$APRES" | { [ -n "$AVANT" ] && grep -vxF "$AVANT" || cat; } | tr '\n' ' ')"
-# En mise à jour, le moteur remplacé a sa propre ligne, plus bas : pas deux fois.
+# En mise à jour, ce qu'Ephor a remplacé a sa propre ligne, plus bas : pas deux fois.
 if [ "$MAJ" = "1" ]; then
-  TOUCHES="$(printf '%s' "$TOUCHES" | tr ' ' '\n' | { grep -v '^\.ephor/' || true; } | tr '\n' ' ')"
+  RESTE=""
+  set -f  # des noms de fichiers, pas des motifs
+  for f in $TOUCHES; do
+    case "$f" in .ephor/*) continue ;; esac
+    case " $HORS_MOTEUR " in *" $f "*) continue ;; esac
+    RESTE="$RESTE $f"
+  done
+  set +f
+  TOUCHES="$RESTE"
 fi
 TOUCHES="$(printf '%s' "$TOUCHES" | sed -e 's/^ *//' -e 's/ *$//')"
 [ -n "$TOUCHES" ] && echo "  fichiers suivis modifiés par l'installation : $TOUCHES"
@@ -300,6 +348,37 @@ try:
 except (OSError, ValueError, AttributeError):
     sys.exit(1)
 sys.exit(0 if ".ephor/hooks/" in json.dumps(hooks) else 1)
+PY
+}
+# Les garde-fous que la nouvelle version déclare et que les réglages du projet, retouchés,
+# ne déclarent pas : « Stop : contexte.sh ». Sans eux, la fonction est posée et ne tourne pas.
+# Fonction à part : bash 3.2, celui de macOS, lit mal un document en ligne dans un $(…).
+hooks_manquants() {
+  python3 - "$SRC/.claude/settings.json" .claude/settings.json <<'PY' 2>/dev/null || true
+import json
+import re
+import sys
+
+
+def gardes(chemin):
+    try:
+        with open(chemin, encoding="utf-8") as fichier:
+            hooks = json.load(fichier).get("hooks") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    vus = set()
+    for evenement, blocs in hooks.items():
+        for bloc in blocs if isinstance(blocs, list) else []:
+            for hook in (bloc.get("hooks") or []) if isinstance(bloc, dict) else []:
+                commande = hook.get("command", "") if isinstance(hook, dict) else ""
+                for nom in re.findall(r"\.ephor/hooks/([\w.-]+\.sh)", str(commande)):
+                    vus.add((evenement, nom))
+    return vus
+
+
+neuf, projet = gardes(sys.argv[1]), gardes(sys.argv[2])
+if neuf is not None and projet is not None:
+    print(", ".join(f"{evenement} : {nom}" for evenement, nom in sorted(neuf - projet)))
 PY
 }
 MAKE_INERTE=0; REGLAGES_INERTES=0; MAKE_EN_RETARD=0; REGLAGES_EN_RETARD=0
@@ -431,8 +510,37 @@ if [ "$MAJ" = "1" ]; then
   else
     echo "  aucun fichier du moteur remplacé."
   fi
+  if [ -n "$HORS_MOTEUR" ]; then
+    echo "  $(printf '%s' "$HORS_MOTEUR" | wc -w | tr -d ' ') autre(s) fichier(s) d'Ephor remplacé(s), hors du moteur : c'était une version"
+    echo "  livrée par Ephor, jamais retouchée ici (l'ancienne reste dans git) :"
+    echo "     $HORS_MOTEUR"
+  fi
   if [ "$RETIRES" -gt 0 ]; then
     echo "  $RETIRES .ephor-new d'un passage précédent retiré(s) : leur fichier est maintenant à jour."
+  fi
+  # Ce qu'Ephor pose hors du moteur et que le projet a retouché : le laisser en .ephor-new
+  # sans le dire, c'était une mise à jour qui s'annonçait faite et laissait tourner
+  # l'ancienne version (le greffon d'opencode, mesuré le 29/09/2026).
+  if [ -n "$A_REPRENDRE" ]; then
+    echo
+    echo "  À REPRENDRE — la mise à jour n'est pas finie sans eux : ils n'ont pas été remplacés,"
+    echo "  et c'est encore leur ANCIENNE version qui tourne."
+    for f in $A_REPRENDRE; do
+      echo "     $f : $(pourquoi_pas "$f")"
+      echo "        diff $f $f.ephor-new"
+      case "$f" in
+        .opencode/plugins/*)
+          echo "        opencode charge l'ancien greffon tant que celui-ci reste en place." ;;
+        .claude/settings.json)
+          MANQUANTS="$(hooks_manquants)"
+          if [ -n "$MANQUANTS" ]; then
+            echo "        hooks d'Ephor que vos réglages ne déclarent pas : $MANQUANTS"
+          fi
+          echo "        puis make adapters : les réglages d'opencode, de VS Code et de Copilot en dérivent." ;;
+      esac
+    done
+    echo "  Pour chacun : reprenez dans le vôtre ce qui manque ; ou, si rien n'y est propre au"
+    echo "  projet : mv <fichier>.ephor-new <fichier>."
   fi
   if [ -n "$BLOQUES" ]; then
     echo "  Pas remplacés (la raison est donnée plus haut, fichier par fichier) :"
@@ -457,6 +565,11 @@ if [ "$MAJ" = "1" ]; then
   fi
   echo
   echo "Puis : make verify. S'il est vert, commitez la mise à jour seule, dans son propre commit."
+  # opencode et Claude Code ne relisent leur greffon, leurs réglages et leurs sous-agents
+  # qu'au démarrage : une session ouverte garde l'ancienne version.
+  if [ -n "$HORS_MOTEUR" ]; then
+    echo "Et relancez opencode ou Claude Code : ils ne relisent leur greffon et leurs réglages qu'au démarrage."
+  fi
   exit 0
 fi
 

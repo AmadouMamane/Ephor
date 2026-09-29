@@ -19,6 +19,7 @@
 | `.ephor/tests/` | les tests d'Ephor (`make ephor-test`) — seulement dans le dépôt d'Ephor | Ephor |
 | `.ephor/ruff.toml` | les règles de lint d'Ephor, appliquées à ce dossier seul | Ephor |
 | `.ephor/VERSION`, `.ephor/CHANGELOG.md` | la version en place, et ce que chacune a changé | Ephor |
+| `.ephor/empreintes.txt` | les versions livrées de ce qu'Ephor pose hors du moteur (greffon d'opencode, réglages et sous-agents de Claude Code, skills, `Makefile`) : une mise à jour remplace un tel fichier s'il est l'une d'elles, donc jamais retouché (ADR 0010) | Ephor |
 
 Pourquoi un dossier caché, et un seul : Ephor n'encombre plus la racine du projet (une
 entrée au lieu de dix), `pytest` et `mypy` ne descendent pas dans un dossier caché, et le

@@ -46,4 +46,6 @@ ignore = ["S101"]  # assert autorisé dans les tests
 # et le fichier plantait à l'import sur un Mac resté en Python 3.9. Corrigé trois fois de suite
 # avant qu'on comprenne que c'était l'outil de formatage qui défaisait la correction.
 "deploy/manifest.py" = ["S603", "S607", "T20", "UP017"]
+# Le calcul des empreintes lit l'histoire d'Ephor avec git et rend compte sur la console.
+"scripts/empreintes.py" = ["S603", "S607", "T20"]
 "tests/**" = ["S", "T20"]

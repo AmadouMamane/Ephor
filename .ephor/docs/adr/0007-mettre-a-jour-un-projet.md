@@ -40,7 +40,9 @@ Ce qui ne change pas, exprès :
 
 - **Hors de `.ephor/`, rien n'est remplacé.** Le `Makefile`, `.claude/settings.json`, les
   sous-agents peuvent avoir été retouchés et commités par le projet, et rien ne permet de le
-  savoir. Ils gardent le `.ephor-new`.
+  savoir. Ils gardent le `.ephor-new`. *Revu par l'ADR 0010 (29/09/2026) : une liste des
+  versions livrées par Ephor permet maintenant de le savoir, et un tel fichier jamais
+  retouché est remplacé ; ce qui a été retouché est donné « à reprendre ».*
 - **Rien n'est retiré.** Un fichier que la nouvelle version n'a plus est nommé, avec la
   commande `git rm` ; l'opérateur décide.
 - **Sans l'option, le comportement est celui d'avant** : rien n'est jamais écrasé.

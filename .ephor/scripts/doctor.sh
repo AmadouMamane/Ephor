@@ -279,6 +279,35 @@ printf '         le signale en fin de tour, le juge refuse le correctif — ce n
 printf '         La frontière, sous Claude Code seulement, c'"'"'est le bac à sable ; opencode et Copilot n'"'"'en ont pas.\n'
 
 echo
+echo "== Mise à jour d'Ephor =="
+# Un .ephor-new, c'est une version d'Ephor posée à côté d'un fichier que la mise à jour n'a pas
+# pu remplacer : tant qu'il reste, c'est l'ANCIENNE version qui tourne. Mesuré le 29/09/2026 :
+# un projet « en 1.1.5 » chargeait le greffon d'opencode de la 1.1.3, et rien ne le disait.
+empreinte() { # empreinte <fichier> : le sha256 de son contenu
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"
+  fi
+}
+EN_ATTENTE="$(find . \( -name .git -o -name node_modules -o -name .venv -o -name .verify \) -prune \
+  -o -type f -name '*.ephor-new' -print 2>/dev/null | sed 's|^\./||' | LC_ALL=C sort)"
+if [ -n "$EN_ATTENTE" ]; then
+  N_ATTENTE="$(printf '%s\n' "$EN_ATTENTE" | wc -l | tr -d ' ')"
+  warn "$N_ATTENTE fichier(s) .ephor-new en attente : tant qu'ils restent, c'est l'ANCIENNE version qui tourne ($(printf '%s\n' "$EN_ATTENTE" | head -n 5 | sed 's/\.ephor-new$//' | tr '\n' ' ' | sed 's/ $//'))" \
+       "pour chacun : diff <fichier> <fichier>.ephor-new, reprenez ce qui manque (ou mv <fichier>.ephor-new <fichier>), puis make adapters"
+else
+  ok "aucun .ephor-new en attente"
+fi
+if [ -f .opencode/plugins/ephor.js ] && [ -f .ephor/empreintes.txt ]; then
+  if grep -qxF "$(empreinte .opencode/plugins/ephor.js) .opencode/plugins/ephor.js actuelle" .ephor/empreintes.txt; then
+    ok "greffon opencode à la version du moteur ($(sed -n '1s/ —.*//p' .ephor/VERSION 2>/dev/null))"
+  else
+    warn "greffon opencode (.opencode/plugins/ephor.js) différent de celui de cette version d'Ephor : opencode tourne avec un autre" \
+         "s'il n'a pas été retouché exprès : relancez bootstrap_existing_repo.sh --mettre-a-jour depuis cette version (ou reprenez son .ephor-new), puis relancez opencode"
+  fi
+fi
+
+echo
 echo "== Dépôts de référence =="
 # Une déclaration cassée (le plus souvent : une variable d'environnement pas exportée sur
 # ce poste) fait refuser toute écriture hors du dépôt, et `make refs` échoue. Vu le

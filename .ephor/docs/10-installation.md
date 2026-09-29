@@ -253,18 +253,24 @@ dossier, `pytest` et `mypy` sautent un dossier caché. Un autre outil Python (`f
 
 ```bash
 bash /chemin/vers/ephor-nouvelle/.ephor/scripts/bootstrap_existing_repo.sh --mettre-a-jour /chemin/du/depot
-git diff --stat -- .ephor/     # ce qui a changé
+git diff --stat                # ce qui a changé
 make verify                    # puis un commit à part, pour la mise à jour seule
+                               # et relancer opencode ou Claude Code
 ```
 
 Un fichier du moteur qui a changé est **remplacé** si son contenu est exactement celui du
 dernier commit : l'ancien reste dans l'historique. Retouché, pas suivi, lien symbolique ou
-en lecture seule, il reçoit son `.ephor-new`, et le bilan dit pourquoi. Les réglages du
-projet (`.ephor/projet/`), `PROGRESS.md` et `STEER.md` ne bougent pas. Hors de `.ephor/`,
-rien n'est remplacé : un `Makefile` ou des réglages Claude différents reçoivent un
-`.ephor-new`, et le bilan nomme les cibles d'Ephor qui manquent au `Makefile` du projet.
-Un fichier que la nouvelle version n'a plus est nommé, avec la commande pour le retirer.
-Si le greffon Copilot a changé, `make copilot-install` sur chaque poste. Décision : ADR 0007.
+en lecture seule, il reçoit son `.ephor-new`, et le bilan dit pourquoi. Hors de `.ephor/`
+— le greffon d'opencode, les réglages, sous-agents et skills de Claude Code, le `Makefile` —
+il faut une condition de plus : être, à l'octet près, une version livrée par Ephor
+(`.ephor/empreintes.txt`), donc jamais retouchée dans le projet. Sinon, le fichier garde son
+`.ephor-new`, et le bilan le donne **« à reprendre »** : tant qu'il n'est pas repris, c'est
+l'ancienne version qui tourne. Pour des réglages Claude retouchés, le bilan nomme les
+garde-fous qui leur manquent ; pour le `Makefile`, les cibles d'Ephor qui lui manquent.
+`make doctor` signale tout `.ephor-new` qui traîne. Les réglages du projet
+(`.ephor/projet/`), `PROGRESS.md` et `STEER.md` ne bougent pas. Un fichier que la nouvelle
+version n'a plus est nommé, avec la commande pour le retirer. Si le greffon Copilot a
+changé, `make copilot-install` sur chaque poste. Décisions : ADR 0007 et 0010.
 
 Ce que chaque version demande de reprendre à la main, s'il y a lieu, est écrit dans
 `.ephor/CHANGELOG.md`. Sans `--mettre-a-jour`, relancer la commande ne remplace rien :

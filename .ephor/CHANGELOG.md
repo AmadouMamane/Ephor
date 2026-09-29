@@ -3,6 +3,33 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.1.6 — 29 septembre 2026
+
+Une mise à jour qui s'annonçait faite, et laissait tourner l'ancienne version.
+
+- **La mise à jour remplace aussi ce qu'Ephor pose hors de `.ephor/`.** Le greffon
+  d'opencode, les réglages et les sous-agents de Claude Code, les skills et le `Makefile`
+  arrivaient en `.ephor-new` à chaque mise à jour, et l'ancienne version restait active. Un
+  projet mis à jour en 1.1.5 comme ce journal le disait chargeait encore le greffon d'opencode
+  de la 1.1.3 : ni plafond de réponse relevé, ni sentinelle, ni alerte de contexte, et rien
+  ne le signalait. Un tel fichier est maintenant remplacé s'il est, à l'octet près, une
+  version livrée par Ephor (`.ephor/empreintes.txt`), donc jamais retouché dans le projet.
+  Sinon il garde son `.ephor-new`, et le bilan le donne « à reprendre », avec les
+  garde-fous qui manquent aux réglages (ADR 0010).
+- **`make doctor` dit quand une mise à jour n'est pas finie** : un `.ephor-new` qui traîne,
+  un greffon d'opencode qui n'est pas celui du moteur.
+
+Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, lancé depuis cette
+version. Elle rattrape les mises à jour 1.1.4 et 1.1.5 : les fichiers jamais retouchés sont
+remplacés, et leurs `.ephor-new` retirés. Ce que le bilan donne « à reprendre » se fusionne
+à la main (`diff <fichier> <fichier>.ephor-new`), puis `make adapters`. Relancer ensuite
+opencode ou Claude Code. Un projet équipé avant la 1.0 n'est pas reconnu par la liste : il
+reprend ces fichiers à la main, une fois.
+
+Dans le dépôt d'Ephor, à chaque livraison qui change l'un de ces fichiers :
+`python3 .ephor/scripts/empreintes.py`, puis commit de `.ephor/empreintes.txt` (sinon
+`make ephor-test` échoue).
+
 ## 1.1.5 — 29 septembre 2026
 
 Un contrat que l'agent s'écrivait et s'approuvait lui-même, sous opencode, sans que rien ne

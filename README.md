@@ -59,8 +59,11 @@ la version d'Ephor à côté, en `.ephor-new`. Les réglages du projet (`.ephor/
 posés une fois et jamais remplacés ensuite. Ensuite : `/brownfield-onboard`.
 
 **Mettre Ephor à jour** dans un dépôt déjà équipé : la même commande, depuis la nouvelle
-version, avec `--mettre-a-jour`. Le moteur est remplacé là où git garde l'ancien ; le
-reste du projet ne bouge pas, et le bilan dit ce qui a changé (ADR 0007).
+version, avec `--mettre-a-jour`. Le moteur est remplacé là où git garde l'ancien ; ce
+qu'Ephor pose ailleurs (greffon d'opencode, réglages et sous-agents de Claude Code, skills,
+`Makefile`) l'est aussi, s'il n'a jamais été retouché. Le reste du projet ne bouge pas, et
+le bilan dit ce qui a changé et ce qui reste « à reprendre » (ADR 0007 et 0010). Puis
+relancer opencode ou Claude Code.
 
 ---
 
@@ -144,7 +147,7 @@ Dans .ephor/ : le moteur, le même dans chaque projet (carte : .ephor/README.md)
 .ephor/scripts/          doctor, review, mutants, repo_map, bootstrap, demo_judge…
 .ephor/deploy/           livraison vers Kubernetes ou GCP : manifeste, image de CI, principes
 .ephor/greffon-copilot/  greffon Copilot : deux fichiers générés, un relais écrit à la main
-.ephor/docs/             la doc d'Ephor (06 à 12) et ses décisions (ADR 0002 à 0008)
+.ephor/docs/             la doc d'Ephor (06 à 12) et ses décisions (ADR 0002 à 0010)
 .ephor/tests/            les tests d'Ephor : make ephor-test
 .ephor/projet/           AU PROJET : étapes de vérification, exceptions, dépôts lus en référence
 ```
