@@ -3,6 +3,27 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.1.7 — 29 septembre 2026
+
+Le contrôle anti-secret refusait des textes ordinaires, et laissait passer les secrets des
+gros fichiers.
+
+- **Un secret en tête d'un fichier de plus de 16 Ko passait.** La recherche s'arrête à sa
+  première correspondance ; le texte qu'on lui envoyait était alors coupé en pleine
+  écriture, et le script comptait cette coupure pour « pas de secret ». Mesuré : une clé AWS
+  en tête d'un fichier de 21 Ko passait, sous les trois outils. Seul le verdict de la
+  recherche compte maintenant.
+- **`risk-…` n'est plus pris pour une clé d'API.** Le motif des clés en `sk-` n'avait ni
+  début de mot ni casse : tout identifiant en tirets passant par « …sk- » (`risk-`, `task-`,
+  `desk-`, `disk-`) était refusé. Il vise maintenant une clé en minuscules, en début de mot,
+  avec au moins un chiffre.
+- **Un texte d'interface n'est plus pris pour un mot de passe.** `"password": "Le mot de
+  passe doit contenir au moins 12 caractères"` était refusé : une valeur entre guillemets
+  n'est un secret que si elle n'a pas d'espace.
+
+Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
+Rien à reprendre, rien à réinstaller pour Copilot.
+
 ## 1.1.6 — 29 septembre 2026
 
 Une mise à jour qui s'annonçait faite, et laissait tourner l'ancienne version.

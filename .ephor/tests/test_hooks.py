@@ -133,6 +133,60 @@ def test_obvious_secrets_are_blocked(tool_input: dict[str, Any]) -> None:
     assert "REFUSÉ" in result.stderr
 
 
+# Des clés d'API en « sk- », fabriquées ici plutôt qu'écrites en clair : gitleaks relit ce
+# fichier, et une valeur littérale y passerait pour une vraie clé.
+CLE_OPENAI = "sk-" + "Ab3Cd5Ef7Gh9" * 4
+CLE_PROJET = "sk-proj-" + "Ab3_Cd5-Ef7" * 5
+CLE_ANTHROPIC = "sk-ant-api03-" + "Ab3Cd5-Ef7_" * 8
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        f'OPENAI_API_KEY = "{CLE_OPENAI}"',
+        f"const cle = '{CLE_PROJET}';",
+        f"Authorization: Bearer {CLE_ANTHROPIC}",
+        CLE_OPENAI,
+    ],
+)
+def test_une_cle_en_sk_est_refusee(content: str) -> None:
+    assert hook("block-secrets.sh", {"tool_input": {"content": content}}).returncode == 2
+
+
+@pytest.mark.parametrize(
+    "secret",
+    ['key = "AKIAIOSFODNN7EXAMPLE"', "DB_PASSWORD=SuperSecretValue123456", CLE_OPENAI],
+)
+def test_un_secret_en_tete_d_un_gros_fichier_est_vu(secret: str) -> None:
+    """`grep -q` s'arrête à la première correspondance et coupe le texte que `printf` lui
+    envoie. Sous `pipefail`, la coupure faisait compter le tuyau pour un échec dès que le
+    contenu dépassait la mémoire d'un tuyau (16 Ko sur Mac, 64 Ko sous Linux) : une clé AWS
+    en tête d'un fichier de 21 Ko passait (mesuré à l'audit du 29/09/2026)."""
+    content = secret + "\n" + "x = 1  # remplissage\n" * 20000
+    assert hook("block-secrets.sh", {"tool_input": {"content": content}}).returncode == 2
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        # Tout identifiant en tirets qui passe par « …sk- » était pris pour une clé : `risk-`
+        # est partout dans une banque (vu à l'audit du 29/09/2026).
+        'risk_level = "risk-assessment-service-configuration"',
+        "Voir le module task-management-service-configuration.",
+        "desk-reservation-api-v2-endpoint-name",
+        "disk-usage-monitoring-dashboard-panel",
+        "RISK-ASSESSMENT-SERVICE-CONFIGURATION-2024",
+        "helm install sk-monitoring-stack-production-release",
+        # Des textes d'interface, pas des secrets : une valeur secrète n'a pas d'espace.
+        '"password": "Le mot de passe doit contenir au moins 12 caractères"',
+        '"token": "Votre session a expiré, reconnectez-vous pour continuer"',
+        'secret: "Ne partagez jamais ce code avec qui que ce soit"',
+    ],
+)
+def test_un_texte_ordinaire_n_est_pas_pris_pour_un_secret(content: str) -> None:
+    assert hook("block-secrets.sh", {"tool_input": {"content": content}}).returncode == 0
+
+
 @pytest.mark.parametrize(
     "content",
     [

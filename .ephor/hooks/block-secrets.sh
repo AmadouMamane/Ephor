@@ -37,13 +37,29 @@ fi
 BODY="$(corps)"
 [ -z "$BODY" ] && exit 0
 
-PATTERNS='(AKIA[0-9A-Z]{16})|(sk-[A-Za-z0-9_-]{20,})|(gh[pousr]_[A-Za-z0-9]{36})|(glpat-[A-Za-z0-9_-]{20,})|(-----BEGIN [A-Z ]*PRIVATE KEY-----)|(xox[baprs]-[A-Za-z0-9-]{10,})|(AIza[0-9A-Za-z_-]{35})|("?(api[_-]?key|secret|password|passwd|token)"?[[:space:]]*[:=][[:space:]]*"[^"]{20,}")'
+# Une valeur entre guillemets derrière `password`, `token`, `secret`… n'est un secret que si
+# elle n'a pas d'espace : « Le mot de passe doit contenir au moins 12 caractères » est un
+# texte d'interface, et il était refusé comme un mot de passe (vu à l'audit du 29/09/2026).
+PATTERNS='(AKIA[0-9A-Z]{16})|(gh[pousr]_[A-Za-z0-9]{36})|(glpat-[A-Za-z0-9_-]{20,})|(-----BEGIN [A-Z ]*PRIVATE KEY-----)|(xox[baprs]-[A-Za-z0-9-]{10,})|(AIza[0-9A-Za-z_-]{35})|("?(api[_-]?key|secret|password|passwd|token)"?[[:space:]]*[:=][[:space:]]*"[^"[:space:]]{20,}")'
 # Forme « variable d'environnement » sans guillemets : DB_PASSWORD=valeur (noms en majuscules).
 # La valeur doit ressembler à un secret (lettres, chiffres, + / = _ -) ET faire au moins
 # vingt caractères : une URL, un appel de fonction, un attribut (`settings.x`) ou une
 # constante comme `PASSWORD_HASH_ALGORITHM=pbkdf2_sha256` ne déclenchent pas l'alerte.
 ENV_STYLE='(^|[^A-Za-z0-9_])[A-Z0-9_]*(PASSWORD|PASSWD|SECRET|TOKEN|API_KEY)[A-Z0-9_]*[[:space:]]*=[[:space:]]*[A-Za-z0-9_+/=-]{20,}([[:space:]]|$)'
-if printf '%s' "$BODY" | grep -qiE "$PATTERNS" || printf '%s' "$BODY" | grep -qE "$ENV_STYLE"; then
+# Clés d'API en « sk- » (OpenAI, Anthropic, et les passerelles qui les imitent). Le motif
+# n'avait ni début de mot ni casse : tout identifiant en tirets qui passe par « …sk- » —
+# risk-, task-, desk-, disk- — était refusé comme une clé, et `risk-` est partout dans une
+# banque (vu à l'audit du 29/09/2026). Maintenant : en minuscules, en début de mot, et avec
+# au moins un chiffre, qu'une clé tirée au hasard porte toujours et un nom de service non.
+CLE_SK='(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}'
+cle_sk() { printf '%s' "$BODY" | grep -oE "$CLE_SK" | grep -q '[0-9]'; }
+# Les recherches s'arrêtent à la première correspondance (`grep -q`) : le texte que `printf`
+# envoie est alors coupé en pleine écriture. Sous `pipefail`, cette coupure faisait compter
+# tout le tuyau pour un échec — un secret TROUVÉ passait pour « pas de secret » dès que le
+# contenu dépassait la mémoire d'un tuyau (16 Ko sur Mac). Mesuré à l'audit du 29/09/2026 :
+# une clé AWS en tête d'un fichier de 21 Ko passait. Ici, seul le verdict de `grep` compte.
+set +o pipefail
+if printf '%s' "$BODY" | grep -qiE "$PATTERNS" || printf '%s' "$BODY" | grep -qE "$ENV_STYLE" || cle_sk; then
   echo "REFUSÉ : le contenu ressemble à un secret en clair (clé API, jeton, clé privée ou mot de passe). Utilise une variable d'environnement et .env.example, jamais une valeur littérale. Faux positif ? Dis-le à l'opérateur au lieu de contourner." >&2
   exit 2
 fi
