@@ -1043,6 +1043,38 @@ def test_claude_code_lance_aussi_la_garde_d_ecriture() -> None:
     assert '"write-guard.sh"' in greffon
 
 
+def test_l_agent_n_ecrit_pas_l_histoire_de_la_branche_principale(tmp_path: Path) -> None:
+    """Le commit d'un contrat sur la branche principale EST l'approbation, et le juge la lit
+    là. Un agent qui y commitait un contrat glissé dans tasks/ par un script s'approuvait
+    lui-même, en local : `git add` et `git commit` passent sans question (29/09/2026)."""
+    projet = projet_avec_reglages(tmp_path)
+    git(projet, "init", "-q", "-b", "main")
+    git(projet, "config", "user.email", "t@example.invalid")
+    git(projet, "config", "user.name", "t")
+    git(projet, "commit", "-q", "--allow-empty", "-m", "base")
+
+    def code(commande: str) -> int:
+        charge = {"tool_name": "Bash", "tool_input": {"command": commande}}
+        return hook("shell-guard.sh", charge, cwd=projet, project=projet).returncode
+
+    for commande in (
+        "git commit -m x",
+        "git add tasks/T-1 && git commit -m approuve",
+        "git -C . commit -m x",
+        "git merge task/T-1",
+        "git cherry-pick abc123",
+    ):
+        assert code(commande) == 2, commande
+    assert code("git switch -c task/T-1 && git commit -m x") == 0, "une branche de tâche"
+    assert code("git status && git log -1") == 0, "lire l'histoire n'écrit rien"
+    assert code("git checkout src/a.py") == 0, "restaurer un fichier n'est pas un commit"
+    git(projet, "switch", "-q", "-c", "task/T-1")
+    assert code("git add -A && git commit -m increment") == 0
+    for commande in ("git switch main && git commit -m x", "git checkout main && git merge x"):
+        assert code(commande) == 2, "la garde suit le changement de branche : " + commande
+    assert code("git switch main") == 0, "changer de branche n'écrit rien"
+
+
 def test_les_hooks_ne_lancent_pas_ce_qu_on_glisse_dans_git(tmp_path: Path) -> None:
     """Mesuré le 25/09/2026 : un `core.fsmonitor` planté dans .git/config était lancé seize
     fois par la fin de tour d'Ephor (sentinelle et point de reprise), sans aucune demande.

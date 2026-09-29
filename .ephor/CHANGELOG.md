@@ -3,6 +3,29 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.1.5 — 29 septembre 2026
+
+Un contrat que l'agent s'écrivait et s'approuvait lui-même, sous opencode, sans que rien ne
+le voie.
+
+- **La sentinelle tourne sous opencode.** On la croyait impossible faute de fin de tour : le
+  greffon d'opencode en a une. Le message de l'opérateur ouvre le tour (photo des zones de
+  contrôle), la session redevenue inactive le ferme (contrôle, puis point de reprise). Avant,
+  un script ou un test qui écrivait dans `tasks/` n'était vu par personne ; le greffon
+  reprenait même la photo à chaque requête, ce qui aurait effacé la trace.
+- **L'agent n'écrit plus l'histoire de la branche principale.** `git add` et `git commit`
+  passaient sans question : un contrat glissé dans `tasks/` par un détour, commité sur la
+  branche principale, valait approbation pour le juge local. La garde du terminal refuse
+  désormais `git commit`, `merge`, `cherry-pick`, `revert`, `am`, `rebase` et `pull` sur
+  cette branche, y compris après un `git switch main` dans la même commande. L'agent commite
+  sur ses branches de tâche ; l'approbation reste le geste de l'opérateur. `AGENTS.md` le dit.
+- **Les points de reprise d'Ephor existent aussi sous opencode**, en plus de son `/undo`.
+
+Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, puis relancer opencode.
+La mise à jour ne touche pas l'`AGENTS.md` du projet, écrit à la main : y ajouter la règle
+(« un commit par incrément, sur ta branche de tâche, jamais sur la branche principale »). La
+garde l'applique de toute façon ; la règle écrite évite à l'agent de buter dessus.
+
 ## 1.1.4 — 29 septembre 2026
 
 Le sous-agent `planner`, vu échouer sur un vrai projet, et la règle des 60 % de contexte,

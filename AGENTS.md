@@ -62,7 +62,8 @@ Procédure complète : `tasks/README.md`. Fonctionnement du juge : `.ephor/READM
 2. Travaille sur la branche `task/<ID>`, créée depuis la branche principale.
 3. Le plus petit incrément qui avance un critère. `make verify`.
 4. `make judge TASK=<ID>`. Lis le résumé, puis seulement le journal en échec.
-5. Un commit par incrément, message à l'impératif.
+5. Un commit par incrément, message à l'impératif, sur ta branche de tâche. Jamais sur
+   la branche principale : un commit y vaut approbation, c'est le geste de l'opérateur.
 6. Mets à jour `PROGRESS.md` : fait, en cours, bloqué, une ligne chacun.
 7. Revue proportionnée au risque du contrat : `faible`, aucune relecture par un modèle ;
    `modere`, un évaluateur sans droit d'écriture ; `eleve`, évaluateur, mutation, relecteur.

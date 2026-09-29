@@ -27,10 +27,14 @@ sentinelle() { # sentinelle <photo|controle> : rend le code de la sentinelle
 # Rien sur la sortie standard : ce que ce hook y écrit, l'agent le lit comme une consigne.
 # Si le tour PRÉCÉDENT n'a jamais été contrôlé (interrompu) et a touché une zone, la
 # demande est refusée (code 2) : l'opérateur doit le voir avant que l'agent ne reparte.
-ALERTE="$(sentinelle photo 2>&1 >/dev/null)"
-if [ $? -eq 1 ]; then
-  printf '%s\n' "$ALERTE" >&2
-  exit 2
+# `steer.sh consigne` ne rend que la consigne : le greffon d'opencode la relit à chaque
+# requête, et une photo reprise à chaque requête effacerait ce que le tour a changé.
+if [ "${1:-}" != consigne ]; then
+  ALERTE="$(sentinelle photo 2>&1 >/dev/null)"
+  if [ $? -eq 1 ]; then
+    printf '%s\n' "$ALERTE" >&2
+    exit 2
+  fi
 fi
 ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 F="$ROOT/STEER.md"

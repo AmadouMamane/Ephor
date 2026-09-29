@@ -21,6 +21,11 @@
 # zones sont celles du moteur (.ephor/zones.txt), plus celles que les réglages ajoutent. La
 # sentinelle signale le détour en fin de tour ; le juge, qui refuse tout correctif touchant
 # ces zones, reste la barrière. `make doctor` le dit à l'opérateur.
+#
+# Depuis le 29/09/2026, aussi : écrire l'histoire de la branche principale (`git commit`,
+# `merge`, `cherry-pick`…). Le commit d'un contrat sur cette branche EST l'approbation, et le
+# juge la lit là : un agent qui y commitait un contrat glissé dans tasks/ par un détour
+# s'approuvait lui-même, en local. L'agent ne commite que sur ses branches de tâche.
 set -uo pipefail
 # shellcheck source=/dev/null  # résolu à l'exécution, chemin relatif au hook
 source "$(dirname "$0")/_lib.sh" || { echo "REFUSÉ : la bibliothèque des garde-fous (.ephor/hooks/_lib.sh) ne s'est pas chargée, donc cette garde ne peut rien juger. Elle refuse. Vérifie le dépôt : fichier manquant, droits, ou installation à moitié faite." >&2; exit 2; }
@@ -42,6 +47,11 @@ COMMANDE="$(commande)"
 [ -f "$ZONES_MOTEUR" ] || deny "REFUSÉ : la liste des zones de contrôle ($ZONES_MOTEUR) est introuvable, donc cette garde ne sait pas ce qu'elle protège. Elle refuse. Installation à moitié faite : préviens l'opérateur."
 MOTIFS="$(motifs_zones "$ROOT" "$REGLAGES")"
 EXCEPTIONS="$(_entrees_zones exceptions)"
+# La branche courante, et les principales : main, master, et celle que le dépôt distant
+# désigne. Git durci (voir _lib.sh).
+BRANCHE="$(git -C "$ROOT" branch --show-current 2>/dev/null || true)"
+DISTANTE="$(git -C "$ROOT" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+PRINCIPALES="main master ${DISTANTE#*/}"
 
 # Sans python3, pas d'analyse de la commande. Une commande qui ne nomme aucune zone de
 # contrôle passe ; une qui en nomme une est refusée, faute de pouvoir dire si elle y écrit.
@@ -70,6 +80,13 @@ import urllib.parse
 
 racine, maison = sys.argv[1], sys.argv[2]
 commande = os.environ["EPHOR_COMMANDE"]
+# La branche où l'on est, suivie à travers les `git switch` de la commande : `git switch main
+# && git commit` commite sur main alors que la garde voit la branche de tâche.
+BRANCHE = {"courante": os.environ.get("EPHOR_BRANCHE", "")}
+PRINCIPALES = set(os.environ.get("EPHOR_PRINCIPALES", "").split())
+# Ce qui écrit l'histoire de la branche courante.
+HISTOIRE = {"commit", "merge", "cherry-pick", "revert", "am", "rebase", "pull"}
+PRINCIPALE = "::branche principale::"
 # Les zones, déjà en motifs (voir motifs_zones dans _lib.sh) : relatifs au dépôt, ou absolus
 # pour le poste et le dossier git. Les exceptions (la mémoire de l'agent) passent.
 motifs = [m.strip() for m in os.environ["EPHOR_MOTIFS"].splitlines() if m.strip()]
@@ -293,6 +310,38 @@ def git_config(args):
     return cible if ecrit or len(positionnels) >= 2 else None
 
 
+def git_sous_commande(args):
+    """(sous-commande, ses arguments), après les options globales : `git -C x commit`."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in {"-C", "-c", "--git-dir", "--work-tree", "--namespace"} else 1
+    return (args[i], args[i + 1 :]) if i < len(args) else ("", [])
+
+
+def branche_apres(sous, args):
+    """La branche où mène `git switch` ou `git checkout`, sinon None (elle ne change pas)."""
+    if sous == "switch":
+        creees = valeurs(args, "cC", {"--create", "--force-create"})
+    elif sous == "checkout":
+        creees = valeurs(args, "bB", set())
+    else:
+        return None
+    if creees:
+        return creees[0]
+    positionnels = []
+    for a in args:
+        if a == "--":
+            break
+        if not a.startswith("-"):
+            positionnels.append(a)
+    if not positionnels:
+        return None
+    # `git checkout fichier` restaure un fichier : seul un nom de branche principale compte.
+    if sous == "checkout" and positionnels[0] not in PRINCIPALES:
+        return None
+    return positionnels[0]
+
+
 def programme(mots):
     """(nom du programme, ses arguments), après affectations, préfixes et lanceurs."""
     while mots:
@@ -484,6 +533,12 @@ def cibles(texte, profondeur=0, base=None):
                 for a in racines or ["."]:
                     yield ici(a), "find qui écrit"
         elif nom == "git" and args:
+            sous_g, reste_g = git_sous_commande(args)
+            nouvelle = branche_apres(sous_g, reste_g)
+            if nouvelle is not None:
+                BRANCHE["courante"] = nouvelle
+            elif sous_g in HISTOIRE and BRANCHE["courante"] in PRINCIPALES:
+                yield PRINCIPALE + BRANCHE["courante"], "git " + sous_g
             sous = args[0]
             if sous in {"checkout", "restore", "rm", "mv"}:
                 for a in args[1:]:
@@ -525,6 +580,9 @@ def cibles(texte, profondeur=0, base=None):
 
 try:
     for cible, pourquoi in cibles(commande):
+        if cible.startswith(PRINCIPALE):
+            print(f"{cible[len(PRINCIPALE):]}\t{PRINCIPALE}\t{pourquoi}")
+            break
         motif = zone(cible)
         if motif:
             print(f"{cible}\t{motif}\t{pourquoi}")
@@ -535,11 +593,15 @@ except Exception:  # un défaut de cette analyse ne doit pas tout laisser passer
             print(f"{litteral}\t{litteral}\tcommande que cette garde n'a pas su analyser")
             break
 PY
-VERDICT="$(EPHOR_COMMANDE="$COMMANDE" EPHOR_MOTIFS="$MOTIFS" EPHOR_EXCEPTIONS="$EXCEPTIONS" python3 -c "$ANALYSE" "$ROOT" "$HOME")"
+VERDICT="$(EPHOR_COMMANDE="$COMMANDE" EPHOR_MOTIFS="$MOTIFS" EPHOR_EXCEPTIONS="$EXCEPTIONS" \
+  EPHOR_BRANCHE="$BRANCHE" EPHOR_PRINCIPALES="$PRINCIPALES" python3 -c "$ANALYSE" "$ROOT" "$HOME")"
 if [ -n "$VERDICT" ]; then
   IFS="$(printf '\t')" read -r CIBLE MOTIF POURQUOI <<EOF
 $VERDICT
 EOF
+  if [ "$MOTIF" = "::branche principale::" ]; then
+    deny "REFUSÉ : $POURQUOI sur $CIBLE, la branche principale. Un commit sur cette branche, c'est l'approbation de l'opérateur (le juge la lit là) : l'agent n'y écrit pas l'histoire. Travaille sur ta branche de tâche (git switch task/<ID>). Si ce commit est vraiment voulu, c'est l'opérateur qui le fait, dans son terminal."
+  fi
   deny "REFUSÉ : cette commande écrit dans $CIBLE ($POURQUOI), zone de contrôle « $MOTIF ». Écrire par le terminal ce que l'édition refuse, c'est contourner le garde-fou — et le juge refuserait de toute façon le correctif. Si le changement est vraiment nécessaire, c'est l'opérateur qui le fait, à la main."
 fi
 exit 0

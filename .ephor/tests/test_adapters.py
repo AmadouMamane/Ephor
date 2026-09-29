@@ -332,6 +332,76 @@ def test_le_greffon_releve_le_plafond_et_dit_quand_il_coupe(
     assert "32000 tokens de réflexion" in annonces[1]["message"], "une coupure, annoncée une fois"
 
 
+PILOTE_SENTINELLE = """
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+const racine = "__RACINE__"
+const module = await import("__GREFFON__")
+const annonces = []
+const client = {
+  tui: { showToast: async ({ body }) => { annonces.push(body) } },
+  session: { get: async () => ({ data: {} }), messages: async () => ({ data: [] }) },
+}
+const hooks = await module.ephor({ worktree: racine, client })
+const resultat = {}
+const tour = async (session, pendant) => {
+  await hooks["chat.message"]({ sessionID: session }, { message: {}, parts: [] })
+  pendant()
+  // opencode relit la consigne à chaque requête : la photo ne doit pas être reprise ici.
+  await hooks["experimental.chat.system.transform"]({ sessionID: session }, { system: [] })
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: session } } })
+}
+await tour("calme", () => writeFileSync(join(racine, "src", "a.py"), "A = 2\\n"))
+resultat.calme = { annonces: annonces.length, arret: existsSync(join(racine, "AGENT_STOP")) }
+await tour("detour", () => {
+  mkdirSync(join(racine, "tasks", "T-9"), { recursive: true })
+  writeFileSync(join(racine, "tasks", "T-9", "contract.json"), "{}")
+})
+resultat.arret = existsSync(join(racine, "AGENT_STOP"))
+  ? readFileSync(join(racine, "AGENT_STOP"), "utf8") : ""
+resultat.annonces = annonces
+console.log(JSON.stringify(resultat))
+"""
+
+
+@pytest.mark.skipif(MOTEUR is None, reason="greffon opencode : bun ou node est nécessaire")
+def test_la_sentinelle_tourne_sous_opencode(tmp_path: Path) -> None:
+    """opencode n'avait pas de sentinelle : un script qui écrivait dans tasks/ n'était vu par
+    personne (29/09/2026). Son greffon a pourtant un début et une fin de tour."""
+    projet = tmp_path / "projet"
+    for dossier in ("hooks",):
+        shutil.copytree(ROOT / ".ephor" / dossier, projet / ".ephor" / dossier)
+    shutil.copy(ROOT / ".ephor" / "zones.txt", projet / ".ephor" / "zones.txt")
+    shutil.copy(ROOT / ".ephor" / "usage.py", projet / ".ephor" / "usage.py")
+    (projet / ".claude").mkdir()
+    shutil.copy(ROOT / ".claude" / "settings.json", projet / ".claude" / "settings.json")
+    (projet / "src").mkdir()
+    (projet / "src" / "a.py").write_text("A = 1\n")
+    git(projet, "init", "-q", "-b", "main")
+    git(projet, "config", "user.email", "t@example.invalid")
+    git(projet, "config", "user.name", "t")
+    git(projet, "add", "-A")
+    git(projet, "commit", "-qm", "base")
+    pilote = tmp_path / "pilote.mjs"
+    pilote.write_text(
+        PILOTE_SENTINELLE.replace("__RACINE__", str(projet)).replace(
+            "__GREFFON__", str(ROOT / ".opencode" / "plugins" / "ephor.js")
+        ),
+        encoding="utf-8",
+    )
+    assert MOTEUR is not None
+    sortie = subprocess.run(
+        [MOTEUR, str(pilote)], capture_output=True, text=True, timeout=120, check=True
+    )
+    resultat = json.loads(sortie.stdout)
+    assert resultat["calme"] == {"annonces": 0, "arret": False}, "du code ordinaire : silence"
+    assert "tasks/T-9/contract.json" in resultat["arret"], resultat["arret"]
+    assert [a["variant"] for a in resultat["annonces"]] == ["error"]
+    assert "sentinelle" in resultat["annonces"][0]["message"]
+    reprises = git(projet, "for-each-ref", "--format=%(refname)", "refs/ephor/checkpoints")
+    assert "refs/ephor/checkpoints/calme" in reprises, "les points de reprise aussi"
+
+
 # ------------------------------------------------------- greffon Copilot (par machine)
 #
 # Copilot n'exécute PAS les hooks d'un dossier de travail : mesuré le 23 septembre 2026,

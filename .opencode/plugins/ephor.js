@@ -1,5 +1,6 @@
 // Garde-fous de session pour opencode — bouton d'arrêt, anti-secret, consigne opérateur,
-// alerte de contexte ; et le plafond de réponse d'opencode, relevé.
+// sentinelle et points de reprise, alerte de contexte ; et le plafond de réponse d'opencode,
+// relevé.
 //
 // Rien n'est réimplémenté ici : la logique vit dans .ephor/hooks/*.sh, déjà couverte par
 // `make ephor-test`. Ce greffon ne fait que traduire les appels d'opencode vers ces
@@ -92,11 +93,11 @@ async function derniereReponse(client, id) {
   return undefined
 }
 
-function garde(racine, script, entree) {
-  const resultat = spawnSync(join(racine, ".ephor", "hooks", script), [], {
+function garde(racine, script, entree, args = [], delai = 15000) {
+  const resultat = spawnSync(join(racine, ".ephor", "hooks", script), args, {
     input: entree === undefined ? undefined : JSON.stringify(entree),
     encoding: "utf8",
-    timeout: 15000,
+    timeout: delai,
     env: { ...process.env, CLAUDE_PROJECT_DIR: racine },
   })
   if (resultat.error) return { refuse: true, message: `garde-fou injoignable : ${resultat.error.message}` }
@@ -166,9 +167,20 @@ export const ephor = async ({ worktree, directory, client }) => {
     },
 
     // Consigne opérateur en cours de route : STEER.md, relu à chaque requête.
+    // `consigne` : la consigne seule, sans reprendre la photo de la sentinelle. Relue à
+    // chaque requête, la photo aurait effacé ce que les appels d'outils du tour avaient changé.
     "experimental.chat.system.transform": async (_entree, sortie) => {
-      const consigne = garde(racine, "steer.sh")
+      const consigne = garde(racine, "steer.sh", undefined, ["consigne"])
       if (!consigne.refuse && consigne.message) sortie.system.push(consigne.message)
+    },
+
+    // Début du tour : la sentinelle photographie les zones de contrôle. opencode n'avait pas
+    // de sentinelle : un script qui écrivait dans tasks/ n'était vu par personne, et l'agent
+    // pouvait commiter le contrat qu'il s'était écrit (constaté le 29/09/2026).
+    "chat.message": async (entree) => {
+      if (!entree?.sessionID) return
+      const photo = garde(racine, "steer.sh", { session_id: entree.sessionID })
+      if (photo.refuse && photo.message) await annonce(client, photo.message, "error")
     },
 
     // Chaque requête : le plafond de réponse relevé, et la mémoire du modèle notée pour
@@ -196,6 +208,11 @@ export const ephor = async ({ worktree, directory, client }) => {
       // message vivent dans le hook, le même que sous Claude Code.
       if (event?.type === "session.idle") {
         const id = event.properties?.sessionID
+        if (!id) return
+        // Fin du tour : la sentinelle compare à sa photo (une zone changée pose AGENT_STOP),
+        // puis le point de reprise, comme sous Claude Code et Copilot.
+        const fin = garde(racine, "checkpoint.sh", { session_id: id }, [], 30000)
+        if (fin.refuse && fin.message) await annonce(client, fin.message, "error")
         const occupe = occupes.get(id)
         const taille = tailles.get(id)
         if (!occupe || !taille || (await estSousAgent(client, id, sousAgents))) return

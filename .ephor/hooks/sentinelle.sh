@@ -32,8 +32,9 @@
 # écrit : le message le dit, et `make resume` lève l'arrêt.
 #
 # Appelée par steer.sh (début du tour) et checkpoint.sh (fin du tour), déjà branchés sous
-# Claude Code, dans la vue « agents » de VS Code et par le greffon Copilot. opencode n'a pas
-# de fin de tour : il n'a pas de sentinelle.
+# Claude Code, dans la vue « agents » de VS Code et par le greffon Copilot ; sous opencode,
+# par son greffon, au message de l'opérateur et quand la session redevient inactive (1.1.5).
+# Il passait pour n'avoir pas de fin de tour : il en a une.
 #
 # Sort en 1 quand elle alerte, pour que l'outil MONTRE le message ; en 0 sinon, y compris
 # quand elle ne peut rien dire (pas de dépôt, pas de moteur de lecture).
@@ -223,7 +224,7 @@ CODE=0
 case "$MODE" in
   photo)
     # Un tour jamais contrôlé : sa fin n'a pas tourné (tour interrompu, erreur). On le
-    # contrôle maintenant, avant de reprendre la photo. Sans session connue (opencode appelle
+    # contrôle maintenant, avant de reprendre la photo. Sans session connue (un appel
     # sans charge), rien ne dit que c'est le même agent : on s'abstient.
     if [ "$SESSION" != inconnue ] && [ "$(lue etat)" = photo ]; then
       controler "pendant le tour précédent, qui n'est pas allé jusqu'à sa fin (interrompu ?), ou depuis" || CODE=1

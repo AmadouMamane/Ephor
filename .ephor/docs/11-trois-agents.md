@@ -109,16 +109,23 @@ des skills à entretenir.
   Copilot ne donne ses tokens qu'à la fermeture de la session : pas d'alerte.
 - **La sentinelle** regarde le résultat, pas le moyen : au début du tour, elle photographie
   les zones de contrôle ; à la fin, une zone changée pendant le tour, par quelque chemin
-  que ce soit, pose `AGENT_STOP` avec la liste des fichiers. Sous Claude Code et Copilot
-  (vue « agents » et greffon) ; opencode n'a pas de fin de tour, donc pas de sentinelle.
+  que ce soit, pose `AGENT_STOP` avec la liste des fichiers. Sous les trois outils : Claude
+  Code, Copilot (vue « agents » et greffon), et opencode depuis 1.1.5, par son greffon (le
+  message de l'opérateur ouvre le tour, la session redevenue inactive le ferme). Avant, un
+  script qui écrivait dans `tasks/` n'y était vu par personne (constaté le 29/09/2026).
   Elle lit ses zones dans le moteur, voit les fichiers ignorés par git, le dossier git, et
   un réglage local qui coupe les hooks ou le bac à sable. Claude Code ne lance pas la fin de
   tour quand on interrompt l'agent (mesuré le 25/09/2026) : un tour jamais contrôlé l'est
   au début du suivant, et la demande est refusée si une zone a changé. Elle constate après
   coup, et un agent qui veut la faire taire y arrive encore ; le juge reste la barrière.
-- **Les points de reprise** : Claude Code et Copilot les font dans une référence Git privée
+- **Les points de reprise** : les trois outils les font dans une référence Git privée
   (`make checkpoints`), à la fin de chaque tour — sous Copilot, vu tirer dans la vue
-  « agents » ; opencode a les siens (`/undo`).
+  « agents ». opencode garde en plus les siens (`/undo`).
+- **La branche principale n'est écrite que par l'opérateur.** Le commit d'un contrat sur
+  cette branche est l'approbation, et le juge la lit là. La garde du terminal refuse donc à
+  l'agent d'y écrire l'histoire (`git commit`, `merge`, `cherry-pick`…), y compris après un
+  `git switch main` dans la même commande. C'est un filet, sous les trois outils ; en CI, la
+  protection de la branche fait foi.
 - **opencode installe ses dépendances de greffon dans le dépôt** (`.opencode/node_modules`,
   une soixantaine de mégaoctets). Il les ignore lui-même dans Git ; `.gitignore` le refait,
   par sécurité, pour que le juge ne les voie jamais.
