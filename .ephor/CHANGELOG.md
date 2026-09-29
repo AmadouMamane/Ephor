@@ -3,6 +3,37 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.1.4 — 29 septembre 2026
+
+Le sous-agent `planner`, vu échouer sur un vrai projet, et la règle des 60 % de contexte,
+que personne n'appliquait.
+
+- **Le plafond de réponse d'opencode est relevé.** opencode coupe chaque réponse à 32 000
+  tokens, réflexion comprise, quel que soit le modèle (défaut connu, ouvert chez lui). Au
+  plus haut niveau d'effort, et même en `high`, la réflexion du planner le remplissait :
+  quatre échecs à 32 000 tokens de réflexion et 0 de réponse, de 5 à 17 minutes chacun, et
+  environ 4,60 $ pour rien. Le greffon relève maintenant le plafond de chaque requête jusqu'à
+  la limite du modèle, sans dépasser le quart de sa mémoire. Au plus haut niveau, le même
+  planner a répondu en 132 secondes, pour le prix d'une réussite en `high`, avec un meilleur
+  contrat. Un poste qui a fixé `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` garde son choix.
+- **Une réponse coupée ne passe plus en silence.** opencode finissait le tour comme si de
+  rien n'était ; l'agent qui avait délégué recevait du vide et concluait, une demi-heure
+  plus tard, que le planner « n'était fiable que sur les demandes triviales ». Le greffon
+  l'affiche à l'écran, et l'agent reçoit la raison avec la réponse.
+- **L'alerte de contexte.** Au-delà de 60 % de la mémoire du modèle, un message en fin de
+  tour : `/handoff`, puis une nouvelle session. Ephor ne vide rien lui-même. Sous opencode,
+  le pourcentage est exact. Sous Claude Code, dont les hooks ignorent la taille de la
+  mémoire, elle est supposée et le message le dit ; `EPHOR_CONTEXTE_TOKENS` la déclare.
+  Rien sous Copilot, qui ne donne ses tokens qu'à la fermeture de la session.
+- **On demandait au planner de lancer la carte du dépôt, sans terminal.** Ses droits le lui
+  interdisent, à raison : il ne fait que lire. C'est désormais l'agent qui l'appelle qui lui
+  passe la carte (`make map`) ; à défaut, il se repère avec ses outils de lecture. Un test
+  refuse qu'un sous-agent sans terminal reçoive l'ordre de lancer un script.
+
+Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, puis relancer opencode
+pour qu'il recharge son greffon. Rien à installer sur le poste, et rien à reprendre pour
+Copilot.
+
 ## 1.1.3 — 27 septembre 2026
 
 Relecture des textes : des formulations neutres, partageables telles quelles (exemples du

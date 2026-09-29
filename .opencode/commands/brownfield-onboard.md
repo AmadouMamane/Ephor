@@ -47,8 +47,8 @@ et pourquoi il ne faut pas les lire.
 ## Étape 4 — Un premier contrat, minuscule
 
 Pas de contrat sur du code que personne n'a relu. Prends la plus petite demande réelle et
-fais préparer par le sous-agent `planner` un contrat d'un seul critère. L'opérateur le
-crée (`make task-new`), le relit et le commite sur la branche principale. `make judge`
+fais préparer par le sous-agent `planner` un contrat d'un seul critère, en lui passant la
+carte de l'étape 1 : il n'a pas de terminal. L'opérateur le crée (`make task-new`), le relit et le commite sur la branche principale. `make judge`
 doit alors fonctionner de bout en bout : c'est le test d'Ephor, pas celui du code.
 
 ## Étape 5 — Contraintes mécaniques, progressivement

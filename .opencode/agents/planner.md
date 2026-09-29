@@ -23,7 +23,9 @@ vrai : chaque détail technique inventé trop tôt devient une contrainte que pe
 
 1. Lis `tasks/README.md`, puis `docs/00-beliefs.md` et `docs/01-architecture.md` s'ils
    existent (Ephor ne les pose dans un dépôt existant que sur demande).
-2. Dépôt existant : `bash .ephor/scripts/repo_map.sh`, puis au plus cinq fichiers ciblés.
+2. Dépôt existant : pars de la carte du dépôt que la demande te fournit (`make map`). Tu
+   n'as pas de terminal : sans carte, repère les dossiers de code et de tests avec Glob.
+   Puis au plus cinq fichiers ciblés.
 3. Liste les inconnues avant les certitudes. Une question non posée coûte plus cher.
 4. Choisis le risque : `faible` (local, sans enjeu), `modere` (fonctionnalité, contrat
    d'API compatible), `eleve` (authentification, argent, données, droits, migration).

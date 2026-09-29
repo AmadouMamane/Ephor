@@ -190,6 +190,14 @@ dans `.claude/settings.json` de ce template — remontez-le pour les phases d'ar
 Les modèles à raisonnement adaptatif ignorent un budget non nul : chez eux, seul le
 niveau d'effort compte.
 
+Plus d'effort demande plus de place : la réflexion est comptée dans la réponse. opencode
+plafonne une réponse à 32 000 tokens ; au plus haut niveau, la réflexion du `planner` le
+remplissait et la réponse sortait vide. Le greffon d'Ephor relève ce plafond jusqu'à la
+limite du modèle, et dit quand une réponse est coupée (`.ephor/docs/11-trois-agents.md`).
+Baisser l'effort n'est pas le remède : en `high`, le planner a aussi été coupé, et au plus
+haut niveau, avec la place, il a rendu un meilleur contrat pour le même prix (un essai,
+le 29/09/2026).
+
 ### 2.8 Hygiène de session
 
 - `/clear` entre deux tâches sans rapport. Un contexte périmé est repayé à **chaque**

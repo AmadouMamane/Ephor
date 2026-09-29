@@ -17,6 +17,8 @@ Bibliothèque standard, Python 3.9, lecture seule, aucun réseau : comme le juge
     python3 .ephor/usage.py copilot <events.jsonl> [--etat .verify/usage/T-1.json]
     python3 .ephor/usage.py opencode [--repo .] [--db <chemin>]
     python3 .ephor/usage.py rafraichir --etat .verify/usage/T-1.json
+    python3 .ephor/usage.py remplissage <journal.jsonl>   # contexte occupé, Claude Code
+    python3 .ephor/usage.py contexte < charge.json        # alerte au-delà de 60 %
     python3 .ephor/usage.py rapport            # ou `make usage`
 
 `facturables` = entrée + écriture de cache + sortie. Les lectures de cache sont comptées
@@ -30,6 +32,7 @@ import contextlib
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -162,6 +165,44 @@ def claude_code(journal: Path, etat: dict[str, Any] | None = None) -> dict[str, 
             sous["sous_agent"] = True
         journaux[str(fichier)] = sous
     return somme(journaux)
+
+
+# Assez pour contenir la dernière réponse, même suivie de grosses sorties d'outils.
+QUEUE_OCTETS = 4 * 1024 * 1024
+CHAMPS_CONTEXTE = (
+    "input_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "output_tokens",
+)
+
+
+def remplissage(journal: Path) -> int | None:
+    """Ce qu'occupe la conversation principale de Claude Code, d'après sa dernière réponse.
+
+    Chaque requête renvoie toute la conversation : l'entrée de la dernière réponse, caches
+    compris, plus ce qu'elle a produit, c'est ce que le modèle aura en mémoire au tour
+    suivant. On ne lit que la fin du journal : il peut peser des centaines de mégaoctets.
+    """
+    try:
+        taille = journal.stat().st_size
+        with journal.open("rb") as fichier:
+            fichier.seek(max(0, taille - QUEUE_OCTETS))
+            lignes = fichier.read().decode("utf-8", errors="ignore").splitlines()
+    except OSError:
+        return None
+    for ligne in reversed(lignes):
+        try:
+            entree = json.loads(ligne)
+        except ValueError:
+            continue
+        if not isinstance(entree, dict) or entree.get("isSidechain"):
+            continue
+        message = entree.get("message")
+        usage = message.get("usage") if isinstance(message, dict) else None
+        if isinstance(usage, dict):
+            return sum(nombre(usage.get(champ)) for champ in CHAMPS_CONTEXTE)
+    return None
 
 
 # Les seuls évènements de Copilot qui comptent. Un journal peut peser des centaines de
@@ -315,6 +356,42 @@ def milliers(nombre: int) -> str:
     return f"{nombre:,}".replace(",", " ")
 
 
+# La règle du README : au-delà, `/handoff` puis une nouvelle session. Plus loin, le modèle
+# relit à chaque message une conversation qui ne sert plus, et la paie.
+SEUIL_CONTEXTE = 60
+FENETRE_COURTE = 200_000
+FENETRE_LONGUE = 1_000_000
+
+
+def alerte_contexte(charge: dict[str, Any], declaree: str | None = None) -> str | None:
+    """Le message pour l'opérateur quand la conversation dépasse le seuil, sinon rien.
+
+    opencode : le greffon connaît la taille exacte de la mémoire du modèle et la passe.
+    Claude Code : ses hooks ne la reçoivent pas et son journal ne la note pas (une session
+    à un million de tokens y porte le même nom de modèle qu'une autre, vu le 29/09/2026).
+    On la suppose, sauf si l'opérateur la déclare dans EPHOR_CONTEXTE_TOKENS.
+    """
+    contexte = charge.get("contexte")
+    if isinstance(contexte, dict):
+        occupe, taille = nombre(contexte.get("occupe")), nombre(contexte.get("taille"))
+        supposee = False
+    else:
+        journal = charge.get("transcript_path")
+        occupe = (remplissage(Path(journal)) if isinstance(journal, str) else None) or 0
+        fixee = int(declaree) if declaree and declaree.isdigit() else 0
+        taille = fixee or (FENETRE_LONGUE if occupe > FENETRE_COURTE else FENETRE_COURTE)
+        supposee = not fixee
+    if occupe <= 0 or taille <= 0 or occupe * 100 < SEUIL_CONTEXTE * taille:
+        return None
+    message = (
+        f"Contexte à {occupe * 100 // taille} % ({milliers(occupe)} tokens sur "
+        f"{milliers(taille)}) : /handoff, puis une nouvelle session."
+    )
+    if supposee:
+        message += " Taille de la mémoire supposée : EPHOR_CONTEXTE_TOKENS pour la déclarer."
+    return message
+
+
 def facture_copilot(mesure: dict[str, Any]) -> str:
     """Ce que Copilot a facturé, dans ses unités : « 3,56 AIU · 13 requêtes premium »."""
     aiu = f"{nombre(mesure.get('nano_aiu')) / 1e9:.2f}".replace(".", ",")
@@ -409,6 +486,9 @@ def main(argv: list[str] | None = None) -> int:
     cop.add_argument("--etat", type=Path, help="mesure précédente, pour ne relire que la suite")
     raf = sous.add_parser("rafraichir", help="relit les journaux Copilot d'une mesure")
     raf.add_argument("--etat", type=Path, required=True)
+    rem = sous.add_parser("remplissage", help="contexte occupé, journal de Claude Code")
+    rem.add_argument("journal", type=Path)
+    sous.add_parser("contexte", help="alerte de contexte : charge du hook sur l'entrée standard")
     oc = sous.add_parser("opencode", help="base SQLite d'opencode")
     oc.add_argument("--repo", type=Path, default=Path.cwd())
     oc.add_argument("--db", type=Path, default=None)
@@ -420,6 +500,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if options.commande == "rafraichir":
         lire_et_rafraichir(options.etat)
+        return 0
+    if options.commande == "remplissage":
+        occupe = remplissage(options.journal)
+        print(json.dumps({} if occupe is None else {"occupe": occupe}))
+        return 0
+    if options.commande == "contexte":
+        try:
+            charge = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            return 0
+        if not isinstance(charge, dict):
+            return 0
+        message = alerte_contexte(charge, os.environ.get("EPHOR_CONTEXTE_TOKENS"))
+        if message:
+            print(json.dumps({"systemMessage": message}, ensure_ascii=False))
         return 0
     if options.commande in ("claude", "copilot"):
         etat = None

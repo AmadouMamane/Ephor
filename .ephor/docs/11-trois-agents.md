@@ -81,6 +81,32 @@ des skills à entretenir.
   n'arrête l'agent que s'il dépasse déjà le plafond. opencode n'a pas de plafond par tâche.
   Sous Claude Code, les sous-agents comptent : chacun écrit son propre journal, lu avec
   celui de la session (un tiers d'une vraie session y était invisible, le 25/09/2026).
+- **Le plafond d'une réponse.** opencode coupe chaque réponse à 32 000 tokens, réflexion
+  comprise, quel que soit le modèle (défaut connu, ouvert :
+  <https://github.com/anomalyco/opencode/issues/29363>). Quand la réflexion le remplit, le
+  tour finit sans réponse et sans erreur. Mesuré le 28/09/2026 sur le `planner` (Sonnet 5 via
+  Copilot) : quatre échecs, au plus haut niveau d'effort et même en `high`, chacun terminé à
+  32 000 tokens de réflexion et 0 de réponse, après 5 à 17 minutes ; l'agent qui l'appelait
+  recevait du vide et concluait que le planner « n'était fiable que sur les demandes
+  triviales ». L'agent principal y échappe presque toujours : il avance par petites
+  réponses, le planner doit tout rendre en une seule. Le greffon relève
+  donc le plafond de chaque requête jusqu'à la limite du modèle, sans dépasser le quart de
+  sa mémoire (pour Sonnet 5 via Copilot : 128 000) : le même planner, au plus haut niveau, a
+  répondu en 132 secondes, 12 955 tokens de réflexion, sans erreur. Un poste qui fixe
+  `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` garde son choix. Si une réponse est encore coupée,
+  opencode ne dit rien, le greffon si : un message à l'écran, et l'agent qui a délégué reçoit
+  la raison avec la réponse vide. Relever le plafond ne touche pas au moment où opencode
+  compacte la conversation (lu dans son code, 1.18.32). Sa branche v2 abandonne ce plafond.
+  Claude Code demande la limite du modèle quand il le reconnaît, et 32 000 sinon, par exemple
+  derrière une passerelle qui renomme les modèles : `CLAUDE_CODE_MAX_OUTPUT_TOKENS` le relève.
+- **L'alerte de contexte.** La règle « contexte au-delà de 60 % : `/handoff`, puis une
+  nouvelle session » n'était appliquée par personne : l'agent ne voit pas son remplissage.
+  À chaque fin de tour, `contexte.sh` le dit à l'opérateur, sans rien vider lui-même (vider
+  avant que l'état soit écrit perdrait du travail). opencode : un message à l'écran, calculé
+  comme le pourcentage qu'il affiche. Claude Code : un message sous la réponse ; ses hooks ne
+  connaissent pas la taille de la mémoire du modèle, Ephor la suppose (200 000, ou un million
+  dès que la conversation dépasse 200 000) et le dit ; `EPHOR_CONTEXTE_TOKENS` la déclare.
+  Copilot ne donne ses tokens qu'à la fermeture de la session : pas d'alerte.
 - **La sentinelle** regarde le résultat, pas le moyen : au début du tour, elle photographie
   les zones de contrôle ; à la fin, une zone changée pendant le tour, par quelque chemin
   que ce soit, pose `AGENT_STOP` avec la liste des fichiers. Sous Claude Code et Copilot

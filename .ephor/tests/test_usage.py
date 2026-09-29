@@ -444,3 +444,52 @@ def test_une_base_opencode_illisible_le_dit_sans_tomber(tmp_path: Path, abimee: 
     else:
         base.write_text(abimee)
     assert "opencode (" in usage.opencode(base, tmp_path)["source"]
+
+
+# ------------------------------------------------------------------ alerte de contexte
+
+
+def test_le_remplissage_est_celui_de_la_derniere_reponse_principale(tmp_path: Path) -> None:
+    """Toute la conversation repart à chaque requête : la dernière réponse dit ce qui est en
+    mémoire. Une réponse de sous-agent n'est pas la mémoire de la conversation principale."""
+    ancienne = dict(REPONSE, requestId="req_0")
+    delegue = {
+        **REPONSE,
+        "requestId": "req_x",
+        "isSidechain": True,
+        "message": {"id": "m", "usage": {"input_tokens": 999_999}},
+    }
+    fichier = journal(tmp_path / "session.jsonl", [ancienne, REPONSE, delegue, {"type": "user"}])
+    assert usage.remplissage(fichier) == 10 + 100 + 1000 + 50000
+    assert usage.remplissage(tmp_path / "absent.jsonl") is None
+
+
+def test_l_alerte_parle_a_60_pour_cent_et_se_tait_avant() -> None:
+    assert usage.alerte_contexte({"contexte": {"occupe": 599_999, "taille": 1_000_000}}) is None
+    message = usage.alerte_contexte({"contexte": {"occupe": 614_000, "taille": 1_000_000}})
+    assert message is not None
+    assert "61 %" in message and "/handoff" in message and "supposée" not in message
+
+
+def test_sous_claude_code_la_taille_est_supposee_ou_declaree(tmp_path: Path) -> None:
+    """Les hooks de Claude Code ne reçoivent pas la taille de la mémoire : on le dit."""
+    gros = {**REPONSE, "message": {"id": "m", "usage": {"input_tokens": 130_000}}}
+    charge = {"transcript_path": str(journal(tmp_path / "s.jsonl", [gros]))}
+    supposee = usage.alerte_contexte(charge)
+    assert supposee is not None and "65 %" in supposee and "EPHOR_CONTEXTE_TOKENS" in supposee
+    assert usage.alerte_contexte(charge, "1000000") is None, "déclarée à un million : 13 %"
+    enorme = {**REPONSE, "message": {"id": "m", "usage": {"input_tokens": 300_000}}}
+    charge = {"transcript_path": str(journal(tmp_path / "t.jsonl", [enorme]))}
+    assert usage.alerte_contexte(charge) is None, "plus de 200 000 : la mémoire fait un million"
+
+
+def test_le_hook_de_contexte_parle_a_l_operateur_sans_bloquer(tmp_path: Path) -> None:
+    gros = {**REPONSE, "message": {"id": "m", "usage": {"input_tokens": 150_000}}}
+    fichier = journal(tmp_path / "session.jsonl", [gros])
+    resultat = hook("contexte.sh", {"transcript_path": str(fichier)})
+    assert resultat.returncode == 0, "un hook Stop ne bloque jamais la fin du tour"
+    assert "75 %" in json.loads(resultat.stdout)["systemMessage"]
+    calme = hook("contexte.sh", {"contexte": {"occupe": 10, "taille": 1_000_000}})
+    assert calme.returncode == 0 and calme.stdout == ""
+    abime = hook("contexte.sh", {"transcript_path": 3})
+    assert abime.returncode == 0 and abime.stdout == ""

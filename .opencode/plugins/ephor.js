@@ -1,9 +1,12 @@
-// Garde-fous de session pour opencode — bouton d'arrêt, anti-secret, consigne opérateur.
+// Garde-fous de session pour opencode — bouton d'arrêt, anti-secret, consigne opérateur,
+// alerte de contexte ; et le plafond de réponse d'opencode, relevé.
 //
 // Rien n'est réimplémenté ici : la logique vit dans .ephor/hooks/*.sh, déjà couverte par
 // `make ephor-test`. Ce greffon ne fait que traduire les appels d'opencode vers ces
 // scripts, dont l'entrée est du JSON au format de Claude Code. Une seule logique, trois
 // outils. Les garanties, elles, ne sont pas ici : elles sont dans le juge et la CI.
+// Seule exception, le plafond de réponse et sa coupure : c'est un défaut d'opencode, il se
+// règle chez lui.
 //
 // Dépendances : aucune. Node et Bun exposent tous deux ces modules.
 import { spawnSync } from "node:child_process"
@@ -12,6 +15,82 @@ import { join } from "node:path"
 
 // Outils d'opencode qui écrivent dans un fichier, et l'argument qui porte le contenu.
 const ECRITURE = new Set(["edit", "write", "patch", "apply_patch", "multiedit"])
+
+// opencode plafonne chaque réponse à 32 000 tokens, réflexion comprise, quel que soit le
+// modèle (anomalyco/opencode#29363). Au plus haut niveau d'effort, la réflexion le remplit
+// et la réponse sort vide, sans erreur : quatre échecs du planner sur quatre, à 32 000 tokens
+// de réflexion et 0 de réponse, de 5 à 17 minutes chacun (mesuré le 28/09/2026). Relevé à
+// 128 000, il a répondu en deux minutes, sans erreur. On relève donc jusqu'à la limite du
+// modèle, sans dépasser le quart de sa mémoire : une réponse ne doit pas pouvoir la remplir.
+const PLAFOND_OPENCODE = 32000
+const PART_DU_CONTEXTE = 4
+
+function plafondReponse(modele, actuel) {
+  // Le poste a fixé le sien : c'est lui qui décide.
+  if (process.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX) return undefined
+  // Un plafond plus court est voulu (titre, résumé) : on n'y touche pas.
+  if (typeof actuel === "number" && actuel < PLAFOND_OPENCODE) return undefined
+  const limite = modele?.limit?.output
+  if (!(limite > 0)) return undefined
+  const contexte = modele?.limit?.context
+  const cible = contexte > 0 ? Math.min(limite, Math.floor(contexte / PART_DU_CONTEXTE)) : limite
+  return cible > (actuel ?? 0) ? cible : undefined
+}
+
+function coupure(info) {
+  const tokens = info?.tokens ?? {}
+  return (
+    `Réponse coupée au plafond : ${tokens.reasoning ?? 0} tokens de réflexion, ` +
+    `${tokens.output ?? 0} de réponse. Rien n'a été rendu, ou seulement un début. ` +
+    "Relance ; si ça se répète, baisse l'effort (.ephor/docs/11-trois-agents.md)."
+  )
+}
+
+// Ce que la dernière réponse a en mémoire : c'est le calcul du pourcentage affiché par opencode.
+function occupation(info) {
+  const tokens = info?.tokens ?? {}
+  const cache = tokens.cache ?? {}
+  return (
+    (tokens.input ?? 0) + (tokens.output ?? 0) + (tokens.reasoning ?? 0) + (cache.read ?? 0) + (cache.write ?? 0)
+  )
+}
+
+// L'opérateur ne lit pas la conversation de chaque sous-agent : on le lui dit à l'écran.
+async function annonce(client, message, variante) {
+  if (!client?.tui?.showToast) return
+  try {
+    await client.tui.showToast({ body: { title: "Ephor", message, variant: variante, duration: 15000 } })
+  } catch {
+    // Sans interface (`opencode run`), personne à prévenir.
+  }
+}
+
+async function estSousAgent(client, id, connus) {
+  if (connus.has(id)) return connus.get(id)
+  let sous = false
+  try {
+    const reponse = await client.session.get({ path: { id } })
+    sous = Boolean((reponse?.data ?? reponse)?.parentID)
+  } catch {
+    // Session introuvable : traitée comme principale, l'alerte de trop est sans danger.
+  }
+  connus.set(id, sous)
+  return sous
+}
+
+async function derniereReponse(client, id) {
+  try {
+    const reponse = await client.session.messages({ path: { id } })
+    const messages = reponse?.data ?? reponse
+    if (!Array.isArray(messages)) return undefined
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.info?.role === "assistant") return messages[i].info
+    }
+  } catch {
+    // Illisible : on ne dit rien plutôt que d'inventer.
+  }
+  return undefined
+}
 
 function garde(racine, script, entree) {
   const resultat = spawnSync(join(racine, ".ephor", "hooks", script), [], {
@@ -25,8 +104,12 @@ function garde(racine, script, entree) {
   return { refuse: false, message: (resultat.stdout || "").trim() }
 }
 
-export const ephor = async ({ worktree, directory }) => {
+export const ephor = async ({ worktree, directory, client }) => {
   const racine = worktree ?? directory
+  const tailles = new Map() // session -> mémoire du modèle, en tokens
+  const occupes = new Map() // session -> tokens occupés après la dernière réponse
+  const sousAgents = new Map() // session -> est-ce un sous-agent ?
+  const signales = new Set() // réponses coupées déjà annoncées
   return {
     "tool.execute.before": async (input, output) => {
       const args = output.args ?? {}
@@ -86,6 +169,59 @@ export const ephor = async ({ worktree, directory }) => {
     "experimental.chat.system.transform": async (_entree, sortie) => {
       const consigne = garde(racine, "steer.sh")
       if (!consigne.refuse && consigne.message) sortie.system.push(consigne.message)
+    },
+
+    // Chaque requête : le plafond de réponse relevé, et la mémoire du modèle notée pour
+    // l'alerte de contexte (opencode ne la donne qu'ici).
+    "chat.params": async (entree, sortie) => {
+      const contexte = entree?.model?.limit?.context
+      if (entree?.sessionID && contexte > 0) tailles.set(entree.sessionID, contexte)
+      const plafond = plafondReponse(entree?.model, sortie.maxOutputTokens)
+      if (plafond !== undefined) sortie.maxOutputTokens = plafond
+    },
+
+    event: async ({ event }) => {
+      if (event?.type === "message.updated") {
+        const info = event.properties?.info
+        if (info?.role !== "assistant" || !info.time?.completed) return
+        occupes.set(info.sessionID, occupation(info))
+        // Coupée au plafond : opencode finit le tour comme si tout allait bien.
+        if (info.finish === "length" && !signales.has(info.id)) {
+          signales.add(info.id)
+          await annonce(client, coupure(info), "error")
+        }
+        return
+      }
+      // Fin de tour : la règle des 60 %, que l'agent ne peut pas voir. Le seuil et le
+      // message vivent dans le hook, le même que sous Claude Code.
+      if (event?.type === "session.idle") {
+        const id = event.properties?.sessionID
+        const occupe = occupes.get(id)
+        const taille = tailles.get(id)
+        if (!occupe || !taille || (await estSousAgent(client, id, sousAgents))) return
+        const verdict = garde(racine, "contexte.sh", { contexte: { occupe, taille } })
+        if (verdict.refuse || !verdict.message) return
+        try {
+          const message = JSON.parse(verdict.message).systemMessage
+          if (message) await annonce(client, message, "warning")
+        } catch {
+          // Sortie illisible : pas d'alerte plutôt qu'une alerte fausse.
+        }
+      }
+    },
+
+    // Un sous-agent coupé rend du vide, et l'agent qui l'a appelé en tirait des conclusions
+    // fausses pendant une demi-heure (« le planner n'est fiable que sur les demandes
+    // triviales »). Il reçoit maintenant la raison avec la réponse.
+    "tool.execute.after": async (entree, sortie) => {
+      if (entree?.tool !== "task" || !client) return
+      const enfant = sortie?.metadata?.sessionId
+      if (!enfant) return
+      const info = await derniereReponse(client, enfant)
+      if (info?.finish !== "length") return
+      sortie.output =
+        `ATTENTION : ${coupure(info)} N'en conclus rien sur le sous-agent : dis-le à l'opérateur.\n\n` +
+        (sortie.output ?? "")
     },
   }
 }

@@ -54,8 +54,9 @@ COULEURS = {
 REGLE = re.compile(r"^([A-Za-z]+)(?:\((.*)\))?$")
 VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
 BLOC_SHELL = re.compile(r"```!\n(.+?)\n```", re.S)
-# Hooks que Copilot ne sait pas exploiter : il ignore `matcher` et ne réécrit pas l'appel.
-HOOKS_HORS_COPILOT = ("filter-output.sh",)
+# Hooks que Copilot ne sait pas exploiter : il ignore `matcher` et ne réécrit pas l'appel ;
+# il n'écrit ses tokens qu'à la fermeture de la session, donc pas de remplissage à mesurer.
+HOOKS_HORS_COPILOT = ("filter-output.sh", "contexte.sh")
 # Garde-fous que seul Copilot a besoin qu'on lui branche : Claude Code et opencode
 # appliquent déjà ces refus par leurs permissions. (write-guard.sh n'en est plus : depuis que
 # les zones vivent dans le moteur, les trois outils le lancent, et il est dans les réglages.)

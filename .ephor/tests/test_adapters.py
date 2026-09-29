@@ -115,6 +115,15 @@ def test_un_sous_agent_en_mode_plan_ne_peut_que_lire() -> None:
     assert adapters.permissions_agent(meta)["bash"] == "deny", "sans Bash, rien à lancer"
 
 
+def test_un_sous_agent_sans_terminal_ne_recoit_pas_l_ordre_de_s_en_servir() -> None:
+    """Le planner devait lancer la carte du dépôt sans en avoir le droit : il tournait en rond."""
+    for source in sorted((ROOT / ".claude" / "agents").glob("*.md")):
+        meta, corps = adapters.entete(source)
+        outils = adapters.liste(meta.get("tools", ""))
+        if outils and "Bash" not in outils:
+            assert "`bash " not in corps, f"{source.name} : un script à lancer, sans terminal"
+
+
 def test_les_blocs_shell_des_skills_deviennent_des_injections_opencode() -> None:
     texte = (ROOT / ".opencode" / "commands" / "verify.md").read_text(encoding="utf-8")
     assert "!`make verify || true`" in texte
@@ -230,6 +239,97 @@ def test_le_greffon_opencode_applique_les_memes_gardes(tmp_path: Path) -> None:
     assert "service.py" in resultat["consigne"]
     assert "zone de contrôle" in resultat["terminal_zone"], "le terminal ne contourne pas l'édition"
     assert resultat["terminal_propre"] == "ok"
+
+
+PILOTE_PLAFOND = """
+const module = await import("__GREFFON__")
+const annonces = []
+const coupe = {
+  role: "assistant", finish: "length",
+  tokens: { input: 5000, output: 0, reasoning: 32000, cache: { read: 0, write: 0 } },
+}
+const client = {
+  tui: { showToast: async ({ body }) => { annonces.push(body) } },
+  session: {
+    get: async ({ path }) =>
+      ({ data: { id: path.id, parentID: path.id === "enfant" ? "p" : undefined } }),
+    messages: async ({ path }) => ({ data: path.id === "enfant" ? [{ info: coupe }] : [] }),
+  },
+}
+const hooks = await module.ephor({ worktree: "__RACINE__", client })
+const resultat = {}
+async function plafond(nom, modele, actuel) {
+  const sortie = { maxOutputTokens: actuel }
+  await hooks["chat.params"]({ sessionID: nom, model: modele }, sortie)
+  return sortie.maxOutputTokens
+}
+const grand = { limit: { context: 1000000, output: 128000 } }
+resultat.releve = await plafond("principale", grand, 32000)
+resultat.court = await plafond("titre", grand, 1000)
+resultat.partage = await plafond("autre", { limit: { context: 262144, output: 262144 } }, 32000)
+resultat.inconnu = await plafond("passerelle", { limit: { context: 0, output: 0 } }, 32000)
+const tache = {
+  title: "contrat", output: "<task_result></task_result>", metadata: { sessionId: "enfant" },
+}
+await hooks["tool.execute.after"]({ tool: "task" }, tache)
+resultat.tache = tache.output
+const sain = { title: "t", output: "ok", metadata: { sessionId: "principale" } }
+await hooks["tool.execute.after"]({ tool: "task" }, sain)
+resultat.sain = sain.output
+const fin = (id, session, tokens, finish) => hooks.event({ event: { type: "message.updated",
+  properties: { info: {
+    id, sessionID: session, role: "assistant", time: { completed: 1 }, finish, tokens,
+  } } } })
+const plein = { input: 600000, output: 14000, reasoning: 0, cache: { read: 0, write: 0 } }
+await fin("m1", "principale", plein, "stop")
+await hooks.event({ event: { type: "session.idle", properties: { sessionID: "principale" } } })
+await fin("m2", "enfant", coupe.tokens, "length")
+await fin("m2", "enfant", coupe.tokens, "length")
+await hooks.event({ event: { type: "session.idle", properties: { sessionID: "enfant" } } })
+resultat.annonces = annonces
+console.log(JSON.stringify(resultat))
+"""
+
+
+@pytest.mark.skipif(MOTEUR is None, reason="greffon opencode : bun ou node est nécessaire")
+@pytest.mark.parametrize("fixe_par_le_poste", [False, True])
+def test_le_greffon_releve_le_plafond_et_dit_quand_il_coupe(
+    tmp_path: Path, fixe_par_le_poste: bool
+) -> None:
+    """opencode coupe chaque réponse à 32 000 tokens, réflexion comprise, et rend du vide
+    sans erreur : le planner a échoué ainsi quatre fois sur quatre (28/09/2026)."""
+    projet = tmp_path / "projet"
+    shutil.copytree(ROOT / ".ephor" / "hooks", projet / ".ephor" / "hooks")
+    shutil.copy(ROOT / ".ephor" / "usage.py", projet / ".ephor" / "usage.py")
+    pilote = tmp_path / "pilote.mjs"
+    pilote.write_text(
+        PILOTE_PLAFOND.replace("__RACINE__", str(projet)).replace(
+            "__GREFFON__", str(ROOT / ".opencode" / "plugins" / "ephor.js")
+        ),
+        encoding="utf-8",
+    )
+    env = {k: v for k, v in os.environ.items() if k != "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"}
+    if fixe_par_le_poste:
+        env["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"] = "64000"
+    assert MOTEUR is not None
+    sortie = subprocess.run(
+        [MOTEUR, str(pilote)], capture_output=True, text=True, timeout=120, check=True, env=env
+    )
+    resultat = json.loads(sortie.stdout)
+    if fixe_par_le_poste:
+        assert resultat["releve"] == 32000, "le poste a choisi : on n'y touche pas"
+    else:
+        assert resultat["releve"] == 128000, "la limite du modèle, pas celle d'opencode"
+        assert resultat["partage"] == 65536, "jamais plus du quart de la mémoire"
+    assert resultat["court"] == 1000, "un plafond court est voulu (titre, résumé)"
+    assert resultat["inconnu"] == 32000, "limite inconnue : on ne devine pas"
+    assert resultat["tache"].startswith("ATTENTION : Réponse coupée au plafond : 32000 tokens")
+    assert "<task_result>" in resultat["tache"], "la réponse du sous-agent reste là"
+    assert resultat["sain"] == "ok"
+    annonces = resultat["annonces"]
+    assert [a["variant"] for a in annonces] == ["warning", "error"], annonces
+    assert "61 %" in annonces[0]["message"] and "/handoff" in annonces[0]["message"]
+    assert "32000 tokens de réflexion" in annonces[1]["message"], "une coupure, annoncée une fois"
 
 
 # ------------------------------------------------------- greffon Copilot (par machine)
