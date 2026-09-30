@@ -797,3 +797,123 @@ def test_un_plan_sans_ses_preuves_est_refuse_avant_la_question(repo: Path, tmp_p
     plan.write_text(plan.read_text(encoding="utf-8").split("Celle du second")[0], encoding="utf-8")
     code, sortie = dans_un_terminal(approuve(plan, repo), None, repo)
     assert code == 2 and "tasks/FEAT-020/check_c2.py" in sortie and "Tapez" not in sortie
+
+
+# Un outil de test qui n'est pas pytest (Maven, Jest, Go…), en miniature : il écrit un rapport
+# JUnit dans le dossier qu'on lui donne, comme `-Dsurefire.reportsDirectory={rapport}`.
+LANCEUR_JUNIT = """import sys
+from pathlib import Path
+
+sys.path.insert(0, ".")
+dossier, nom = Path(sys.argv[1]), (sys.argv[2] if len(sys.argv) > 2 else "vide")
+if nom == "rien":
+    sys.exit(1)
+try:
+    from src.metrics import accuracy
+
+    ok, detail = accuracy([]) is None, "accuracy([]) n'est pas None"
+except Exception as exc:
+    ok, detail = False, type(exc).__name__
+echec = "" if ok else f'<failure message="{detail}"/>'
+cas = f'<testcase classname="acme.MetricsTest" name="{nom}">{echec}</testcase>'
+(dossier / "TEST-acme.MetricsTest.xml").write_text(f'<testsuite tests="1">{cas}</testsuite>')
+sys.exit(0 if ok else 1)
+"""
+
+
+def critere_junit(nom: str = "vide") -> dict[str, Any]:
+    return {
+        "id": "C3",
+        "description": "liste vide, jugée sur un rapport JUnit",
+        "check": ["{python}", "tasks/T-001/lanceur.py", "{rapport}", nom],
+        "rapport_junit": ["acme.MetricsTest.vide"],
+        "preuves": ["tasks/T-001/lanceur.py"],
+    }
+
+
+def test_une_preuve_par_rapport_junit_va_au_bout(
+    repo: Path, run_judge: Runner, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Audit du 29/09/2026 (F5) : hors pytest, une preuve n'était jugée que sur son code de
+    retour, donc refusée en risque élevé. Un rapport JUnit écrit hors de la copie jugée, où
+    chaque test désigné a tourné et réussi, est une preuve qui va au bout."""
+    contrat = contrat_de(repo)
+    contrat["risk"] = "eleve"
+    contrat["criteria"] = [dict(critere_junit(), id="C1")]
+    sur_main(repo, contrat, {"tasks/T-001/lanceur.py": LANCEUR_JUNIT})
+    assert task_check(repo, tmp_path / "work") == 0, "accepté en risque élevé"
+    assert "rouge  C1" in capsys.readouterr().out
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "contrat approuvé")
+    git(repo, "switch", "-q", "task/T-001")
+    git(repo, "rebase", "-q", "main")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    code, report = run_judge(repo)
+    assert code == 0, report["reasons"]
+    assert (repo / ".verify" / "judge" / "T-001" / "latest" / "logs" / "C1.junit").is_dir()
+
+
+@pytest.mark.parametrize(
+    ("nom", "attendu"),
+    [
+        ("autre", "test désigné jamais lancé : acme.MetricsTest.vide"),
+        ("rien", None),  # sans rapport, on ne sait pas : l'opérateur lit la raison
+    ],
+)
+def test_le_controle_rouge_lit_le_rapport_junit(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], nom: str, attendu: str | None
+) -> None:
+    contrat = contrat_de(repo)
+    contrat["criteria"].append(critere_junit(nom))
+    sur_main(repo, contrat, {"tasks/T-001/lanceur.py": LANCEUR_JUNIT})
+    code = task_check(repo, tmp_path / "work")
+    sortie = capsys.readouterr().out
+    if attendu is None:
+        assert code == 0 and "rouge  C3" in sortie
+    else:
+        assert code == 1 and attendu in sortie
+
+
+def test_un_rapport_junit_absent_ou_rate_refuse_le_critere(repo: Path, run_judge: Runner) -> None:
+    """Après le travail : sans rapport, ou avec le test désigné absent, le critère échoue ; le
+    code de retour seul ne suffit pas."""
+    git(repo, "switch", "-q", "main")
+    contrat = contrat_de(repo)
+    contrat["criteria"].append(critere_junit("autre"))
+    (repo / "tasks" / "T-001" / "contract.json").write_text(json.dumps(contrat, indent=2) + "\n")
+    (repo / "tasks" / "T-001" / "lanceur.py").write_text(LANCEUR_JUNIT)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "C3 en rapport JUnit")
+    trace_rouge(repo)
+    git(repo, "switch", "-q", "task/T-001")
+    git(repo, "rebase", "-q", "main")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    code, _ = run_judge(repo)
+    resume = (repo / ".verify" / "judge" / "T-001" / "latest" / "summary.txt").read_text()
+    assert code != 0
+    assert "test désigné absent du rapport : acme.MetricsTest.vide" in resume
+
+
+@pytest.mark.parametrize(
+    ("changement", "motif"),
+    [
+        (
+            {"rapport_junit": ["X.y"], "preuves": ["tasks/T-001/lanceur.py"]},
+            "veut {rapport} dans check",
+        ),
+        (
+            {"check": ["{python}", "x.py", "{rapport}"], "rapport_junit": ["X.y"]},
+            "veut les fichiers de ses tests dans preuves",
+        ),
+        ({"check": ["{python}", "x.py", "{rapport}"]}, "{rapport} ne sert qu'avec rapport_junit"),
+        (
+            {"check": ["{python}", "x.py", "{rapport}"], "rapport_junit": [], "preuves": ["x.py"]},
+            "liste non vide",
+        ),
+    ],
+)
+def test_un_critere_junit_mal_forme_est_refuse(changement: dict[str, Any], motif: str) -> None:
+    critere = {"id": "C1", "description": "un critère", "check": ["{python}", "x.py"], **changement}
+    with pytest.raises(judge.JudgeError) as refus:
+        judge.parse_contract(contract(id="T-001", criteria=[critere]), "T-001")
+    assert any(motif in message for message in refus.value.messages), refus.value.messages

@@ -126,3 +126,27 @@ def test_un_identifiant_abime_ne_fausse_pas_le_detail(tmp_path: Path) -> None:
     assert "5" + " " * 15 + "1 jugement(s)   1 vérifié(s)" in score.report(
         score.read_journal(tmp_path)
     )
+
+
+def test_le_score_compare_les_niveaux_d_implementation() -> None:
+    """#24 : le niveau du contrat (rapide, standard, fort) dit quel modèle écrit la tâche. Avant
+    d'en faire une règle, on mesure ce que chacun coûte, sur de vraies tâches."""
+    journal = [
+        {**JOURNAL[2], "niveau": "fort"},
+        {
+            "task_id": "FEAT-003",
+            "status": "verified_needs_review",
+            "criteria_passed": 2,
+            "criteria_total": 2,
+            "seconds": 5.0,
+            "billable_tokens": 20_000,
+            "finished_at": "2026-09-22T09:00:00+00:00",
+            "niveau": "rapide",
+        },
+        JOURNAL[3],
+    ]
+    texte = score.report(journal)
+    assert "par niveau d'implémentation" in texte
+    assert "fort       1 / 1   vérifiée(s) · 30 000 tokens par critère" in texte
+    assert "rapide     1 / 1   vérifiée(s) · 10 000 tokens par critère" in texte
+    assert "par niveau" not in score.report(JOURNAL), "rien à dire sans niveau"

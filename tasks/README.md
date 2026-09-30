@@ -49,6 +49,33 @@ préférer quand le plan vous convient tel quel ; sinon, `make task-new`, retouc
 
 ## Écrire un bon contrat
 
+**Le niveau d'implémentation.** `"niveau": "rapide" | "standard" | "fort"` et
+`"effort": "low" … "max"` disent quel modèle doit écrire la tâche : sa difficulté, pas son
+risque. `make task-worktree` donne alors la ligne de lancement qui va avec (Claude Code :
+`claude --model opus --effort max` ; opencode : le modèle du poste pour ce niveau). Sous le
+niveau fort, l'`evaluator` relit même une tâche à risque faible. Le juge note le niveau
+dans son rapport : `make score` dira, sur de vraies tâches, ce que chaque niveau coûte.
+
+**Hors Python** (Maven, Gradle, Jest, Go) : la preuve qui va au bout est le rapport JUnit de
+l'outil de test, écrit dans le dossier `{rapport}` que le juge lui donne, hors de la copie
+jugée. Le critère désigne ses tests (`rapport_junit`) et nomme leurs fichiers (`preuves`),
+que l'agent ne peut alors plus toucher :
+
+```json
+{
+  "id": "C1",
+  "description": "un virement refusé laisse le solde intact",
+  "check": ["mvn", "-q", "test", "-Dtest=VirementTest#refus", "-Dsurefire.reportsDirectory={rapport}"],
+  "rapport_junit": ["com.exemple.VirementTest.refus"],
+  "preuves": ["src/test/java/com/exemple/VirementTest.java"]
+}
+```
+
+Jest : `["sh", "-c", "JEST_JUNIT_OUTPUT_DIR={rapport} npx jest src/x.test.js --reporters=jest-junit"]`.
+Go : `["gotestsum", "--junitfile", "{rapport}/go.xml", "--", "./pkg/..."]`. Sans rapport, un
+critère n'est jugé que sur son code de retour, et il est refusé en risque élevé.
+
+
 Un critère est bon quand un tiers qui n'a pas vu le code peut trancher sans discuter.
 « L'import fonctionne bien » est mauvais. « Un CSV de 10 000 lignes dont 3 malformées
 importe 9 997 lignes et écrit les 3 rejets dans un rapport » est bon.

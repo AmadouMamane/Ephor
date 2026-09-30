@@ -82,6 +82,25 @@ Chacune rejouée, puis fermée par un test qui échoue sur la 1.3.0.
   d'opencode du poste, jamais le dépôt ; `make doctor` la propose tant qu'un rôle n'a pas de
   modèle. Écarté après lecture du code d'opencode : `{env:…}` dans la configuration du dépôt
   (une variable absente y devient un modèle vide, qui remplace le réglage du poste).
+- **Hors Python, une preuve qui va au bout : le rapport JUnit.** Un critère Maven, Gradle,
+  Jest ou Go n'était jugé que sur son code de retour, donc refusé en risque élevé. Il peut
+  maintenant désigner ses tests (`rapport_junit`) : la commande écrit son rapport JUnit dans
+  le dossier `{rapport}` que le juge lui donne, hors de la copie jugée, et chaque test désigné
+  doit y avoir tourné et réussi. Les fichiers de ces tests se nomment dans `preuves`, et
+  l'agent ne peut plus les toucher. Au contrôle rouge, un test désigné absent du rapport est
+  un faux rouge (nom mal écrit) ; l'absence de rapport, elle, est laissée à la lecture de
+  l'opérateur (un test Java qui appelle une classe pas encore écrite ne compile pas).
+  Exemples dans `tasks/README.md`.
+- **« Python d'abord », dit.** En tête du README ; et la carte du code, la mutation et
+  l'échantillon de tests disent SKIP hors Python, au lieu de « rien à muter » ou « aucun
+  test » (la passe de nuit de la CI aussi, sur un dépôt sans Python).
+- **Le niveau d'implémentation dans le contrat.** `niveau` (rapide, standard, fort) et
+  `effort` disent quel modèle doit écrire la tâche : sa difficulté, pas son risque. Le
+  planner les propose ; `make task-worktree` donne la ligne de lancement qui va avec
+  (Claude Code : `claude --model opus --effort max` ; opencode : le modèle du poste pour ce
+  niveau) ; sous le niveau fort, l'`evaluator` relit même une tâche à risque faible ; le juge
+  note le niveau, et `make score` donne, par niveau, les tâches vérifiées et le coût par
+  critère. Facultatif : à mesurer sur de vraies tâches avant d'en faire le défaut.
 
 Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
 La CI n'est pas mise à jour par Ephor : pour la passe de nuit, remplacez la ligne

@@ -28,7 +28,13 @@ V=.verify; mkdir -p "$V"
 R=""; command -v uv >/dev/null 2>&1 && R="uv run"
 
 FILTERS=""
+# Hors Python, mutmut n'a rien à muter : le dire (SKIP), jamais « rien n'a changé ».
+AUTRE_LANGAGE='\.(java|kt|kts|scala|groovy|go|ts|tsx|js|jsx|mjs|cs|rb|rs|php|swift)$'
 if [ -n "$TOUT" ]; then
+  if ! git ls-files -- 'src/*.py' | grep -q .; then
+    echo "SKIP : pas de Python sous src/, et la mutation ne sait muter que le Python (mutmut)"
+    exit 0
+  fi
   echo "mutation testing : passe complète du dépôt"
 else
   BASE=$(pick_base "${1:-}")
@@ -36,7 +42,12 @@ else
   # (pas de glob `src/**/*.py` en pathspec git : il faudrait la magie :(glob) — on filtre après)
   CHANGED=$(git diff --name-only "$BASE" -- src 2>/dev/null | grep '\.py$' | tr '\n' ' ')
   if [ -z "$CHANGED" ]; then
-    echo "aucun fichier source changé — rien à muter (c'est le cas nominal)"
+    AUTRES=$(git diff --name-only "$BASE" 2>/dev/null | grep -E "$AUTRE_LANGAGE" | head -3 | tr '\n' ' ')
+    if [ -n "$AUTRES" ]; then
+      echo "SKIP : la mutation ne sait muter que le Python (mutmut) ; changé ici : ${AUTRES}…"
+    else
+      echo "aucun fichier source changé — rien à muter (c'est le cas nominal)"
+    fi
     exit 0
   fi
   # src/app/service.py -> "app.service.*" : le nom du mutant part de la racine du paquet,

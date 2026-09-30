@@ -947,3 +947,75 @@ def test_un_geste_de_l_operateur_refuse_sous_un_agent(
         timeout=120,
     )
     assert ouvert.returncode == 0, ouvert.stdout + ouvert.stderr
+
+
+def test_hors_python_la_mutation_et_l_echantillon_disent_skip(tmp_path: Path) -> None:
+    """F5 (audit du 29/09/2026) : sur un dépôt Java, la mutation disait « rien à muter » et
+    l'échantillon « aucun test », comme si tout allait bien. Ils ne savent lire que le
+    Python : ils le disent (SKIP), jamais un vert muet."""
+    projet = tmp_path / "java"
+    (projet / "src" / "main" / "java").mkdir(parents=True)
+    (projet / ".ephor" / "scripts").mkdir(parents=True)
+    for script in ("mutants.sh", "test_sample.sh"):
+        shutil.copy(ROOT / ".ephor" / "scripts" / script, projet / ".ephor" / "scripts")
+    (projet / "src" / "main" / "java" / "Virement.java").write_text("class Virement {}\n")
+    git(projet, "init", "-q", "-b", "main")
+    git(projet, "config", "user.email", "test@example.invalid")
+    git(projet, "config", "user.name", "Ephor test")
+    git(projet, "add", "-A")
+    git(projet, "commit", "-qm", "base")
+    git(projet, "switch", "-qc", "task/VIR-001")
+    (projet / "src" / "main" / "java" / "Virement.java").write_text("class Virement { int x; }\n")
+    git(projet, "commit", "-qam", "travail")
+    env = _uv_factice(tmp_path / "bin", "exit 0\n")
+
+    def lance(*commande: str) -> str:
+        fait = subprocess.run(
+            list(commande), cwd=projet, env=env, capture_output=True, text=True, timeout=60
+        )
+        assert fait.returncode == 0, fait.stdout + fait.stderr
+        return fait.stdout
+
+    assert "SKIP : la mutation ne sait muter que le Python" in lance(
+        "bash", ".ephor/scripts/mutants.sh"
+    )
+    assert "SKIP : pas de Python sous src/" in lance("bash", ".ephor/scripts/mutants.sh", "--tout")
+    assert "SKIP : l'échantillon ne sait tirer que des tests pytest" in lance(
+        "bash", ".ephor/scripts/test_sample.sh"
+    )
+
+
+def test_la_tache_s_ouvre_avec_la_ligne_de_lancement_de_son_niveau(tmp_path: Path) -> None:
+    """#24 : le contrat dit quel modèle doit écrire la tâche (sa difficulté, pas son risque) ;
+    le dossier de la tâche s'ouvre avec la ligne de lancement qui va avec."""
+    cible = tmp_path / "depot"
+    cible.mkdir()
+    git(cible, "init", "-q", "-b", "main")
+    git(cible, "config", "user.email", "test@example.invalid")
+    git(cible, "config", "user.name", "Ephor test")
+    bootstrap(cible)
+    (cible / "tasks" / "FEAT-001").mkdir(parents=True)
+    (cible / "tasks" / "FEAT-001" / "contract.json").write_text(
+        '{"risk": "faible", "niveau": "fort", "effort": "max"}\n'
+    )
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "FEAT-001 approuvé")
+    env = _uv_factice(tmp_path / "bin", "exit 0\n")
+    env |= {"XDG_CONFIG_HOME": str(tmp_path / "xdg")}
+    (tmp_path / "xdg" / "opencode").mkdir(parents=True)
+    (tmp_path / "xdg" / "opencode" / "opencode.json").write_text(
+        '{"agent": {"planner": {"model": "passerelle/fort"}}}'
+    )
+    sortie = subprocess.run(
+        ["bash", ".ephor/scripts/worktree.sh", "FEAT-001"],
+        cwd=cible,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert sortie.returncode == 0, sortie.stdout + sortie.stderr
+    assert "Le contrat demande le niveau fort, effort max" in sortie.stdout
+    assert "claude --model opus --effort max" in sortie.stdout
+    assert "opencode --model passerelle/fort" in sortie.stdout

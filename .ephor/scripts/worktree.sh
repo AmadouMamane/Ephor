@@ -80,3 +80,35 @@ if grep -q '^setup:' "$DIR/Makefile" 2>/dev/null; then
 fi
 echo "Lancez votre agent DANS ce dossier (cd \"$DIR\", puis claude ou opencode) : une session"
 echo "par tâche. Après la fusion : git worktree remove \"$DIR\""
+# Le niveau et l'effort que le contrat approuvé demande : la ligne de lancement qui va avec.
+CONTRAT="$(git show "$PRINCIPALE:tasks/$ID/contract.json" 2>/dev/null)"
+python3 - "$CONTRAT" <<'LANCEMENT' 2>/dev/null || true
+import json
+import os
+import sys
+from pathlib import Path
+
+try:
+    contrat = json.loads(sys.argv[1])
+except ValueError:
+    sys.exit(0)
+niveau, effort = contrat.get("niveau"), contrat.get("effort")
+if niveau not in ("rapide", "standard", "fort"):
+    sys.exit(0)
+alias = {"rapide": "haiku", "standard": "sonnet", "fort": "opus"}[niveau]
+print(f"Le contrat demande le niveau {niveau}" + (f", effort {effort}" if effort else "") + " :")
+print(f"  Claude Code : claude --model {alias}" + (f" --effort {effort}" if effort else ""))
+dossier = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "opencode"
+try:
+    agents = json.loads((dossier / "opencode.json").read_text(encoding="utf-8")).get("agent", {})
+except (OSError, ValueError):
+    agents = {}
+role = {"rapide": "scout", "standard": "reviewer", "fort": "planner"}[niveau]
+modele = (agents.get(role) or {}).get("model")
+if modele:
+    variante = f" (effort : opencode run --variant {effort})" if effort else ""
+    print(f"  opencode    : opencode --model {modele}{variante}")
+else:
+    print("  opencode    : réglez d'abord les modèles du poste (make opencode-modeles)")
+print("  Copilot     : choisissez ce niveau de modèle dans le sélecteur de la discussion")
+LANCEMENT

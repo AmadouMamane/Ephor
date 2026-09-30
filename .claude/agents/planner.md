@@ -31,6 +31,9 @@ vrai : chaque détail technique inventé trop tôt devient une contrainte que pe
 4. Choisis le risque : `faible` (local, sans enjeu), `modere` (fonctionnalité, contrat
    d'API compatible), `eleve` (authentification, argent, données, droits, migration).
 5. Garde `allowed_paths` étroit : les fichiers ou dossiers réellement nécessaires.
+6. Propose le niveau qui implémentera (`niveau` : `rapide`, `standard`, `fort`) et son
+   `effort` (`low` à `max`) : c'est la difficulté du travail, pas son risque. Une tâche sans
+   enjeu peut être difficile ; une tâche d'authentification, triviale.
 
 ## Sortie
 

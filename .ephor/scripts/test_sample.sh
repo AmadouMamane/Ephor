@@ -21,7 +21,15 @@ R=""; command -v uv >/dev/null 2>&1 && R="uv run"
 # et un échantillonnage non reproductible ne sert à rien.
 $R pytest --collect-only -q -p no:randomly 2>/dev/null | sed '/^$/,$d' | LC_ALL=C sort > "$V/all-tests.txt"
 TOTAL=$(grep -c . "$V/all-tests.txt" 2>/dev/null; true)
-[ "${TOTAL:-0}" -eq 0 ] && { echo "aucun test collecté"; exit 0; }
+if [ "${TOTAL:-0}" -eq 0 ]; then
+  # Sans Python, pytest n'a rien à collecter : ce n'est pas « aucun test » (F5).
+  if git ls-files -- '*.py' | grep -q .; then
+    echo "aucun test collecté"
+  else
+    echo "SKIP : l'échantillon ne sait tirer que des tests pytest ; lancez la suite du projet"
+  fi
+  exit 0
+fi
 
 python3 - "$V/all-tests.txt" "$PCT" "$SEED" > "$V/sample.txt" <<'PY'
 import random, sys

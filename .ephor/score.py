@@ -120,6 +120,25 @@ def report(entries: list[dict[str, Any]]) -> str:
         )
     else:
         lines.append("  coût par critère      pas encore mesuré (voir `make usage`)")
+    # Le niveau d'implémentation du contrat (#24) : ce que chacun coûte, sur de vraies tâches,
+    # avant d'en faire une règle. Une tâche compte au niveau de son dernier jugement.
+    par_niveau: dict[str, list[dict[str, Any]]] = {}
+    for entry in entries:
+        niveau = dernier[tache(entry)].get("niveau")
+        if niveau:
+            par_niveau.setdefault(str(niveau), []).append(entry)
+    if par_niveau:
+        lines.append("  par niveau d'implémentation")
+        for niveau, groupe in sorted(par_niveau.items()):
+            jetons, reussis, _ = cost_per_criterion(groupe)
+            taches = {tache(entry) for entry in groupe}
+            ok = sum(1 for nom in taches if dernier[nom].get("status") == VERIFIED)
+            cout = (
+                f"{usage.milliers(jetons // reussis)} tokens par critère"
+                if reussis
+                else "coût pas encore mesuré"
+            )
+            lines.append(f"    {niveau:<9}{ok:>3} / {len(taches):<3} vérifiée(s) · {cout}")
     lines += [
         "  score de mutation     hors journal : `make mutants` sur les zones à risque",
         "  régressions           hors journal : étage 3 de la CI, après fusion",

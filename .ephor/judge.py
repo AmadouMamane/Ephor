@@ -134,6 +134,8 @@ CONTRACT_ORDER = (
     "id",
     "objective",
     "risk",
+    "niveau",
+    "effort",
     "allowed_paths",
     "criteria",
     "setup",
@@ -142,6 +144,9 @@ CONTRACT_ORDER = (
     "budget_tokens",
 )
 CONTRACT_KEYS = set(CONTRACT_ORDER)
+# Le niveau du modèle qui implémente (Claude Code : haiku, sonnet, opus), et son effort.
+NIVEAUX = ("rapide", "standard", "fort")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 REQUIRED_KEYS = {"id", "objective", "risk", "allowed_paths", "criteria"}
 CRITERION_KEYS = {
     "id",
@@ -151,6 +156,8 @@ CRITERION_KEYS = {
     "stdin",
     "expected_output",
     "returncode",
+    "rapport_junit",
+    "preuves",
 }
 CRITERION_REQUIRED = {"id", "description", "check"}
 
@@ -225,6 +232,13 @@ class Criterion:
     stdin: str | None = None
     expected_output: str | None = None
     returncode: int = 0
+    # Rapport JUnit d'un autre outil de test (Maven, Gradle, Jest, Go…) : la commande l'écrit
+    # dans le dossier `{rapport}` que le juge lui donne, HORS de la copie jugée, et chaque test
+    # désigné doit y avoir tourné et réussi (audit du 29/09/2026, F5).
+    rapport_junit: tuple[str, ...] | None = None
+    # Les fichiers de ces tests : Maven désigne un test par son nom, pas par son chemin, et le
+    # juge ne saurait pas les protéger de l'agent sans cette liste.
+    preuves: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -238,6 +252,10 @@ class Contract:
     verify: tuple[str, ...]
     timeout_seconds: int
     budget_tokens: int | None
+    # Le modèle et l'effort qui implémentent la tâche : sa difficulté, pas son risque (une
+    # tâche sans enjeu peut être difficile). Proposés par le planner, approuvés avec le contrat.
+    niveau: str | None = None
+    effort: str | None = None
 
 
 # --------------------------------------------------------------------------- utilitaires
@@ -348,6 +366,7 @@ FORMES = {
     "sortie": "sortie exacte",
     "jeton": "jeton de fin",
     "rapport": "rapport de tests",
+    "junit": "rapport JUnit",
     "code": "code de retour seul",
 }
 
@@ -381,6 +400,8 @@ def position_pytest(argv: Sequence[str]) -> int | None:
 
 def forme_de_preuve(criterion: Criterion) -> str:
     """Comment le juge saura que ce critère est allé au bout — voir `FORMES`."""
+    if criterion.rapport_junit is not None:
+        return "junit"
     if criterion.expected_output is not None:
         return "sortie"
     if position_script(criterion.check) is not None:
@@ -844,6 +865,48 @@ def _argv(value: Any, name: str, errors: list[str]) -> tuple[str, ...]:
     return tuple(value)
 
 
+def junit_du_critere(
+    item: dict[str, Any], check: tuple[str, ...], sortie: Any, label: str, errors: list[str]
+) -> tuple[tuple[str, ...] | None, tuple[str, ...]]:
+    """`rapport_junit` et `preuves` d'un critère, vérifiés : les tests désignés, et les
+    fichiers qui les portent."""
+    brut, fichiers = item.get("rapport_junit"), item.get("preuves", [])
+    preuves: tuple[str, ...] = ()
+    if not isinstance(fichiers, list) or not all(
+        isinstance(f, str) and safe_path(f) for f in fichiers
+    ):
+        errors.append(f"{label} : preuves doit être une liste de chemins du dépôt")
+    else:
+        preuves = tuple(fichiers)
+    marque = any("{rapport}" in arg for arg in check)
+    if brut is None:
+        if marque:
+            errors.append(f"{label} : {{rapport}} ne sert qu'avec rapport_junit")
+        return None, preuves
+    if (
+        not isinstance(brut, list)
+        or not brut
+        or not all(isinstance(nom, str) and nom.strip() for nom in brut)
+    ):
+        errors.append(
+            f"{label} : rapport_junit doit être une liste non vide de tests désignés (Classe.test)"
+        )
+        return None, preuves
+    if not marque:
+        errors.append(
+            f"{label} : rapport_junit veut {{rapport}} dans check : le dossier où la commande"
+            " écrit son rapport"
+        )
+    if sortie is not None:
+        errors.append(f"{label} : rapport_junit ou expected_output, pas les deux")
+    if not preuves:
+        errors.append(
+            f"{label} : rapport_junit veut les fichiers de ses tests dans preuves : sans eux,"
+            " l'agent pourrait les réécrire"
+        )
+    return tuple(nom.strip() for nom in brut), preuves
+
+
 def parse_contract(data: Any, expected_id: str | None = None) -> Contract:
     errors: list[str] = []
     if not isinstance(data, dict):
@@ -900,7 +963,8 @@ def parse_contract(data: Any, expected_id: str | None = None) -> Contract:
             if not isinstance(item, dict) or not CRITERION_REQUIRED <= set(item) <= CRITERION_KEYS:
                 errors.append(
                     f"{label} : clés attendues id, description, check, et au choix"
-                    " max_duration_seconds, stdin, expected_output, returncode"
+                    " max_duration_seconds, stdin, expected_output, returncode, rapport_junit,"
+                    " preuves"
                 )
                 continue
             cid, description = item["id"], item["description"]
@@ -937,6 +1001,7 @@ def parse_contract(data: Any, expected_id: str | None = None) -> Contract:
                 code_attendu = 0
             if any(arg.startswith(("--junitxml", "--junit-xml")) for arg in check):
                 errors.append(f"{label} : le rapport de tests est demandé par le juge, retirez-le")
+            designes, preuves = junit_du_critere(item, check, sortie, label, errors)
             criterion = Criterion(
                 cid,
                 str(description),
@@ -945,6 +1010,8 @@ def parse_contract(data: Any, expected_id: str | None = None) -> Contract:
                 entree if isinstance(entree, str) else None,
                 sortie if isinstance(sortie, str) else None,
                 code_attendu,
+                rapport_junit=designes,
+                preuves=preuves,
             )
             # Un risque élevé exige une preuve qui va au bout : aucun critère d'une tâche à
             # risque élevé ne se juge sur son seul code de retour.
@@ -975,6 +1042,12 @@ def parse_contract(data: Any, expected_id: str | None = None) -> Contract:
         errors.append("budget_tokens doit être un entier entre 1 et 100000000")
         budget = None
 
+    niveau, effort = data.get("niveau"), data.get("effort")
+    if niveau is not None and niveau not in NIVEAUX:
+        errors.append(f"niveau doit valoir {', '.join(NIVEAUX)}")
+    if effort is not None and effort not in EFFORTS:
+        errors.append(f"effort doit valoir {', '.join(EFFORTS)}")
+
     if errors:
         raise JudgeError(errors)
     return Contract(
@@ -987,6 +1060,8 @@ def parse_contract(data: Any, expected_id: str | None = None) -> Contract:
         verify=verify,
         timeout_seconds=int(timeout),
         budget_tokens=int(budget) if budget is not None else None,
+        niveau=niveau if isinstance(niveau, str) else None,
+        effort=effort if isinstance(effort, str) else None,
     )
 
 
@@ -1240,6 +1315,11 @@ def cited_paths(repo: Path, base: str, contract: Contract) -> list[str]:
                 continue
             if is_file_at(repo, base, candidate) or (repo / candidate).is_file():
                 cited.append(candidate)
+        for chemin in criterion.preuves:
+            if chemin not in cited and (
+                is_file_at(repo, base, chemin) or (repo / chemin).is_file()
+            ):
+                cited.append(chemin)
     return cited
 
 
@@ -1466,6 +1546,82 @@ def rouge_de_travers(rapport: Path, attendus: Sequence[tuple[str, tuple[str, ...
     if not cas:
         # Un dossier désigné sans aucun test : pytest ne lance rien et sort en erreur.
         return "pytest n'a lancé aucun test (chemin mal écrit, ou dossier sans test ?)"
+    return None
+
+
+def rapports_xml(dossier: Path) -> list[Path]:
+    """Les rapports XML d'un dossier écrit par l'outil de test, sans suivre aucun lien."""
+    trouves: list[Path] = []
+    for racine, _, noms in os.walk(dossier):
+        for nom in sorted(noms):
+            chemin = Path(racine) / nom
+            if nom.endswith(".xml") and not chemin.is_symlink() and chemin.is_file():
+                trouves.append(chemin)
+    return trouves
+
+
+def cas_junit(dossier: Path) -> list[ET.Element] | str:
+    """Les cas de test des rapports JUnit d'un dossier, ou pourquoi on ne peut pas les lire."""
+    fichiers = rapports_xml(dossier)
+    if not fichiers:
+        return "aucun rapport JUnit"
+    cas: list[ET.Element] = []
+    for chemin in fichiers:
+        if chemin.stat().st_size > MAX_REPORT_BYTES:
+            return f"rapport JUnit trop volumineux : {chemin.name}"
+        brut = chemin.read_bytes()
+        if b"<!DOCTYPE" in brut.upper() or b"<!ENTITY" in brut.upper():
+            return f"rapport JUnit refusé : {chemin.name} déclare un DOCTYPE ou une entité XML"
+        try:
+            # Sans DOCTYPE ni entité, expat n'a rien à développer : pas de bombe XML possible.
+            cas += list(ET.fromstring(brut).iter("testcase"))
+        except ET.ParseError:
+            return f"rapport JUnit illisible : {chemin.name}"
+    return cas
+
+
+def junit_designe(cas: ET.Element, designe: str) -> bool:
+    """Un test désigné par `Classe.test`, `Classe#test`, son seul nom, ou toute sa classe."""
+    classe, nom = cas.get("classname", ""), cas.get("name", "")
+    voulu = designe.replace("#", ".")
+    complet = f"{classe}.{nom}" if classe else nom
+    return (
+        voulu in (nom, classe, complet)
+        or complet.endswith("." + voulu)
+        or classe.endswith("." + voulu)
+    )
+
+
+def verifier_rapports_junit(dossier: Path, designes: Sequence[str]) -> str | None:
+    """Les rapports JUnit d'une preuve disent-ils qu'elle est allée au bout ? None si oui :
+    chaque test désigné a tourné, et aucun de ses cas n'a échoué ni n'a été sauté. Le dossier
+    est neuf, créé par le juge juste avant : un rapport qui s'y trouve vient de ce passage."""
+    cas = cas_junit(dossier)
+    if isinstance(cas, str):
+        return f"{cas} : l'outil de test s'est arrêté avant, ou n'écrit pas dans {{rapport}}"
+    for designe in designes:
+        vus = [c for c in cas if junit_designe(c, designe)]
+        if not vus:
+            return f"test désigné absent du rapport : {designe}"
+        if any(c.find(etat) is not None for c in vus for etat in ("failure", "error", "skipped")):
+            return f"test désigné en échec ou sauté : {designe}"
+    return None
+
+
+def rouge_junit_de_travers(dossier: Path, designes: Sequence[str]) -> str | None:
+    """Une preuve JUnit rouge pour une mauvaise raison ? Un rapport sans le test désigné (nom
+    mal écrit), ou où il réussit déjà. Sans aucun rapport, on ne sait pas : un test Java qui
+    appelle une classe pas encore écrite ne compile pas, et c'est un vrai rouge. La raison
+    affichée, que l'opérateur lit, tranche."""
+    cas = cas_junit(dossier)
+    if isinstance(cas, str):
+        return None
+    for designe in designes:
+        vus = [c for c in cas if junit_designe(c, designe)]
+        if not vus:
+            return f"test désigné jamais lancé : {designe} (nom mal écrit ?)"
+        if all(c.find(etat) is None for c in vus for etat in ("failure", "error")):
+            return f"test désigné qui ne fait pas échouer le critère : {designe}"
     return None
 
 
@@ -2125,6 +2281,8 @@ def append_journal(repo: Path, report: dict[str, Any]) -> None:
         "task_id": report.get("task_id"),
         "finished_at": report.get("finished_at"),
         "status": report.get("status"),
+        "niveau": report.get("niveau"),
+        "effort": report.get("effort"),
         "criteria_passed": sum(1 for item in criteria if item.get("passed")),
         "criteria_total": len(criteria),
         "seconds": round(sum(float(step.get("seconds") or 0) for step in steps), 2),
@@ -2203,6 +2361,7 @@ class Banc:
         forme = forme_de_preuve(critere) if critere is not None else "étape"
         jeton = ""
         rapport: Path | None = None
+        rapports: Path | None = None
         # Chaque forme de preuve dit à sa façon qu'elle est allée au bout. Seule la
         # dernière, « code de retour seul », croit le processus sur parole : elle est
         # nommée au verdict, et refusée sur une tâche à risque élevé.
@@ -2221,6 +2380,15 @@ class Banc:
             rapport = self.preuves / nom
             cible = str(rapport) if self.runtime.kind == "local" else f"{PREUVES_CONTENEUR}/{nom}"
             resolved = [*resolved, f"--junitxml={cible}"]
+        elif forme == "junit":
+            rapports = self.preuves / f"{key}-{os.urandom(6).hex()}"
+            rapports.mkdir()
+            dossier = (
+                str(rapports)
+                if self.runtime.kind == "local"
+                else f"{PREUVES_CONTENEUR}/{rapports.name}"
+            )
+            resolved = [part.replace("{rapport}", dossier) for part in resolved]
         entree = critere.stdin if critere is not None else None
         log = self.logs / f"{key}.log"
         cleanup: Callable[[], None] | None = None
@@ -2274,6 +2442,15 @@ class Banc:
                     ok, reason = False, manque
             if rapport.is_file() and not rapport.is_symlink():
                 shutil.copy2(rapport, self.logs / f"{key}.junit.xml")
+        if rapports is not None:
+            if ok and critere is not None and critere.rapport_junit:
+                manque = verifier_rapports_junit(rapports, critere.rapport_junit)
+                if manque is not None:
+                    ok, reason = False, manque
+            garde = self.logs / f"{key}.junit"
+            garde.mkdir(exist_ok=True)
+            for xml in rapports_xml(rapports)[:50]:
+                shutil.copy2(xml, garde / xml.name)
         if result["output_limit"]:
             ok = False
             reason = f"sortie de plus de {MAX_LOG_BYTES // 2**20} Mo : processus arrêté"
@@ -2381,7 +2558,10 @@ def cmd_check(args: argparse.Namespace) -> int:
         (report_dir / "logs").mkdir(parents=True, exist_ok=True)
         if logs.exists():
             for item in logs.iterdir():
-                shutil.copy2(item, report_dir / "logs" / item.name)
+                if item.is_dir() and not item.is_symlink():  # les rapports JUnit d'un critère
+                    shutil.copytree(item, report_dir / "logs" / item.name, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(item, report_dir / "logs" / item.name)
         workdir.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
         for folder in (workdir, report_dir):
@@ -2396,6 +2576,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     try:
         contract = load_contract(task_path, task_id)
         report["risk"] = contract.risk
+        report["niveau"] = contract.niveau
+        report["effort"] = contract.effort
         report["budget_tokens"] = contract.budget_tokens
         base_ref, base = resolve_base(repo, args.base)
         report.update(
@@ -2752,6 +2934,7 @@ def recevabilite(copy: Path, arbre: str, contract: Contract) -> list[str]:
         fichiers = [critere.check[index + 1]] if forme == "jeton" and index is not None else []
         if forme == "rapport":
             fichiers += [fichier for fichier, _ in tests_attendus(critere.check)]
+        fichiers += list(critere.preuves)
         for fichier in dict.fromkeys(fichiers):
             if safe_path(fichier) and not is_file_at(copy, arbre, fichier):
                 problemes.append(f"{critere.id} : preuve introuvable, {fichier}")
@@ -3107,6 +3290,10 @@ def lancer_en_rouge(
             )
             if travers is None and SQUELETTE in journal.read_text("utf-8", "replace"):
                 travers = "test encore à écrire : c'est celui du squelette de make task-new"
+        elif issue["forme"] == "junit" and critere.rapport_junit:
+            travers = rouge_junit_de_travers(
+                banc.logs / f"{critere.id}.junit", critere.rapport_junit
+            )
         if travers is not None:
             refus.append(f"{critere.id} échoue pour une mauvaise raison : {travers}")
             print(f"  FAUX   {titre} : rouge pour une mauvaise raison\n         -> {travers}")

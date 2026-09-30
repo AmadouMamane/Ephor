@@ -2146,3 +2146,14 @@ def test_ce_que_l_installation_change_fait_partie_du_juge(
     (repo / "src" / "metrics.py").write_text(FIX)
     code, report = run_judge(repo)
     assert code == 0, report.get("tampered_proofs")
+
+
+def test_le_contrat_porte_le_niveau_et_l_effort() -> None:
+    """#24 : le modèle et l'effort qui implémentent, proposés par le planner et approuvés avec
+    le contrat. La difficulté du travail, pas son risque."""
+    lu = judge.parse_contract(contract(niveau="fort", effort="max"), "T-001")
+    assert (lu.niveau, lu.effort) == ("fort", "max")
+    assert judge.parse_contract(contract(), "T-001").niveau is None, "facultatif"
+    for mauvais in ({"niveau": "opus"}, {"effort": "tres-fort"}):
+        with pytest.raises(judge.JudgeError):
+            judge.parse_contract(contract(**mauvais), "T-001")

@@ -110,3 +110,9 @@ def test_un_lien_casse_ou_un_octet_nul_ne_fait_pas_tomber_la_carte(tmp_path: Pat
     assert "ok.py:1  def a()" in carte
     assert "casse.py" not in carte
     assert "nul.py — illisible" in carte
+
+
+def test_hors_python_la_carte_dit_skip(tmp_path: Path) -> None:
+    """F5 : la carte ne lit que le Python, et le dit, au lieu d'une carte vide."""
+    (tmp_path / "App.java").write_text("class App {}\n")
+    assert repo_map.carte(tmp_path, 120).startswith("SKIP : aucun fichier Python")

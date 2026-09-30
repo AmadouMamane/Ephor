@@ -91,7 +91,7 @@ def carte_fichier(chemin: Path, racine: Path) -> list[str]:
 def carte(repo: Path, max_lignes: int) -> str:
     chemins = fichiers(repo)
     if not chemins:
-        return "(aucun fichier Python)"
+        return "SKIP : aucun fichier Python, et la carte ne lit que le Python (rg --files, sinon)"
     cache = repo / ".verify" / "map" / f"{empreinte(chemins)}-{max_lignes}.txt"
     if cache.exists():
         return cache.read_text(encoding="utf-8")

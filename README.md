@@ -18,6 +18,12 @@ JFrog et Podman. Trois pièces :
 - **le bac à sable** : le juge en conteneur Podman, sans réseau pendant les tests, et le
   terminal de Claude Code enfermé par le système.
 
+**Python d'abord.** Le juge, les garde-fous, la sentinelle et la CI valent pour tout
+langage : un critère est une commande, et sa preuve peut être le rapport JUnit de Maven,
+Gradle, Jest ou Go (`tasks/README.md`). Quatre pièces ne lisent que le Python, et le disent
+(SKIP) ailleurs : la carte du code (`make map`), la mutation (`make mutants`), l'échantillon
+de tests (`make test-fast`) et le relevé des données personnelles.
+
 Ephor se teste lui-même : `make ephor-test`.
 
 ---
