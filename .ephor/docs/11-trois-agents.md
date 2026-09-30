@@ -103,6 +103,12 @@ des skills à entretenir.
   opencode ne dit rien, le greffon si : un message à l'écran, et l'agent qui a délégué reçoit
   la raison avec la réponse vide. Relever le plafond ne touche pas au moment où opencode
   compacte la conversation (lu dans son code, 1.18.32). Sa branche v2 abandonne ce plafond.
+  **En effort max, la réflexion garde sa place, la réponse aussi.** Pour un modèle Claude
+  servi par Copilot, opencode donne à la réflexion le budget maximal annoncé moins un token,
+  et sa bibliothèque ramène « réflexion + réponse » à la limite du modèle : quand la limite
+  vaut ce budget, la réponse n'a plus qu'un token (lu dans son code, 1.18.33 ; #27). Le
+  greffon laisse donc toujours 16 000 tokens à la réponse, la réflexion prend le reste, et les
+  deux ne dépassent jamais la limite du modèle. L'effort demandé ne change pas.
   Claude Code demande la limite du modèle quand il le reconnaît, et 32 000 sinon, par exemple
   derrière une passerelle qui renomme les modèles : `CLAUDE_CODE_MAX_OUTPUT_TOKENS` le relève.
 - **L'alerte de contexte.** La règle « contexte au-delà de 60 % : `/handoff`, puis une

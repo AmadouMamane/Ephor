@@ -322,6 +322,15 @@ async function plafond(nom, modele, actuel) {
   return sortie.maxOutputTokens
 }
 const grand = { limit: { context: 1000000, output: 128000 } }
+async function avecReflexion(nom, modele, actuel, budget) {
+  const sortie = { maxOutputTokens: actuel, options: { thinking: { type: "enabled", budgetTokens: budget } } }
+  await hooks["chat.params"]({ sessionID: nom, model: modele }, sortie)
+  return [sortie.maxOutputTokens, sortie.options.thinking.budgetTokens]
+}
+const copilot = { limit: { context: 200000, output: 64000 } }
+resultat.max = await avecReflexion("max", copilot, 32000, 63999)
+resultat.high = await avecReflexion("high", copilot, 32000, 32000)
+resultat.large = await avecReflexion("large", grand, 32000, 63999)
 resultat.releve = await plafond("principale", grand, 32000)
 resultat.court = await plafond("titre", grand, 1000)
 resultat.partage = await plafond("autre", { limit: { context: 262144, output: 262144 } }, 32000)
@@ -380,6 +389,15 @@ def test_le_greffon_releve_le_plafond_et_dit_quand_il_coupe(
         assert resultat["releve"] == 128000, "la limite du modèle, pas celle d'opencode"
         assert resultat["partage"] == 65536, "jamais plus du quart de la mémoire"
     assert resultat["court"] == 1000, "un plafond court est voulu (titre, résumé)"
+    # Effort max d'un modèle Copilot : réflexion de 63 999 pour une limite de 64 000, la
+    # réponse n'avait plus qu'un token (#27). La réflexion garde tout, sauf 16 000.
+    assert resultat["max"][1] == 48000, "la réflexion laisse sa place à la réponse"
+    if not fixe_par_le_poste:
+        assert resultat["max"][0] == 16000, "réponse et réflexion tiennent dans la limite"
+        assert resultat["high"] == [32000, 32000], "en high, rien ne change à la réflexion"
+        assert resultat["large"] == [64001, 63999], "de la place partout : total = limite"
+    else:
+        assert resultat["max"][0] == 32000, "le plafond de réponse fixé par le poste reste"
     assert resultat["inconnu"] == 32000, "limite inconnue : on ne devine pas"
     assert resultat["tache"].startswith("ATTENTION : Réponse coupée au plafond : 32000 tokens")
     assert "<task_result>" in resultat["tache"], "la réponse du sous-agent reste là"

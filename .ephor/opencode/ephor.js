@@ -50,6 +50,30 @@ function plafondReponse(modele, actuel) {
   return cible > (actuel ?? 0) ? cible : undefined
 }
 
+// La place de la réponse quand la réflexion a un budget (modèles Claude servis par Copilot).
+// En effort max, opencode donne à la réflexion le budget maximal que Copilot annonce, moins un
+// token ; sa bibliothèque envoie « réponse + réflexion », ramené à la limite du modèle quand
+// elle la connaît. Quand la limite vaut ce budget, la réponse n'a plus qu'un token : elle sort
+// vide, sans erreur (lu dans le code d'opencode 1.18.33 ; plateaux de 32 000 et 63 999 tokens
+// vus en session réelle, #27). La réflexion garde donc tout, sauf cette place pour la réponse,
+// et les deux ensemble ne dépassent jamais la limite du modèle. L'effort demandé ne change pas.
+// Mesuré avec un faux serveur au format d'Anthropic (30/09/2026) : avant, 64 000 tokens
+// envoyés dont 63 999 de réflexion ; après, 64 000 dont 48 000.
+const PLACE_DE_LA_REPONSE = 16000
+
+function placePourLaReponse(modele, sortie) {
+  const pensee = sortie?.options?.thinking
+  const limite = modele?.limit?.output
+  if (pensee?.type !== "enabled" || typeof pensee.budgetTokens !== "number" || !(limite > 0)) return
+  const place = Math.min(PLACE_DE_LA_REPONSE, Math.floor(limite / 2))
+  if (pensee.budgetTokens > limite - place) pensee.budgetTokens = limite - place
+  // Le poste a fixé le plafond de réponse : c'est lui qui décide de celui-là.
+  if (process.env.OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX) return
+  if (typeof sortie.maxOutputTokens === "number" && sortie.maxOutputTokens + pensee.budgetTokens > limite) {
+    sortie.maxOutputTokens = Math.max(place, limite - pensee.budgetTokens)
+  }
+}
+
 function coupure(info) {
   const tokens = info?.tokens ?? {}
   return (
@@ -180,6 +204,7 @@ export const ephor = async ({ worktree, directory, client }) => {
       if (entree?.sessionID && contexte > 0) tailles.set(entree.sessionID, contexte)
       const plafond = plafondReponse(entree?.model, sortie.maxOutputTokens)
       if (plafond !== undefined) sortie.maxOutputTokens = plafond
+      placePourLaReponse(entree?.model, sortie)
     },
 
     event: async ({ event }) => {

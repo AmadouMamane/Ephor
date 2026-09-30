@@ -219,7 +219,9 @@ ne disait.
 Plus d'effort demande plus de place : la réflexion est comptée dans la réponse. opencode
 plafonne une réponse à 32 000 tokens ; au plus haut niveau, la réflexion du `planner` le
 remplissait et la réponse sortait vide. Le greffon d'Ephor relève ce plafond jusqu'à la
-limite du modèle, et dit quand une réponse est coupée (`.ephor/docs/11-trois-agents.md`).
+limite du modèle, garde toujours une place pour la réponse quand la réflexion a un budget
+(effort max d'un modèle servi par Copilot), et dit quand une réponse est coupée
+(`.ephor/docs/11-trois-agents.md`).
 Baisser l'effort n'est pas le remède : en `high`, le planner a aussi été coupé, et au plus
 haut niveau, avec la place, il a rendu un meilleur contrat pour le même prix (un essai,
 le 29/09/2026).

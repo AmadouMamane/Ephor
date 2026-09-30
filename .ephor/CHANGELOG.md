@@ -20,6 +20,15 @@ Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
   tests de la tâche, comme le relecteur ; il n'écrit toujours rien (édition refusée, ni
   commit ni `make fmt` dans sa consigne). Pour « un test échouerait sans le changement »,
   il lit le contrôle rouge, qui le prouve pour chaque critère.
+- **Sous opencode, en effort max, la réponse garde sa place.** Pour un modèle Claude servi
+  par Copilot, opencode donne à la réflexion le budget maximal annoncé moins un token, et sa
+  bibliothèque ramène « réflexion + réponse » à la limite du modèle : quand la limite vaut ce
+  budget, la réponse n'avait plus qu'un token, et le planner rendait du vide sur les grosses
+  tâches (lu dans le code d'opencode 1.18.33 ; plateaux de 32 000 et 63 999 tokens vus en
+  session réelle). Le greffon laisse toujours 16 000 tokens à la réponse ; la réflexion
+  prend le reste. L'effort demandé ne change pas. Mesuré de bout en bout, opencode 1.18.33
+  et un faux serveur au format d'Anthropic : avant, 64 000 tokens envoyés dont 63 999 de
+  réflexion ; après, 64 000 dont 48 000.
 
 ## 1.4.0 — 30 septembre 2026
 
