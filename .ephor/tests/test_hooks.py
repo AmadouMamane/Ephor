@@ -232,6 +232,23 @@ def test_filter_never_rewrites_compound_or_other_commands(command: str) -> None:
     assert result.stdout == ""
 
 
+def test_le_filtre_passe_par_le_point_d_entree(tmp_path: Path) -> None:
+    """Sous Claude Code, le filtre réécrit la commande par un JSON sur la sortie standard, et
+    il tourne maintenant avec les autres gardes du terminal, par le point d'entrée (ADR 0011) :
+    ce JSON doit en sortir seul et lisible, sinon Claude Code l'ignore sans rien dire."""
+    projet = tmp_path / "projet"
+    (projet / ".claude").mkdir(parents=True)
+    shutil.copy(ROOT / ".claude" / "settings.json", projet / ".claude" / "settings.json")
+    appel = {"tool_name": "Bash", "tool_input": {"command": "uv run pytest -q"}}
+    sortie = hook("avant-outil.sh", appel, project=projet)
+    assert sortie.returncode == 0, sortie.stderr
+    decision = json.loads(sortie.stdout)["hookSpecificOutput"]
+    assert "last-test.txt" in decision["updatedInput"]["command"]
+    refus = {"tool_name": "Bash", "tool_input": {"command": "uv run pytest -q > .ephor/x"}}
+    bloque = hook("avant-outil.sh", refus, project=projet)
+    assert bloque.returncode == 2 and bloque.stdout == "", "un refus ne rend aucune réécriture"
+
+
 def rewritten(command: str, project: Path) -> str:
     """Le filtre ne réécrit que ce que les permissions autorisent déjà : il lui faut donc
     les réglages du dépôt dans le projet d'essai."""
