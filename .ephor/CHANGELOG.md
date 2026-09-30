@@ -3,11 +3,15 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
-## 1.4.0 — en préparation
+## 1.4.0 — 30 septembre 2026
 
-Trois gênes relevées en session réelle, sur un vrai projet : une mutation qui ne mesurait
-rien, un contrôle rouge périmé par le commit, et des tests du planner à recopier à la main.
-Chacune rejouée, puis fermée par un test qui échoue sur la 1.3.0.
+Un retour de terrain et la fin de l'audit du 29 septembre. Les gênes vues en session réelle,
+sur un vrai projet (une mutation qui ne mesurait rien, un contrôle rouge périmé par le
+commit, des tests du planner à recopier, des tâches qui se marchaient dessus) ont chacune été
+rejouées, puis fermées par un test qui échoue sur la 1.3.0. S'y ajoutent les derniers
+chantiers de l'audit : la consigne de l'opérateur hors de portée de l'agent, ses gestes
+protégés, « Python d'abord », un bac à sable pour opencode, et quatre points d'entrée pour
+les garde-fous.
 
 - **`make mutants` mesure enfin sur un vrai module.** mutmut recopie le code en empilant les
   variantes de chaque fonction : la copie est dix fois plus longue. Les tests de structure
