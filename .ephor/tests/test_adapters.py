@@ -323,7 +323,8 @@ async function plafond(nom, modele, actuel) {
 }
 const grand = { limit: { context: 1000000, output: 128000 } }
 async function avecReflexion(nom, modele, actuel, budget) {
-  const sortie = { maxOutputTokens: actuel, options: { thinking: { type: "enabled", budgetTokens: budget } } }
+  const pensee = { type: "enabled", budgetTokens: budget }
+  const sortie = { maxOutputTokens: actuel, options: { thinking: pensee } }
   await hooks["chat.params"]({ sessionID: nom, model: modele }, sortie)
   return [sortie.maxOutputTokens, sortie.options.thinking.budgetTokens]
 }

@@ -143,7 +143,12 @@ def test_une_preuve_changee_apres_le_controle_rouge_est_refusee(
     (repo / "src" / "metrics.py").write_text(FIX)
     code, report = run_judge(repo)
     assert code == 2
-    assert "contrôle rouge périmé : tasks/T-001/check_c2.py a changé depuis" in report["reasons"]
+    change = "contrôle rouge périmé : tasks/T-001/check_c2.py a changé depuis (modifié par "
+    assert any(
+        raison.startswith(change)
+        and "« preuve retouchée sans refaire le contrôle rouge »" in raison
+        for raison in report["reasons"]
+    ), report["reasons"]
     assert "contrôle rouge périmé : tasks/T-001/aide.py ajouté depuis" in report["reasons"]
     # Refait, il redevient valable.
     git(repo, "checkout", "-q", "--", "src/metrics.py")
