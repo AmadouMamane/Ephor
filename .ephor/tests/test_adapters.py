@@ -140,6 +140,18 @@ def test_l_evaluateur_relit_chaque_tache() -> None:
     assert meta.get("effort") == "high" and meta.get("model") == "opus"
 
 
+def test_la_procedure_enchaine_tout_et_peut_aller_pas_a_pas() -> None:
+    """Demandé par l'opérateur (#25, #33) : enchaîner de la demande au verdict, avec une
+    confirmation à chaque étape en option. Deux gestes humains restent, et la procédure le dit."""
+    skill = (ROOT / ".claude" / "skills" / "feature" / "SKILL.md").read_text(encoding="utf-8")
+    meta, _ = adapters.entete(ROOT / ".claude" / "skills" / "feature" / "SKILL.md")
+    assert "pas-a-pas" in meta["argument-hint"]
+    assert "deux gestes, pas plus" in skill and "« ok »" in skill
+    assert "make -s taches" in skill, "le tableau des tâches, pas une liste de dossiers"
+    genere = (ROOT / ".opencode" / "commands" / "feature.md").read_text(encoding="utf-8")
+    assert "pas-a-pas" in genere
+
+
 def test_l_effort_d_un_role_passe_a_opencode() -> None:
     """Sous opencode, l'effort d'un rôle est la variante du modèle. Mesuré (30/09/2026, faux
     serveur au format d'Anthropic) : `variant: high` dans le fichier de l'agent, modèle réglé

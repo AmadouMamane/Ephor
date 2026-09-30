@@ -79,7 +79,7 @@ relancer opencode ou Claude Code.
 | Moment | Geste |
 |---|---|
 | Début de session | `cat PROGRESS.md`, puis `/feature <ID>` ou reprise du « Prochain pas » |
-| Nouvelle fonctionnalité | contrat et tests préparés par `planner`, approuvés d'un geste par l'opérateur (`make task-approve ID=<ID> FROM=.verify/plans/<ID>.md` : résumé, « oui », contrôle rouge, commit sur `main`) ; ou pas à pas : `make task-new … FROM=…`, `make task-check ID=<ID>`, commit |
+| Nouvelle fonctionnalité | `/feature <demande>` : `planner` prépare contrat et tests ; l'opérateur approuve d'un geste (`make task-approve ID=<ID> FROM=.verify/plans/<ID>.md` : résumé, « oui », contrôle rouge, commit sur `main`, dossier de la tâche ouvert), puis colle la ligne qui y lance l'agent ; tout le reste s'enchaîne jusqu'au verdict (`/feature <ID> pas-a-pas` pour confirmer chaque étape). Ou à la main : `make task-new … FROM=…`, `make task-check ID=<ID>`, commit |
 | Pendant | branche `task/<ID>`, `make verify` après chaque incrément |
 | Sous opencode, une fois par poste | `make opencode-modeles FORT=<fournisseur/modèle> RAPIDE=<…>` : chaque rôle reçoit le modèle de son niveau (`make doctor` le rappelle) |
 | Plusieurs tâches en même temps | une par dossier, ouvert par `make task-approve` (ou `make task-worktree ID=<ID>`) : branche, environnement, bac à sable, et la ligne qui y lance l'agent ; `make task-clore ID=<ID>` le ferme après la fusion ; Ephor prévient quand deux sessions tournent dans le même dossier |

@@ -63,6 +63,13 @@ Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
   n'implémente plus dans le dossier principal, sauf demande de l'opérateur.
   `make task-clore ID=<ID>` retire le dossier et la branche locale d'une tâche fusionnée
   (`FORCE=1` pour une tâche abandonnée ; jamais un dossier qui a du travail pas commité).
+- **Le mode automatique, de la demande au verdict.** `/feature <demande>` enchaîne tout ;
+  l'opérateur fait deux gestes, pas plus : taper « oui » à l'approbation, puis coller la
+  ligne qui lance l'agent dans le dossier de la tâche. Ces deux-là restent : l'approbation
+  ne se délègue pas à un agent, et le dossier de la tâche veut sa session, au modèle du
+  contrat. `/feature <ID> pas-a-pas` demande un « ok » avant chaque étape. Pas de fenêtre
+  de confirmation du système : elle ne s'ouvre pas depuis le terminal de Claude Code
+  (mesuré). La procédure montre aussi le tableau des tâches (`make taches`).
 
 ## 1.4.0 — 30 septembre 2026
 

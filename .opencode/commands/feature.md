@@ -11,9 +11,21 @@ description: "Boucle complète d'une fonctionnalité, du contrat au juge et à l
 
 !`git branch --show-current 2>/dev/null || true`
 
-Contrats disponibles :
+Tâches :
 
-!`ls tasks 2>/dev/null | grep -v README || echo "aucun contrat"`
+!`make -s taches 2>/dev/null | head -40 || ls tasks 2>/dev/null | grep -v README || echo "aucune tâche"`
+
+## En automatique, par défaut
+
+De la demande au verdict, l'opérateur fait deux gestes, pas plus : taper « oui » à
+l'approbation (`make task-approve`), puis coller la ligne qui lance l'agent dans le dossier de
+la tâche. Tout le reste s'enchaîne. Ces deux gestes restent : l'approbation ne se délègue
+pas à un agent (c'est elle que le juge lit), et le dossier de la tâche veut une session à
+lui, au modèle que le contrat demande.
+
+**Pas à pas, en option** : si les arguments contiennent `pas-a-pas`, annonce chaque étape en
+une ligne avant de la faire (« Étape 5 : le juge. Je lance ? »), et attends que l'opérateur
+réponde « ok ». Sans cette option, n'attends aucun feu vert entre deux étapes.
 
 ## Déroulé imposé
 
@@ -29,7 +41,8 @@ le planner propose : la tâche se range dans `tasks/<lot>/`. Pour les retoucher 
 **arrête-toi** : tu ne peux ni écrire dans `tasks/`, ni commencer sans ce commit.
 
 Une fois l'approbation faite, enchaîne les étapes 2 à 7 sans attendre d'autre feu vert :
-l'approbation était le seul. Arrête-toi seulement sur un blocage (étape 5) ou au verdict.
+l'approbation était le seul (en `pas-a-pas`, un « ok » à chaque étape). Arrête-toi
+seulement sur un blocage (étape 5) ou au verdict.
 
 **2. Le dossier de la tâche.** Une tâche s'implémente dans son propre dossier, sur sa
 branche : `make task-approve` l'ouvre, et affiche la ligne qui y lance une session au niveau
