@@ -83,6 +83,7 @@ relancer opencode ou Claude Code.
 | Pendant | branche `task/<ID>`, `make verify` après chaque incrément |
 | Sous opencode, une fois par poste | `make opencode-modeles FORT=<fournisseur/modèle> RAPIDE=<…>` : chaque rôle reçoit le modèle de son niveau (`make doctor` le rappelle) |
 | Plusieurs tâches en même temps | une par dossier : `make task-worktree ID=<ID>` (branche, environnement, bac à sable), puis une session d'agent dans chacun ; Ephor prévient quand deux sessions tournent dans le même dossier |
+| Beaucoup de tâches | `make taches` : une ligne par tâche et son état, calculé ; `make task-ranger LOT=<fonctionnalité> PREFIXE=<ID->` les range dans `tasks/<lot>/` |
 | Avant de conclure | `make judge TASK=<ID>` ; en conteneur, `RUNTIME=podman` |
 | Revue | `make review TASK=<ID>` : enchaîne ce que le risque du contrat exige, et rien de plus |
 | Livraison | copier d'abord `.ephor/deploy/release-policy.example.json` en `.ephor/projet/release-policy.json`, puis `make delivery-manifest TASK=<ID> DIGEST=sha256:<...>` et `make delivery-check` — la chaîne réelle n'existe pas encore, voir `.ephor/deploy/README.md` |

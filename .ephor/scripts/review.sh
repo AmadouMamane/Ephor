@@ -12,7 +12,9 @@ if [ -z "$TASK" ]; then
   exit 2
 fi
 
-CONTRACT="tasks/${TASK}/contract.json"
+# Rangée ou non dans un lot (tasks/<lot>/<ID>/, #35) : le juge sait où est la tâche.
+DOSSIER="$(python3 .ephor/judge.py dossier --task-id "$TASK" 2>/dev/null)" || DOSSIER="tasks/${TASK}"
+CONTRACT="$DOSSIER/contract.json"
 if [ ! -f "$CONTRACT" ]; then
   echo "Erreur : contrat $CONTRACT introuvable." >&2
   exit 1
@@ -31,9 +33,10 @@ if [ -z "${BASE:-}" ]; then
   done
 fi
 BASE="${BASE:-main}"
+DOSSIER_BASE="$(python3 .ephor/judge.py dossier --task-id "$TASK" --ref "$BASE" 2>/dev/null)" || DOSSIER_BASE="$DOSSIER"
 APPROUVE="$(mktemp)"
 trap 'rm -f "$APPROUVE"' EXIT
-if ! git show "${BASE}:${CONTRACT}" > "$APPROUVE" 2>/dev/null; then
+if ! git show "${BASE}:${DOSSIER_BASE}/contract.json" > "$APPROUVE" 2>/dev/null; then
   echo "Erreur : $CONTRACT n'existe pas sur $BASE — c'est l'approbation qui manque." >&2
   exit 1
 fi

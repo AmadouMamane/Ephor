@@ -106,9 +106,9 @@ review: ## Revue proportionnée au risque du contrat : make review TASK=<ID>
 	@test -n "$(TASK)" || { echo "usage : make review TASK=<ID>"; exit 2; }
 	@bash .ephor/scripts/review.sh "$(TASK)"
 
-task-new: ## Contrat de tâche, pour l'OPÉRATEUR : make task-new ID=FEAT-001 [FROM=plan.json]
-	@test -n "$(ID)" || { echo "usage : make task-new ID=FEAT-001 [FROM=plan.json]"; exit 2; }
-	@$(EPHOR_PY) .ephor/judge.py new --task-id "$(ID)" $(if $(FROM),--from "$(FROM)",)
+task-new: ## Contrat de tâche, pour l'OPÉRATEUR : make task-new ID=FEAT-001 [FROM=plan.json] [LOT=paiement]
+	@test -n "$(ID)" || { echo "usage : make task-new ID=FEAT-001 [FROM=plan.json] [LOT=paiement]"; exit 2; }
+	@$(EPHOR_PY) .ephor/judge.py new --task-id "$(ID)" $(if $(FROM),--from "$(FROM)",) $(if $(LOT),--lot "$(LOT)",)
 
 fetch-docs: ## Aspire une page de doc pour les agents, pour l'OPÉRATEUR : make fetch-docs URL=https://... [NAME=nom]
 	@test -n "$(URL)" || { echo "usage : make fetch-docs URL=https://exemple.fr/page [NAME=nom]"; exit 2; }
@@ -134,8 +134,15 @@ task-check: ## Contrat prêt à approuver ? Sa forme, puis chaque critère doit 
 	else $(EPHOR_PY) .ephor/judge.py rouge --task-id "$(ID)" --runtime "$(RUNTIME)" $(if $(IMAGE),--image "$(IMAGE)"); fi
 
 task-approve: ## Approuve une tâche d'un seul geste (OPÉRATEUR) : le plan devient contrat et tests, vus échouer, puis commités sur la branche principale : make task-approve ID=FEAT-001 FROM=.verify/plans/FEAT-001.md
-	@test -n "$(ID)" -a -n "$(FROM)" || { echo "usage : make task-approve ID=FEAT-001 FROM=.verify/plans/FEAT-001.md [RUNTIME=podman]"; exit 2; }
-	@$(EPHOR_PY) .ephor/judge.py approuve --task-id "$(ID)" --from "$(FROM)" --runtime "$(RUNTIME)" $(if $(IMAGE),--image "$(IMAGE)")
+	@test -n "$(ID)" -a -n "$(FROM)" || { echo "usage : make task-approve ID=FEAT-001 FROM=.verify/plans/FEAT-001.md [LOT=paiement] [RUNTIME=podman]"; exit 2; }
+	@$(EPHOR_PY) .ephor/judge.py approuve --task-id "$(ID)" --from "$(FROM)" --runtime "$(RUNTIME)" $(if $(IMAGE),--image "$(IMAGE)") $(if $(LOT),--lot "$(LOT)")
+
+taches: ## Une ligne par tâche et son état (approuvée, en cours, vérifiée, fusionnée…), calculé : make taches [TOUT=1]
+	@$(EPHOR_PY) .ephor/judge.py taches $(if $(TOUT),--tout)
+
+task-ranger: ## Range des tâches par fonctionnalité, dans tasks/<lot>/ (OPÉRATEUR) : make task-ranger LOT=paiement ID=PAY-012 | PREFIXE=PAY-
+	@test -n "$(LOT)" -a \( -n "$(ID)" -o -n "$(PREFIXE)" \) || { echo "usage : make task-ranger LOT=paiement ID=PAY-012  (ou PREFIXE=PAY- pour toutes celles qui commencent ainsi)"; exit 2; }
+	@$(EPHOR_PY) .ephor/judge.py ranger --lot "$(LOT)" $(if $(ID),--task-id "$(ID)") $(if $(PREFIXE),--prefixe "$(PREFIXE)")
 
 task-worktree: ## Ouvre une tâche approuvée dans son propre dossier, pour travailler en parallèle (OPÉRATEUR) : make task-worktree ID=FEAT-001 [DIR=../dossier]
 	@bash .ephor/scripts/worktree.sh "$(ID)" "$(DIR)"
@@ -181,4 +188,4 @@ clean: ## Efface les sorties, SAUF la mesure de tokens et le journal des jugemen
 $(V):
 	@mkdir -p $(V)
 
-.PHONY: help doctor setup ci-image gitlab-check review delivery-manifest delivery-check fmt lint types arch test test-fast sec mutants verify judge task-new task-check task-approve task-worktree opencode-modeles adapters copilot-install usage ephor-test checkpoints checkpoints-purge map refs stop resume score fetch-docs clean
+.PHONY: help doctor setup ci-image gitlab-check review delivery-manifest delivery-check fmt lint types arch test test-fast sec mutants verify judge task-new task-check task-approve taches task-ranger task-worktree opencode-modeles adapters copilot-install usage ephor-test checkpoints checkpoints-purge map refs stop resume score fetch-docs clean

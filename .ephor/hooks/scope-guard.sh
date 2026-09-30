@@ -21,8 +21,7 @@ ecriture || exit 0
 BRANCHE="$(git -C "$ROOT" branch --show-current 2>/dev/null || true)"
 case "$BRANCHE" in task/*) ;; *) exit 0 ;; esac
 ID="${BRANCHE#task/}"; ID="${ID%%/*}"
-CONTRAT="$ROOT/tasks/$ID/contract.json"
-[ -f "$CONTRAT" ] || exit 0
+CONTRAT="$(contrat_de "$ROOT" "$ID")" || exit 0
 
 AUTORISES="$(liste "$CONTRAT" allowed_paths)"
 [ -z "$AUTORISES" ] && exit 0

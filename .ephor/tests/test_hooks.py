@@ -450,6 +450,21 @@ def test_scope_guard_refuses_a_file_outside_the_contract(tmp_path: Path) -> None
     assert detour.returncode == 2, "un détour par .. n'est pas un chemin dans le périmètre"
 
 
+def test_scope_guard_trouve_le_contrat_d_une_tache_rangee(tmp_path: Path) -> None:
+    """Une tâche rangée par fonctionnalité, `tasks/<lot>/<ID>/` (#35) : la garde du périmètre
+    lisait `tasks/<ID>/contract.json` seulement, et laissait tout passer."""
+    repo = depot_de_tache(tmp_path, ["src/"])
+    git(repo, "switch", "-q", "main")
+    (repo / "tasks" / "paiement").mkdir()
+    git(repo, "mv", "tasks/T-9", "tasks/paiement/T-9")
+    git(repo, "commit", "-qm", "rangée")
+    git(repo, "switch", "-q", "task/T-9")
+    git(repo, "rebase", "-q", "main")
+    assert perimetre(repo, "src/a.py").returncode == 0
+    refus = perimetre(repo, "docs/ailleurs.md")
+    assert refus.returncode == 2 and "hors du périmètre" in refus.stderr
+
+
 def test_scope_guard_stays_out_of_the_way_without_a_task(tmp_path: Path) -> None:
     repo = depot_de_tache(tmp_path, ["src/"])
     git(repo, "switch", "-q", "main")

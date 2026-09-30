@@ -48,7 +48,9 @@ vrai : chaque détail technique inventé trop tôt devient une contrainte que pe
    n'est pas repris ; un chemin hors de `tasks/<ID>/` fait tout refuser. Un critère ne lance
    jamais le test d'un autre contrat : les deux tâches seraient liées, et aucune n'aurait un
    verdict propre. Ce qui est commun, recopie-le dans ce fichier.
-3. En dix lignes au plus : hors périmètre, découpage en incréments, risques et questions.
+3. En dix lignes au plus : hors périmètre, découpage en incréments, risques et questions ;
+   et le lot où ranger la tâche, la fonctionnalité qu'elle sert, en minuscules (`paiement`,
+   `auth-sso`), en reprenant un lot existant de `tasks/` quand il y en a un.
 
 Un critère est bon si un tiers qui n'a pas vu le code peut dire « satisfait » ou « non
 satisfait » sans débattre. « L'import fonctionne bien » est mauvais.

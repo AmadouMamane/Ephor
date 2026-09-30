@@ -101,10 +101,11 @@ CIBLES_OPERATEUR = {
     "checkpoints-purge",
     "task-worktree",
     "task-approve",
+    "task-ranger",
     "opencode-modeles",
 }
 SCRIPTS_OPERATEUR = {
-    "judge.py": {"new", "rouge", "approuve"},
+    "judge.py": {"new", "rouge", "approuve", "ranger"},
     "adapters.py": {"write", "modeles"},
     "fetch_docs.py": None,  # toute invocation
     "install_copilot_plugin.sh": None,
@@ -906,7 +907,7 @@ EOF
     "::branche principale::")
       deny "REFUSÉ : $POURQUOI écrit ou déplace $CIBLE, la branche principale. Un commit sur cette branche, c'est l'approbation de l'opérateur (le juge la lit là) : l'agent n'y écrit pas l'histoire et ne la déplace pas. Travaille sur ta branche de tâche (git switch task/<ID>). Si c'est vraiment voulu, c'est l'opérateur qui le fait, dans son terminal." ;;
     "::geste de l'opérateur::")
-      deny "REFUSÉ : $CIBLE est un geste de l'opérateur (approuver une tâche, régénérer les réglages, faire entrer une page du web, installer le greffon, effacer les points de reprise) : l'agent ne le lance pas, dans aucun ordre de mots. Demande-le à l'opérateur." ;;
+      deny "REFUSÉ : $CIBLE est un geste de l'opérateur (approuver ou ranger une tâche, régénérer les réglages, faire entrer une page du web, installer le greffon, effacer les points de reprise) : l'agent ne le lance pas, dans aucun ordre de mots. Demande-le à l'opérateur." ;;
     "::variable d'agent::")
       deny "REFUSÉ : cette commande retire $CIBLE de l'environnement, ce qui dit qu'un agent tourne. Les gestes de l'opérateur le lisent pour se refuser à l'agent : le retirer, c'est les contourner. Demande le geste à l'opérateur." ;;
     "::lecture d'un secret::")

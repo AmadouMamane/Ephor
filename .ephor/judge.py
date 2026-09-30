@@ -37,7 +37,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -45,6 +45,9 @@ from xml.sax.saxutils import escape as xml_escape
 
 SCHEMA_VERSION = 1
 ID_PATTERN = re.compile(r"^[A-Z][A-Z0-9-]{2,50}$")
+# Un lot de tâches, pour les ranger par fonctionnalité : `tasks/<lot>/<ID>/` (#35). En
+# minuscules, là où un identifiant de tâche est en majuscules : les deux ne se confondent pas.
+LOT_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
 CRITERION_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,20}$")
 RISKS = ("faible", "modere", "eleve")
 DEFAULT_TIMEOUT = 900
@@ -256,6 +259,14 @@ class Contract:
     # tâche sans enjeu peut être difficile). Proposés par le planner, approuvés avec le contrat.
     niveau: str | None = None
     effort: str | None = None
+    # Où vit la tâche : `tasks/<ID>`, ou `tasks/<lot>/<ID>` quand elle est rangée par
+    # fonctionnalité (#35). Ses critères et sa trace rouge parlent de `tasks/<ID>/…` : ce nom
+    # canonique est traduit vers ce dossier, et une tâche rangée ne change donc pas de contrat.
+    dossier: str = ""
+
+    @property
+    def ou(self) -> str:
+        return self.dossier or f"tasks/{self.id}"
 
 
 # --------------------------------------------------------------------------- utilitaires
@@ -907,7 +918,24 @@ def junit_du_critere(
     return tuple(nom.strip() for nom in brut), preuves
 
 
-def parse_contract(data: Any, expected_id: str | None = None) -> Contract:
+def relocalise(valeur: str, task_id: str, dossier: str) -> str:
+    """`tasks/<ID>/…`, le nom canonique d'un fichier de la tâche, dans son vrai dossier."""
+    canon = f"tasks/{task_id}"
+    if dossier == canon:
+        return valeur
+    if valeur in (canon, canon + "/"):
+        return dossier + valeur[len(canon) :]
+    return valeur.replace(canon + "/", dossier + "/")
+
+
+def canonique(chemin: str, task_id: str, dossier: str) -> str:
+    """L'inverse : un fichier du dossier réel de la tâche, sous son nom canonique."""
+    if dossier != f"tasks/{task_id}" and chemin.startswith(dossier + "/"):
+        return f"tasks/{task_id}/" + chemin[len(dossier) + 1 :]
+    return chemin
+
+
+def parse_contract(data: Any, expected_id: str | None = None, dossier: str = "") -> Contract:
     errors: list[str] = []
     if not isinstance(data, dict):
         raise JudgeError("le contrat doit être un objet JSON")
@@ -1050,7 +1078,7 @@ def parse_contract(data: Any, expected_id: str | None = None) -> Contract:
 
     if errors:
         raise JudgeError(errors)
-    return Contract(
+    contrat = Contract(
         id=str(task_id),
         objective=str(objective),
         risk=str(risk),
@@ -1063,6 +1091,29 @@ def parse_contract(data: Any, expected_id: str | None = None) -> Contract:
         niveau=niveau if isinstance(niveau, str) else None,
         effort=effort if isinstance(effort, str) else None,
     )
+    return _range(contrat, dossier) if dossier and dossier != contrat.ou else contrat
+
+
+def _range(contract: Contract, dossier: str) -> Contract:
+    """Le contrat d'une tâche rangée : ses chemins `tasks/<ID>/…` menés à son vrai dossier."""
+    criteres = tuple(
+        replace(
+            critere,
+            check=tuple(relocalise(jeton, contract.id, dossier) for jeton in critere.check),
+            preuves=tuple(relocalise(chemin, contract.id, dossier) for chemin in critere.preuves),
+        )
+        for critere in contract.criteria
+    )
+    return replace(contract, criteria=criteres, dossier=dossier)
+
+
+def dossier_du_contrat(path: Path) -> str:
+    """`tasks/<ID>` ou `tasks/<lot>/<ID>`, d'après le chemin du contrat."""
+    parties = path.parent.parts
+    if "tasks" not in parties:
+        return ""
+    debut = len(parties) - 1 - parties[::-1].index("tasks")
+    return "/".join(parties[debut:])
 
 
 def load_contract(path: Path, expected_id: str | None = None) -> Contract:
@@ -1072,7 +1123,7 @@ def load_contract(path: Path, expected_id: str | None = None) -> Contract:
         raise JudgeError(f"contrat introuvable : {path}") from exc
     except json.JSONDecodeError as exc:
         raise JudgeError(f"contrat illisible (JSON) : {exc}") from exc
-    return parse_contract(data, expected_id)
+    return parse_contract(data, expected_id, dossier_du_contrat(path))
 
 
 # --------------------------------------------------------------------------- dépôt
@@ -1093,20 +1144,62 @@ def repo_root(start: str | None) -> Path:
     return Path(top).resolve()
 
 
+def taches_sur_disque(repo: Path) -> dict[str, list[str]]:
+    """Les tâches du dossier de travail, rangées ou non : identifiant -> dossiers."""
+    trouvees: dict[str, list[str]] = {}
+    racine = repo / "tasks"
+    for contrat in [*racine.glob("*/contract.json"), *racine.glob("*/*/contract.json")]:
+        dossier = contrat.parent
+        rangee = dossier.parent != racine
+        if not ID_PATTERN.match(dossier.name) or (
+            rangee and not LOT_PATTERN.match(dossier.parent.name)
+        ):
+            continue
+        trouvees.setdefault(dossier.name, []).append(dossier.relative_to(repo).as_posix())
+    return trouvees
+
+
+def taches_a(repo: Path, arbre: str) -> dict[str, str]:
+    """Les tâches d'un arbre git (la branche principale, en général) : identifiant -> dossier.
+    Un identifiant présent deux fois garde son dossier non rangé : `make taches` le signale."""
+    try:
+        entrees = git(repo, "ls-tree", "-r", "-z", "--name-only", arbre, "--", "tasks").split(b"\0")
+    except JudgeError:
+        return {}
+    trouvees: dict[str, str] = {}
+    for brut in entrees:
+        morceaux = brut.decode("utf-8", "replace").split("/")
+        if morceaux[-1:] != ["contract.json"]:
+            continue
+        if len(morceaux) == 3 and ID_PATTERN.match(morceaux[1]):
+            trouvees[morceaux[1]] = f"tasks/{morceaux[1]}"
+        elif (
+            len(morceaux) == 4 and LOT_PATTERN.match(morceaux[1]) and ID_PATTERN.match(morceaux[2])
+        ):
+            trouvees.setdefault(morceaux[2], f"tasks/{morceaux[1]}/{morceaux[2]}")
+    return trouvees
+
+
 def resolve_task(repo: Path, task_id: str | None, task_path: str | None) -> tuple[Path, str]:
     if task_id is not None:
         if not ID_PATTERN.match(task_id):
             raise JudgeError(f"identifiant de tâche invalide : {task_id!r}")
-        return repo / "tasks" / task_id / "contract.json", task_id
+        dossiers = taches_sur_disque(repo).get(task_id, [])
+        if len(dossiers) > 1:
+            raise JudgeError(f"tâche {task_id} en double : {', '.join(sorted(dossiers))}")
+        dossier = dossiers[0] if dossiers else f"tasks/{task_id}"
+        return repo / dossier / "contract.json", task_id
     if task_path is None:
         raise JudgeError("indiquez --task-id ou --task")
     path = Path(task_path)
     path = (path if path.is_absolute() else Path.cwd() / path).resolve()
     # Le message le disait, le code ne le vérifiait pas : un contrat ailleurs dans le dépôt
     # était jugé, sous le nom de son dossier, sans être dans la zone de contrôle `tasks/`.
-    if path.parent.parent != repo / "tasks" or not ID_PATTERN.match(path.parent.name):
+    lieu = path.parent
+    rangee = lieu.parent.parent == repo / "tasks" and LOT_PATTERN.match(lieu.parent.name)
+    if not ID_PATTERN.match(lieu.name) or not (lieu.parent == repo / "tasks" or rangee):
         raise JudgeError("le contrat doit se trouver dans le dépôt, sous tasks/<ID>/")
-    return path, path.parent.name
+    return path, lieu.name
 
 
 def principales(repo: Path) -> set[str]:
@@ -1355,7 +1448,7 @@ SQUELETTE = "critère à écrire"
 def racines_de_preuve(repo: Path, arbre: str, contract: Contract, task_id: str) -> set[str]:
     """Le dossier de la tâche, et les fichiers et dossiers que ses critères citent."""
     racines = (
-        {f"tasks/{task_id}"}
+        {contract.ou}
         | {dossier for _, dossier in cited_dirs(repo, arbre, contract)}
         | set(cited_paths(repo, arbre, contract))
     )
@@ -1375,8 +1468,9 @@ def preuves_rouges(repo: Path, arbre: str, contract: Contract, task_id: str) -> 
         meta, chemin = ligne.split(b"\t", 1)
         _, sorte, objet = meta.split()
         nom = chemin.decode("utf-8", "replace")
-        if sorte == b"blob" and nom != f"tasks/{task_id}/{ROUGE}":
-            objets[nom] = objet.decode()
+        if sorte == b"blob" and nom != f"{contract.ou}/{ROUGE}":
+            # Sous son nom canonique : une tâche rangée ensuite garde une trace valable.
+            objets[canonique(nom, task_id, contract.ou)] = objet.decode()
     # Un seul processus pour tous les contenus : un par fichier coûtait 7 s pour un dossier
     # de 400 fichiers (mesuré le 26/09/2026), payées à chaque jugement.
     contenus = lire_objets(repo, sorted(set(objets.values())))
@@ -1391,17 +1485,17 @@ def chemins_de_preuve(repo: Path, arbre: str, contract: Contract, task_id: str) 
         repo, "ls-tree", "-r", "-z", "--name-only", "--full-tree", arbre, "--", *sorted(racines)
     )
     noms = {brut.decode("utf-8", "replace") for brut in sortie.split(b"\0") if brut}
-    return noms - {f"tasks/{task_id}/{ROUGE}"}
+    return noms - {f"{contract.ou}/{ROUGE}"}
 
 
 @functools.lru_cache(maxsize=4096)
-def _preuves_d_une_tache(repo: str, arbre: str, task_id: str) -> frozenset[str]:
+def _preuves_d_une_tache(repo: str, arbre: str, task_id: str, dossier: str) -> frozenset[str]:
     """Les preuves d'une AUTRE tâche, à un arbre git figé (un hash : le résultat ne bouge
     plus). Vide si son contrat est illisible : ce n'est pas à cette tâche de le juger."""
     depot = Path(repo)
     try:
-        brut = git(depot, "show", f"{arbre}:tasks/{task_id}/contract.json").decode("utf-8")
-        contrat = parse_contract(lire_json(brut), task_id)
+        brut = git(depot, "show", f"{arbre}:{dossier}/contract.json").decode("utf-8")
+        contrat = parse_contract(lire_json(brut), task_id, dossier)
     except (JudgeError, UnicodeDecodeError):
         return frozenset()
     return frozenset(chemins_de_preuve(depot, arbre, contrat, task_id))
@@ -1419,20 +1513,18 @@ def preuves_partagees(
         miennes = chemins_de_preuve(repo, arbre, contract, task_id)
     try:
         fige = git(repo, "rev-parse", f"{arbre}^{{tree}}").decode().strip()
-        entrees = git(repo, "ls-tree", "-z", "--name-only", f"{fige}:tasks").split(b"\0")
     except JudgeError:
         return {}
     partages: dict[str, list[str]] = {}
-    for brut in entrees:
-        autre = brut.decode("utf-8", "replace")
-        if autre == task_id or not ID_PATTERN.match(autre):
+    for autre, dossier in sorted(taches_a(repo, fige).items()):
+        if autre == task_id:
             continue
-        for chemin in sorted(miennes & _preuves_d_une_tache(str(repo), fige, autre)):
+        for chemin in sorted(miennes & _preuves_d_une_tache(str(repo), fige, autre, dossier)):
             partages.setdefault(chemin, []).append(autre)
     return dict(sorted(partages.items()))
 
 
-def dire_partages(partages: dict[str, list[str]], task_id: str) -> list[str]:
+def dire_partages(partages: dict[str, list[str]], task_id: str, dossier: str = "") -> list[str]:
     """L'avertissement que lit l'opérateur au moment d'approuver."""
     if not partages:
         return []
@@ -1446,7 +1538,7 @@ def dire_partages(partages: dict[str, list[str]], task_id: str) -> list[str]:
     lignes.append(
         f"  Le juge de {task_id} peut alors dépendre du travail de l'autre tâche, et changer ces"
         " fichiers périme les deux contrôles rouges. Donnez à chaque contrat ses propres tests,"
-        f" dans tasks/{task_id}/ (tasks/README.md)."
+        f" dans {dossier or f'tasks/{task_id}'}/ (tasks/README.md)."
     )
     return lignes
 
@@ -1495,7 +1587,7 @@ def trace_rouge(
 
 def lire_trace_rouge(repo: Path, base: str, contract: Contract, task_id: str) -> dict[str, Any]:
     """La trace du contrôle rouge, lue sur la BASE, et qui doit encore dire la vérité."""
-    chemin = f"tasks/{task_id}/{ROUGE}"
+    chemin = f"{contract.ou}/{ROUGE}"
     refaire = (
         f"lancez `make task-check ID={task_id}` sur la branche principale, puis commitez "
         f"{chemin} avec le contrat (Makefile d'avant la 1.1 : `{COMMANDE_ROUGE} {task_id}`)"
@@ -1536,13 +1628,17 @@ def lire_trace_rouge(repo: Path, base: str, contract: Contract, task_id: str) ->
     dehors = {nom for nom in changes if not nom.startswith(f"tasks/{task_id}/")}
     proprietaires = preuves_partagees(repo, base, contract, task_id, dehors) if dehors else {}
     commit_rouge = trace.get("commit")
+
+    def reel(nom: str) -> str:  # le nom canonique, là où le fichier vit vraiment
+        return relocalise(nom, task_id, contract.ou)
+
     ecarts = [
-        f"{nom} a changé depuis"
-        + pourquoi_perime(repo, commit_rouge, base, nom, proprietaires.get(nom, []))
+        f"{reel(nom)} a changé depuis"
+        + pourquoi_perime(repo, commit_rouge, base, reel(nom), proprietaires.get(nom, []))
         for nom in changes
     ]
-    ecarts += [f"{nom} ajouté depuis" for nom in sorted(present.keys() - attendu.keys())]
-    ecarts += [f"{nom} retiré depuis" for nom in sorted(attendu.keys() - present.keys())]
+    ecarts += [f"{reel(nom)} ajouté depuis" for nom in sorted(present.keys() - attendu.keys())]
+    ecarts += [f"{reel(nom)} retiré depuis" for nom in sorted(attendu.keys() - present.keys())]
     if ecarts:
         raise JudgeError(
             [f"contrôle rouge périmé : {ecart}" for ecart in ecarts]
@@ -2732,7 +2828,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         dehors = {
             nom
             for nom in chemins_de_preuve(repo, base, contract, task_id)
-            if not nom.startswith(f"tasks/{task_id}/")
+            if not nom.startswith(f"{contract.ou}/")
         }
         partages = preuves_partagees(repo, base, contract, task_id, dehors) if dehors else {}
         for chemin, autres in list(partages.items())[:5]:
@@ -2914,7 +3010,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         gardees = acceptance_files(repo, base, contract)
         # Les dossiers de preuve : ceux que les critères citent, et celui de la tâche, où
         # vivent ses tests, leurs données et leurs aides.
-        dossiers = sorted({d for _, d in cited_dirs(repo, base, contract)} | {f"tasks/{task_id}"})
+        dossiers = sorted({d for _, d in cited_dirs(repo, base, contract)} | {contract.ou})
         reference_preuves = empreintes_preuves(copy, gardees | a_surveiller(copy, dossiers))
         banc = Banc(
             repo=repo,
@@ -3065,7 +3161,7 @@ def preuves_du_dossier(
     dossiers = {dossier for _, dossier in cited_dirs(repo, arbre, contract)}
     if "." in dossiers:
         return list(chemins), []
-    prefixes = (f"tasks/{task_id}/", *(dossier.rstrip("/") + "/" for dossier in dossiers))
+    prefixes = (f"{contract.ou}/", *(dossier.rstrip("/") + "/" for dossier in dossiers))
     retenus = [c for c in chemins if c in fichiers or c.startswith(prefixes)]
     return retenus, [c for c in chemins if c not in retenus]
 
@@ -3207,7 +3303,7 @@ def cmd_rouge(args: argparse.Namespace) -> int:
     try:
         _, modifies = snapshot(repo, head)
         retenus, ecartes = preuves_du_dossier(repo, head, contract, task_id, modifies)
-        trace_actuelle = f"tasks/{task_id}/{ROUGE}"
+        trace_actuelle = f"{contract.ou}/{ROUGE}"
         passer_les_hooks_du_commit(
             repo, [nom for nom in retenus if nom != trace_actuelle and (repo / nom).is_file()]
         )
@@ -3293,7 +3389,7 @@ def cmd_rouge(args: argparse.Namespace) -> int:
         print(
             f"{relative(trace_path, repo)} déjà à jour : rien n'a changé depuis le dernier contrôle"
         )
-        for ligne in dire_partages(partages, task_id):
+        for ligne in dire_partages(partages, task_id, contract.ou):
             print(ligne)
         return 0
     trace = trace_rouge(task_id, head, empreintes, criteres)
@@ -3301,11 +3397,242 @@ def cmd_rouge(args: argparse.Namespace) -> int:
     print(
         f"écrit : {relative(trace_path, repo)}. Lisez chaque raison : un critère doit échouer"
         " parce que le comportement manque, pas pour une faute de frappe.\n"
-        f"Puis commitez tasks/{task_id}/ entier (contrat, tests, {ROUGE}) sur la branche"
+        f"Puis commitez {contract.ou}/ entier (contrat, tests, {ROUGE}) sur la branche"
         " principale : ce commit est l'approbation."
     )
-    for ligne in dire_partages(partages, task_id):
+    for ligne in dire_partages(partages, task_id, contract.ou):
         print(ligne)
+    return 0
+
+
+# ------------------------------------------------------------ tâches : tableau et rangement
+
+ETATS_DU_JUGE = {
+    "verified_needs_review": "vérifiée",
+    "verification_failed": "en échec",
+    "rejected": "refusée",
+    "stale": "périmée",
+    "budget_exhausted": "budget épuisé",
+    "no_change": "en cours",
+}
+
+
+def derniers_verdicts(repo: Path) -> dict[str, str]:
+    """Le dernier verdict de chaque tâche, dans le journal des jugements."""
+    verdicts: dict[str, str] = {}
+    chemin = repo / ".verify" / "journal.jsonl"
+    try:
+        lignes = chemin.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return verdicts
+    for ligne in lignes:
+        try:
+            entree = json.loads(ligne)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(entree, dict) and isinstance(entree.get("task_id"), str):
+            verdicts[entree["task_id"]] = str(entree.get("status") or "")
+    return verdicts
+
+
+def branches_de_tache(repo: Path) -> dict[str, str]:
+    """Les branches `task/<ID>`, locales puis du serveur : identifiant -> référence."""
+    trouvees: dict[str, str] = {}
+    try:
+        sortie = git(repo, "for-each-ref", "--format=%(refname)", "refs/remotes", "refs/heads")
+    except JudgeError:
+        return trouvees
+    for ref in sortie.decode("utf-8", "replace").split():
+        nom = ref.split("/", 2)[2] if ref.startswith("refs/heads/") else ref.split("/", 3)[-1]
+        if nom.startswith("task/") and ID_PATTERN.match(nom[5:]):
+            trouvees.setdefault(nom[5:], ref)
+    return trouvees
+
+
+def etat_de_tache(
+    repo: Path, ref: str, task_id: str, contrat: Contract, branche: str | None, verdict: str
+) -> str:
+    """Ce que dit git, puis le juge, d'une tâche approuvée sur la branche principale.
+
+    Fusionnée : un commit de la branche principale nomme `task/<ID>` (le commit de fusion
+    d'une merge request le fait), ou la branche, jugée VÉRIFIÉE, y est entrée. Une branche
+    sans travail est aussi « dans » la branche principale : sans verdict, elle est en cours."""
+    motif = f"task/{task_id}([^A-Z0-9-]|$)"
+    if git(repo, "log", "-1", "--format=%h", "-E", f"--grep={motif}", ref).strip():
+        return "fusionnée"
+    if branche is not None and verdict == "verified_needs_review":
+        with suppress(JudgeError):
+            git(repo, "merge-base", "--is-ancestor", branche, ref)
+            return "fusionnée"
+    try:
+        lire_trace_rouge(repo, ref, contrat, task_id)
+    except JudgeError:
+        return "rouge à refaire"
+    if branche is None:
+        return "approuvée"
+    return ETATS_DU_JUGE.get(verdict, "en cours")
+
+
+def cmd_taches(args: argparse.Namespace) -> int:
+    """`make taches` : une ligne par tâche, et son état, calculé à partir de git et du journal
+    du juge, jamais tenu à la main. Avec une centaine de tâches dans `tasks/`, on ne s'y
+    retrouvait plus (30/09/2026, #35) ; les tâches fusionnées sont cachées par défaut."""
+    repo = repo_root(args.repo)
+    ref, _ = resolve_base(repo, None)
+    verdicts = derniers_verdicts(repo)
+    branches = branches_de_tache(repo)
+    doubles = {
+        tache: dossiers for tache, dossiers in taches_sur_disque(repo).items() if len(dossiers) > 1
+    }
+    lignes: list[tuple[str, str, str, str, str, str]] = []
+    cachees = 0
+    for tache, dossier in taches_a(repo, ref).items():
+        try:
+            brut = git(repo, "show", f"{ref}:{dossier}/contract.json").decode("utf-8")
+            contrat = parse_contract(lire_json(brut), tache, dossier)
+        except (JudgeError, UnicodeDecodeError):
+            lignes.append(
+                (
+                    dossier.split("/")[1] if dossier.count("/") == 2 else "",
+                    tache,
+                    "contrat illisible",
+                    "",
+                    "",
+                    "",
+                )
+            )
+            continue
+        etat = etat_de_tache(
+            repo, ref, tache, contrat, branches.get(tache), verdicts.get(tache, "")
+        )
+        if etat == "fusionnée" and not args.tout:
+            cachees += 1
+            continue
+        lot = dossier.split("/")[1] if dossier.count("/") == 2 else ""
+        objectif = " ".join(contrat.objective.split())
+        objectif = objectif if len(objectif) <= 60 else objectif[:59] + "…"
+        lignes.append((lot, tache, etat, contrat.risk, contrat.niveau or "", objectif))
+    print(f"tâches approuvées sur {ref} :")
+    if lignes:
+        entete = ("Lot", "ID", "État", "Risque", "Niveau")
+        largeurs = [max([len(entete[i])] + [len(ligne[i]) for ligne in lignes]) for i in range(5)]
+
+        def rangee(valeurs: Sequence[str]) -> str:
+            return "  ".join(valeurs[i].ljust(largeurs[i]) for i in range(5))
+
+        print("  " + rangee(entete) + "  Objectif")
+        for ligne in sorted(lignes):
+            print("  " + rangee(ligne) + f"  {ligne[5]}")
+    else:
+        print("  aucune")
+    if cachees:
+        print(f"  … et {cachees} fusionnée(s) : make taches TOUT=1 pour les voir")
+    for tache, dossiers in sorted(doubles.items()):
+        print(
+            f"  ATTENTION : {tache} existe deux fois ({', '.join(sorted(dossiers))}) : gardez-en un"
+        )
+    return 0
+
+
+def cmd_ranger(args: argparse.Namespace) -> int:
+    """`make task-ranger LOT=<lot> ID=<ID> | PREFIXE=<P>` : range des tâches dans un dossier par
+    fonctionnalité, `tasks/<lot>/<ID>/`, dans un commit sur la branche principale. Dans
+    l'arborescence de l'éditeur, cent dossiers de tâches en deviennent une dizaine (#35).
+    Leurs contrats et leurs contrôles rouges restent valables : ils parlent de `tasks/<ID>/…`,
+    et le juge le traduit vers le vrai dossier."""
+    sys.dont_write_bytecode = True  # rien de compilé dans le moteur, une zone
+    from operateur import refus as refus_operateur
+
+    message = refus_operateur("make task-ranger")
+    if message:
+        print(message)
+        return 2
+    repo = repo_root(args.repo)
+    if not LOT_PATTERN.match(args.lot):
+        print(f"lot invalide : {args.lot!r} (minuscules, chiffres, tirets : paiement, auth-sso…)")
+        return 2
+    branche = git(repo, "branch", "--show-current").decode().strip()
+    if branche not in principales(repo):
+        print(
+            f"REFUS : vous êtes sur {branche or 'une tête détachée'} ; le rangement se commite sur"
+            " la branche principale. git switch main, puis relancez."
+        )
+        return 2
+    taches = {
+        tache: dossiers[0]
+        for tache, dossiers in taches_sur_disque(repo).items()
+        if len(dossiers) == 1
+    }
+    choisies = sorted(
+        tache
+        for tache in taches
+        if tache in (args.task_id or []) or (args.prefixe and tache.startswith(args.prefixe))
+    )
+    inconnues = sorted(set(args.task_id or []) - set(taches))
+    if inconnues:
+        print(f"REFUS : tâche(s) introuvable(s) : {', '.join(inconnues)}")
+        return 2
+    a_ranger = [
+        (tache, taches[tache]) for tache in choisies if taches[tache] != f"tasks/{args.lot}/{tache}"
+    ]
+    if not a_ranger:
+        print("rien à ranger : ces tâches sont déjà dans ce lot, ou aucune ne correspond")
+        return 0
+    sales = git(repo, "status", "--porcelain", "--", *(dossier for _, dossier in a_ranger)).decode()
+    if sales.strip():
+        print(
+            "REFUS : ces dossiers ont des changements pas commités : commitez-les, ou retirez-les,"
+            " d'abord"
+        )
+        return 2
+    for tache, dossier in a_ranger:
+        (repo / "tasks" / args.lot).mkdir(parents=True, exist_ok=True)
+        fait = subprocess.run(
+            ["git", "-C", str(repo), "mv", dossier, f"tasks/{args.lot}/{tache}"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if fait.returncode != 0:
+            print(f"git mv {dossier} a échoué : {(fait.stdout + fait.stderr).strip()}")
+            return 1
+    noms = ", ".join(tache for tache, _ in a_ranger)
+    fait = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "commit",
+            "-q",
+            "-m",
+            f"Tâches rangées dans tasks/{args.lot}/ : {noms}",
+            "--",
+            "tasks",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+        check=False,
+    )
+    if fait.returncode != 0:
+        print(f"le commit a échoué : {(fait.stdout + fait.stderr).strip()[-400:]}")
+        return 1
+    print(f"rangé dans tasks/{args.lot}/ : {noms}. Contrats et contrôles rouges restent valables.")
+    return 0
+
+
+def cmd_dossier(args: argparse.Namespace) -> int:
+    """Le dossier d'une tâche, rangée ou non : pour les scripts (review.sh, worktree.sh)."""
+    repo = repo_root(args.repo)
+    if args.ref:
+        dossier = taches_a(repo, args.ref).get(args.task_id)
+        if dossier is None:
+            return 1
+        print(dossier)
+        return 0
+    chemin, _ = resolve_task(repo, args.task_id, None)
+    print(chemin.parent.relative_to(repo).as_posix())
     return 0
 
 
@@ -3316,23 +3643,17 @@ def cmd_perimes(args: argparse.Namespace) -> int:
     Rien n'est lancé : la liste se lit dans git."""
     repo = repo_root(args.repo)
     ref, _ = resolve_base(repo, None)
-    try:
-        entrees = git(repo, "ls-tree", "-z", "--name-only", f"{ref}:tasks").split(b"\0")
-    except JudgeError:
-        entrees = []
     print(f"contrôles rouges, lus sur {ref} :")
     a_jour = 0
     a_refaire: list[str] = []
-    for tache in sorted(entree.decode("utf-8", "replace") for entree in entrees if entree):
-        if not ID_PATTERN.match(tache):
-            continue
+    for tache, dossier in sorted(taches_a(repo, ref).items()):
         try:
-            brut = git(repo, "show", f"{ref}:tasks/{tache}/contract.json")
+            brut = git(repo, "show", f"{ref}:{dossier}/contract.json")
         except JudgeError:
             continue
         try:
             lire_trace_rouge(
-                repo, ref, parse_contract(lire_json(brut.decode("utf-8")), tache), tache
+                repo, ref, parse_contract(lire_json(brut.decode("utf-8")), tache, dossier), tache
             )
         except JudgeError as exc:
             a_refaire.append(tache)
@@ -3520,9 +3841,15 @@ def cmd_new(args: argparse.Namespace) -> int:
     if not ID_PATTERN.match(task_id):
         print(f"identifiant invalide : {task_id!r} (ex. FEAT-001)")
         return 2
-    folder = repo / "tasks" / task_id
-    if folder.exists():
-        print(f"{relative(folder, repo)} existe déjà : rien n'est écrasé")
+    lot = getattr(args, "lot", None)
+    if lot is not None and not LOT_PATTERN.match(lot):
+        print(f"lot invalide : {lot!r} (minuscules, chiffres, tirets : paiement, auth-sso…)")
+        return 2
+    dossier = f"tasks/{lot}/{task_id}" if lot else f"tasks/{task_id}"
+    folder = repo / dossier
+    deja = taches_sur_disque(repo).get(task_id)
+    if deja or folder.exists():
+        print(f"{', '.join(deja or [dossier])} existe déjà : rien n'est écrasé")
         return 2
     test_name = f"test_{task_id.lower().replace('-', '_')}.py"
     data: dict[str, Any] = {
@@ -3587,26 +3914,31 @@ def cmd_new(args: argparse.Namespace) -> int:
     (folder / "contract.json").write_text(
         json.dumps(ordered, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    written = [f"tasks/{task_id}/contract.json"]
+    written = [f"{dossier}/contract.json"]
+    # Le plan et les critères parlent de `tasks/<ID>/…` : dans un lot, ces fichiers vivent
+    # dans `tasks/<lot>/<ID>/`, et le juge les y retrouve (#35).
     for path, contenu in sorted(fournis.items()):
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text(contenu, encoding="utf-8")
-        written.append(f"{path} (du plan)")
+        reel = relocalise(path, task_id, dossier)
+        (repo / reel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / reel).write_text(contenu, encoding="utf-8")
+        written.append(f"{reel} (du plan)")
     squelettes: list[str] = []
     for path, names in sorted(tests.items()):
-        target = repo / path
+        reel = relocalise(path, task_id, dossier)
+        target = repo / reel
         if target.exists():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(skeleton_test(task_id, names or ["test_a_ecrire"]), encoding="utf-8")
-        written.append(path)
-        squelettes.append(path)
+        written.append(reel)
+        squelettes.append(reel)
     print("créé : " + ", ".join(written))
     for path in sorted(set(fournis) - set(tests)):
-        print(f"ATTENTION : aucun critère ne cite {path} ; il fera partie des preuves, relisez-le.")
+        reel = relocalise(path, task_id, dossier)
+        print(f"ATTENTION : aucun critère ne cite {reel} ; il fera partie des preuves, relisez-le.")
     if not tests:
         print(
-            f"ATTENTION : aucun critère ne s'appuie sur un fichier de tasks/{task_id}/.\n"
+            f"ATTENTION : aucun critère ne s'appuie sur un fichier de {dossier}/.\n"
             "C'est là que vivent les preuves : ailleurs, elles ne sont protégées que si\n"
             "elles existent déjà sur la branche principale."
         )
@@ -3705,11 +4037,16 @@ def cmd_approuve(args: argparse.Namespace) -> int:
             " sur la branche principale. git switch main, puis relancez."
         )
         return 2
-    dossier = repo / "tasks" / task_id
-    if dossier.exists():
+    lot = getattr(args, "lot", None)
+    if lot is not None and not LOT_PATTERN.match(lot):
+        print(f"lot invalide : {lot!r} (minuscules, chiffres, tirets : paiement, auth-sso…)")
+        return 2
+    chemin = f"tasks/{lot}/{task_id}" if lot else f"tasks/{task_id}"
+    deja = taches_sur_disque(repo).get(task_id)
+    if deja or (repo / chemin).exists():
         print(
-            f"REFUS : {relative(dossier, repo)} existe déjà. Pour le reprendre : make task-check"
-            f" ID={task_id}, puis commitez-le ; ou supprimez-le et relancez."
+            f"REFUS : {', '.join(deja or [chemin])} existe déjà. Pour le reprendre : make"
+            f" task-check ID={task_id}, puis commitez-le ; ou supprimez-le et relancez."
         )
         return 2
     # Le plan, lu et vérifié AVANT toute question : on ne demande rien pour un plan invalide.
@@ -3741,7 +4078,7 @@ def cmd_approuve(args: argparse.Namespace) -> int:
         print("rien n'est fait : l'approbation n'a pas été confirmée")
         return 1
     creation = argparse.Namespace(
-        repo=args.repo, task_id=task_id, from_file=args.from_file, sans_conseil=True
+        repo=args.repo, task_id=task_id, from_file=args.from_file, sans_conseil=True, lot=lot
     )
     if cmd_new(creation) != 0:
         return 2
@@ -3756,13 +4093,12 @@ def cmd_approuve(args: argparse.Namespace) -> int:
     )
     if cmd_rouge(rouge) != 0:
         print(
-            f"Approbation arrêtée : tasks/{task_id}/ est créé, pas commité. Corrigez-le, puis"
+            f"Approbation arrêtée : {chemin}/ est créé, pas commité. Corrigez-le, puis"
             f" make task-check ID={task_id} et commitez-le ; ou supprimez-le et relancez avec un"
             " plan corrigé."
         )
         return 1
     # Le commit d'approbation : le dossier de la tâche seul, avec les hooks de l'opérateur.
-    chemin = f"tasks/{task_id}"
     for commande in (
         ["git", "-C", str(repo), "add", "--", chemin],
         [
@@ -3898,11 +4234,31 @@ def main(argv: list[str] | None = None) -> int:
         "--image", help=f"image de conteneur (défaut : EPHOR_IMAGE ou {DEFAULT_IMAGE})"
     )
     approuve.add_argument("--workdir", help="dossier de travail (défaut : ~/.cache/ephor/judge)")
+    approuve.add_argument("--lot", help="ranger la tâche dans tasks/<lot>/ (une fonctionnalité)")
     approuve.set_defaults(func=cmd_approuve)
+
+    taches = sub.add_parser("taches", help="une ligne par tâche et son état (make taches)")
+    taches.add_argument("--repo")
+    taches.add_argument("--tout", action="store_true", help="montrer aussi les tâches fusionnées")
+    taches.set_defaults(func=cmd_taches)
+
+    ranger = sub.add_parser("ranger", help="ranger des tâches dans tasks/<lot>/ (opérateur)")
+    ranger.add_argument("--repo")
+    ranger.add_argument("--lot", required=True)
+    ranger.add_argument("--task-id", action="append", help="une tâche (répétable)")
+    ranger.add_argument("--prefixe", help="toutes les tâches dont l'identifiant commence ainsi")
+    ranger.set_defaults(func=cmd_ranger)
+
+    dossier = sub.add_parser("dossier", help="le dossier d'une tâche, rangée ou non (scripts)")
+    dossier.add_argument("--repo")
+    dossier.add_argument("--task-id", required=True)
+    dossier.add_argument("--ref", help="lu sur cette référence git plutôt que sur le disque")
+    dossier.set_defaults(func=cmd_dossier)
 
     new = sub.add_parser("new", help="créer le squelette d'un contrat (opérateur)")
     new.add_argument("--task-id", required=True)
     new.add_argument("--repo")
+    new.add_argument("--lot", help="ranger la tâche dans tasks/<lot>/ (une fonctionnalité)")
     new.add_argument(
         "--from",
         dest="from_file",

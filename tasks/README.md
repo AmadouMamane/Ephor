@@ -47,6 +47,20 @@ le dossier, lance le contrôle rouge et commite l'approbation sur la branche pri
 préférer quand le plan vous convient tel quel ; sinon, `make task-new`, retouchez, puis
 `make task-check` et le commit.
 
+**Où en sont les tâches : `make taches`.** Une ligne par tâche approuvée : son lot, son
+état, son risque, son niveau, son objectif. L'état est calculé à partir de git et du journal
+du juge, jamais tenu à la main : approuvée, en cours (sa branche existe), vérifiée, en échec,
+rouge à refaire, fusionnée (un commit de la branche principale nomme `task/<ID>`, comme le
+fait la fusion d'une merge request). Les tâches fusionnées sont cachées : `TOUT=1` les montre.
+
+**Ranger par fonctionnalité : `tasks/<lot>/<ID>/`.** Avec une centaine de tâches, un dossier
+par fonctionnalité (`tasks/paiement/`, `tasks/auth-sso/`, en minuscules) garde l'arborescence
+lisible. À la création : `LOT=paiement` sur `make task-new` ou `make task-approve`. Pour des
+tâches déjà là : `make task-ranger LOT=paiement ID=PAY-012`, ou `PREFIXE=PAY-` pour toutes
+celles qui commencent ainsi, dans un commit sur la branche principale. Le contrat et la trace
+rouge d'une tâche rangée restent valables : ils parlent de `tasks/<ID>/…`, et le juge le
+traduit vers le vrai dossier. Un identifiant reste unique, rangé ou non.
+
 ## Écrire un bon contrat
 
 **Le niveau d'implémentation.** `"niveau": "rapide" | "standard" | "fort"` et

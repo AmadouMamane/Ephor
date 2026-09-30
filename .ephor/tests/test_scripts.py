@@ -938,6 +938,13 @@ def test_une_tache_s_ouvre_dans_son_propre_dossier(tmp_path: Path) -> None:
     sans_contrat = ouvre("FEAT-002")
     assert sans_contrat.returncode == 2 and "pas de contrat approuvé" in sans_contrat.stdout
     assert not (tmp_path / "depot-FEAT-002").exists()
+    # Une tâche rangée par fonctionnalité (tasks/<lot>/<ID>/, #35) s'ouvre de même.
+    (cible / "tasks" / "paiement" / "FEAT-003").mkdir(parents=True)
+    (cible / "tasks" / "paiement" / "FEAT-003" / "contract.json").write_text('{"risk": "faible"}\n')
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "FEAT-003 approuvé, dans son lot")
+    rangee = ouvre("FEAT-003")
+    assert rangee.returncode == 0, rangee.stdout + rangee.stderr
 
 
 @pytest.mark.parametrize("variable", ["CLAUDECODE", "OPENCODE", "AI_AGENT", "COPILOT_AGENT"])

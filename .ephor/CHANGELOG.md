@@ -38,6 +38,16 @@ Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
   de son sous-agent (`model:`, `effort:`) : la mise à jour les garde et remplace le reste,
   `make adapters` passe l'effort à opencode (sa `variant`, mesuré : 48 000 → 16 000 tokens
   de réflexion en `high`), et `make doctor` dit quand l'évaluateur n'est plus au niveau fort.
+- **Cent tâches, lisibles : `make taches` et des dossiers par fonctionnalité.** Avec une
+  centaine de tâches dans `tasks/`, on ne s'y retrouvait plus, ni dans l'arborescence de
+  l'éditeur. `make taches` donne une ligne par tâche et son état (approuvée, en cours,
+  vérifiée, en échec, rouge à refaire, fusionnée), calculé à partir de git et du journal du
+  juge ; les fusionnées sont cachées. Une tâche se range dans `tasks/<lot>/<ID>/` : à la
+  création (`LOT=` sur `task-new` et `task-approve`, lot proposé par le planner), ou après
+  coup (`make task-ranger LOT=… ID=…|PREFIXE=…`, un commit sur la branche principale). Son
+  contrat et son contrôle rouge restent valables : ils parlent de `tasks/<ID>/…`, que le juge
+  traduit vers le vrai dossier ; la garde du périmètre, le budget, la revue et
+  `make task-worktree` la retrouvent aussi.
 
 ## 1.4.0 — 30 septembre 2026
 

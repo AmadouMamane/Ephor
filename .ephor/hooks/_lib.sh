@@ -42,6 +42,19 @@ elif command -v python3 >/dev/null 2>&1; then MOTEUR=python3
 else MOTEUR=aucun
 fi
 moteur_ok() { [ "$MOTEUR" != "aucun" ]; }
+
+contrat_de() { # contrat_de <racine> <ID> : le contrat d'une tâche, rangée ou non dans un lot
+  # (tasks/<lot>/<ID>/, en minuscules : #35). Échoue s'il n'y en a pas.
+  local fichier lot
+  if [ -f "$1/tasks/$2/contract.json" ]; then printf '%s' "$1/tasks/$2/contract.json"; return 0; fi
+  for fichier in "$1"/tasks/*/"$2"/contract.json; do
+    [ -f "$fichier" ] || continue
+    lot="${fichier%/"$2"/contract.json}"; lot="${lot##*/}"
+    case "$lot" in "" | [!a-z0-9]* | *[!a-z0-9_-]*) continue ;; esac
+    printf '%s' "$fichier"; return 0
+  done
+  return 1
+}
 jq_ok() { [ "$MOTEUR" = "jq" ]; }   # jq SEUL : réservé à ce qui doit ÉCRIRE du JSON
 deny() { # deny "raison" -> bloque l'appel d'outil
   # La seconde ligne n'est pas décorative. Le 24/09/2026, un agent refusé a écrit « comme

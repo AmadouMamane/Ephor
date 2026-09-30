@@ -16,8 +16,7 @@ ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 BRANCHE="$(git -C "$ROOT" branch --show-current 2>/dev/null || true)"
 case "$BRANCHE" in task/*) ;; *) exit 0 ;; esac
 ID="${BRANCHE#task/}"; ID="${ID%%/*}"
-CONTRAT="$ROOT/tasks/$ID/contract.json"
-[ -f "$CONTRAT" ] || exit 0
+CONTRAT="$(contrat_de "$ROOT" "$ID")" || exit 0
 JOURNAL="$(_charge journal)"
 [ -f "$JOURNAL" ] || exit 0
 # La vue « agents » de VS Code appelle aussi ce hook, et nomme SON journal (mesuré le

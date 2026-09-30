@@ -24,8 +24,10 @@ for branche in main master; do
   git rev-parse --verify -q "refs/heads/$branche" >/dev/null && { PRINCIPALE="$branche"; break; }
 done
 [ -n "$PRINCIPALE" ] || { echo "REFUS : branche principale introuvable (main, master)"; exit 2; }
-if ! git cat-file -e "$PRINCIPALE:tasks/$ID/contract.json" 2>/dev/null; then
-  echo "REFUS : pas de contrat approuvé pour $ID sur $PRINCIPALE (tasks/$ID/contract.json commité)."
+# La tâche peut être rangée dans un lot (tasks/<lot>/<ID>/, #35) : le juge sait la trouver.
+DOSSIER="$(python3 .ephor/judge.py dossier --task-id "$ID" --ref "$PRINCIPALE" 2>/dev/null)" || DOSSIER="tasks/$ID"
+if ! git cat-file -e "$PRINCIPALE:$DOSSIER/contract.json" 2>/dev/null; then
+  echo "REFUS : pas de contrat approuvé pour $ID sur $PRINCIPALE ($DOSSIER/contract.json commité)."
   echo "L'approbation d'abord : make task-new, make task-check, puis le commit sur $PRINCIPALE."
   exit 2
 fi
@@ -81,7 +83,7 @@ fi
 echo "Lancez votre agent DANS ce dossier (cd \"$DIR\", puis claude ou opencode) : une session"
 echo "par tâche. Après la fusion : git worktree remove \"$DIR\""
 # Le niveau et l'effort que le contrat approuvé demande : la ligne de lancement qui va avec.
-CONTRAT="$(git show "$PRINCIPALE:tasks/$ID/contract.json" 2>/dev/null)"
+CONTRAT="$(git show "$PRINCIPALE:$DOSSIER/contract.json" 2>/dev/null)"
 python3 - "$CONTRAT" <<'LANCEMENT' 2>/dev/null || true
 import json
 import os

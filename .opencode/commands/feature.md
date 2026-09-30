@@ -22,8 +22,9 @@ S'il n'existe pas de `tasks/<ID>/contract.json` sur la branche principale, dél�
 sous-agent `planner`, avec la sortie de `make map` dans la demande : il n'a pas de
 terminal pour la faire lui-même. Enregistre sa réponse entière, telle quelle, dans
 `.verify/plans/<ID>.md`, et donne à l'opérateur la commande qui l'approuve d'un seul geste :
-`make task-approve ID=<ID> FROM=.verify/plans/<ID>.md` (résumé, « oui » tapé, contrat et
-tests créés, vus échouer, commités sur `main`). Pour les retoucher d'abord :
+`make task-approve ID=<ID> FROM=.verify/plans/<ID>.md LOT=<lot>` (résumé, « oui » tapé,
+contrat et tests créés, vus échouer, commités sur `main`). Le lot est la fonctionnalité que
+le planner propose : la tâche se range dans `tasks/<lot>/`. Pour les retoucher d'abord :
 `make task-new ID=<ID> FROM=.verify/plans/<ID>.md`, puis `make task-check`. Puis
 **arrête-toi** : tu ne peux ni écrire dans `tasks/`, ni commencer sans ce commit.
 

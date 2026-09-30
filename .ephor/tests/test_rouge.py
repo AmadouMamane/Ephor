@@ -691,6 +691,87 @@ def test_un_controle_perime_dit_quel_commit_l_a_perime(
     assert "preuve aussi de T-001" in ligne
 
 
+def ranger(repo: Path, lot: str, *ids: str) -> int:
+    arguments = ["ranger", "--lot", lot, "--repo", str(repo)]
+    for tache in ids:
+        arguments += ["--task-id", tache]
+    return judge.main(arguments)
+
+
+def test_une_tache_rangee_dans_un_lot_se_juge_comme_avant(
+    repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Cent dossiers de tâches dans l'arborescence de l'éditeur : on ne s'y retrouvait plus
+    (30/09/2026, #35). Rangée dans `tasks/<lot>/`, une tâche garde son contrat et son contrôle
+    rouge : ils parlent de `tasks/<ID>/…`, et le juge le traduit vers le vrai dossier."""
+    git(repo, "switch", "-q", "main")
+    assert ranger(repo, "metriques", "T-001") == 0
+    assert (repo / "tasks" / "metriques" / "T-001" / "contract.json").is_file()
+    assert not (repo / "tasks" / "T-001").exists()
+    assert "rangées dans tasks/metriques/" in git(repo, "log", "-1", "--format=%s")
+    assert judge.main(["perimes", "--repo", str(repo)]) == 0, "la trace rouge reste valable"
+    assert "à jour : 1 tâche(s)" in capsys.readouterr().out
+    git(repo, "switch", "-q", "task/T-001")
+    git(repo, "rebase", "-q", "main")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    code, report = run_judge(repo)
+    assert code == 0, report
+    # Et la preuve, dans son nouveau dossier, reste hors de portée de l'agent.
+    preuve = repo / "tasks" / "metriques" / "T-001" / "check_c2.py"
+    preuve.write_text("print('plus rien')\n")
+    git(repo, "commit", "-qam", "preuve affaiblie")
+    code, report = run_judge(repo)
+    assert code == 2, report
+
+
+def test_une_tache_se_cree_dans_son_lot_et_son_identifiant_reste_unique(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    git(repo, "switch", "-q", "main")
+    nouveau = ["new", "--repo", str(repo), "--lot", "metriques"]
+    assert judge.main([*nouveau, "--task-id", "T-002"]) == 0
+    dossier = repo / "tasks" / "metriques" / "T-002"
+    assert (dossier / "contract.json").is_file() and (dossier / "test_t_002.py").is_file()
+    capsys.readouterr()
+    assert judge.main([*nouveau, "--task-id", "T-001"]) == 2, "T-001 existe hors du lot"
+    assert "tasks/T-001 existe déjà" in capsys.readouterr().out
+    assert judge.main(["new", "--repo", str(repo), "--task-id", "T-002"]) == 2, "et dans un lot"
+    assert judge.main([*nouveau[:-1], "Paiement", "--task-id", "T-003"]) == 2, "en minuscules"
+
+
+def test_make_taches_dit_ou_en_est_chaque_tache(
+    repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Un tableau calculé à partir de git et du journal du juge, jamais tenu à la main."""
+    tache_qui_partage(repo, partage=False)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "T-002 approuvé")
+    trace_rouge(repo, "T-002")
+    assert ranger(repo, "metriques", "T-002") == 0
+
+    def tableau(*options: str) -> str:
+        capsys.readouterr()
+        assert judge.main(["taches", "--repo", str(repo), *options]) == 0
+        return capsys.readouterr().out
+
+    def etat(sortie: str, tache: str) -> str:
+        return next(ligne for ligne in sortie.splitlines() if f" {tache} " in ligne)
+
+    sortie = tableau()
+    assert "en cours" in etat(sortie, "T-001"), "sa branche existe, pas encore jugée"
+    assert "approuvée" in etat(sortie, "T-002") and "metriques" in etat(sortie, "T-002")
+    git(repo, "switch", "-q", "task/T-001")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    git(repo, "commit", "-qam", "correctif")
+    assert run_judge(repo)[0] == 0
+    assert "vérifiée" in etat(tableau(), "T-001")
+    git(repo, "switch", "-q", "main")
+    git(repo, "merge", "-q", "--no-ff", "-m", "Merge branch 'task/T-001' into 'main'", "task/T-001")
+    sortie = tableau()
+    assert " T-001 " not in sortie and "1 fusionnée(s)" in sortie, "cachée par défaut"
+    assert "fusionnée" in etat(tableau("--tout"), "T-001")
+
+
 def test_une_approbation_pas_encore_sur_le_serveur_est_signalee(
     repo: Path, run_judge: Runner
 ) -> None:
