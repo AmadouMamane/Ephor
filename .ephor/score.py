@@ -14,7 +14,6 @@ Bibliothèque standard uniquement, et syntaxe Python 3.9 : ce script se lance av
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Any
 
@@ -34,22 +33,10 @@ ASIDE = {"rejected": "refusé(s)", "no_change": "sans changement", "stale": "pé
 
 
 def read_journal(repo: Path, task: str | None = None) -> list[dict[str, Any]]:
-    path = repo / ".verify" / "journal.jsonl"
-    entries: list[dict[str, Any]] = []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return entries
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue  # une ligne abîmée ne doit pas masquer les autres
-        if isinstance(entry, dict) and (task is None or entry.get("task_id") == task):
-            entries.append(entry)
-    return entries
+    """Les jugements du dépôt, tous ses dossiers de travail compris : une tâche se juge dans
+    le sien (#32), et le dossier principal ne voyait aucun de ses verdicts. Une ligne abîmée
+    ne masque pas les autres."""
+    return usage.journal_des_jugements(repo, task)
 
 
 def tache(entry: dict[str, Any]) -> str:

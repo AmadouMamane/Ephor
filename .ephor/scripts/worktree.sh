@@ -12,7 +12,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.." || { echo "impossible d'atteindre la racine du dépôt" >&2; exit 1; }
 # Geste de l'opérateur : refusé quand un agent le lance, détours compris (.ephor/operateur.py).
-python3 ".ephor/operateur.py" "make task-worktree" || exit 2
+python3 -B ".ephor/operateur.py" "make task-worktree" || exit 2
 ID="${1:-}"
 DIR="${2:-}"
 if ! printf '%s' "$ID" | grep -Eq '^[A-Z][A-Z0-9-]{2,50}$'; then
@@ -25,7 +25,7 @@ for branche in main master; do
 done
 [ -n "$PRINCIPALE" ] || { echo "REFUS : branche principale introuvable (main, master)"; exit 2; }
 # La tâche peut être rangée dans un lot (tasks/<lot>/<ID>/, #35) : le juge sait la trouver.
-DOSSIER="$(python3 .ephor/judge.py dossier --task-id "$ID" --ref "$PRINCIPALE" 2>/dev/null)" || DOSSIER="tasks/$ID"
+DOSSIER="$(python3 -B .ephor/judge.py dossier --task-id "$ID" --ref "$PRINCIPALE" 2>/dev/null)" || DOSSIER="tasks/$ID"
 if ! git cat-file -e "$PRINCIPALE:$DOSSIER/contract.json" 2>/dev/null; then
   echo "REFUS : pas de contrat approuvé pour $ID sur $PRINCIPALE ($DOSSIER/contract.json commité)."
   echo "L'approbation d'abord : make task-new, make task-check, puis le commit sur $PRINCIPALE."
@@ -97,25 +97,34 @@ except ValueError:
 dossier_tache, tache = sys.argv[2], sys.argv[3]
 aller = f'cd "{dossier_tache}" && '
 niveau, effort = contrat.get("niveau"), contrat.get("effort")
-if niveau not in ("rapide", "standard", "fort"):
-    print(f'  Claude Code : {aller}claude "/feature {tache}"')
-    print(f"  opencode    : {aller}opencode, puis /feature {tache}")
-    sys.exit(0)
-alias = {"rapide": "haiku", "standard": "sonnet", "fort": "opus"}[niveau]
-print(f"Le contrat demande le niveau {niveau}" + (f", effort {effort}" if effort else "") + " :")
-reglage = f" --model {alias}" + (f" --effort {effort}" if effort else "")
+niveau = niveau if niveau in ("rapide", "standard", "fort") else None
+effort = effort if effort in ("low", "medium", "high", "xhigh", "max") else None
+demande = [f"le niveau {niveau}"] if niveau else []
+demande += [f"l'effort {effort}"] if effort else []
+if demande:
+    print(f"Le contrat demande {' et '.join(demande)} :")
+alias = {"rapide": "haiku", "standard": "sonnet", "fort": "opus"}.get(niveau or "")
+reglage = (f" --model {alias}" if alias else "") + (f" --effort {effort}" if effort else "")
 print(f'  Claude Code : {aller}claude{reglage} "/feature {tache}"')
-dossier = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "opencode"
-try:
-    agents = json.loads((dossier / "opencode.json").read_text(encoding="utf-8")).get("agent", {})
-except (OSError, ValueError):
-    agents = {}
-role = {"rapide": "scout", "standard": "reviewer", "fort": "planner"}[niveau]
-modele = (agents.get(role) or {}).get("model")
-if modele:
-    variante = f" --variant {effort}" if effort else ""
-    print(f"  opencode    : {aller}opencode --model {modele}{variante}, puis /feature {tache}")
-else:
+# L'écran d'opencode n'a pas d'option d'effort : `--variant` n'existe que pour `opencode run`,
+# et l'écran la refuse (il affiche son aide et ne démarre pas, opencode 1.18.33). L'effort s'y
+# choisit dans la session, par /variants (ou ctrl+t).
+modele = None
+if niveau:
+    dossier = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "opencode"
+    try:
+        lu = json.loads((dossier / "opencode.json").read_text(encoding="utf-8"))
+        agents = lu.get("agent", {}) if isinstance(lu, dict) else {}
+    except (OSError, ValueError):
+        agents = {}
+    role = {"rapide": "scout", "standard": "reviewer", "fort": "planner"}[niveau]
+    modele = (agents.get(role) or {}).get("model")
+if niveau and not modele:
     print("  opencode    : réglez d'abord les modèles du poste (make opencode-modeles)")
-print("  Copilot     : ouvrez ce dossier, choisissez ce niveau de modèle dans le sélecteur")
+else:
+    ouvrir = f"opencode --model {modele}" if modele else "opencode"
+    choix = f", puis /variants : {effort}" if effort else ""
+    print(f"  opencode    : {aller}{ouvrir}{choix}, puis /feature {tache}")
+if niveau:
+    print("  Copilot     : ouvrez ce dossier, choisissez ce niveau de modèle dans le sélecteur")
 LANCEMENT

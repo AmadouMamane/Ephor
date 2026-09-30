@@ -539,6 +539,58 @@ def test_progres_md_est_demande_apres_plusieurs_tours_de_travail(tmp_path: Path)
         assert fin(sous_agent=True) == "", "un sous-agent ne tient pas PROGRESS.md"
 
 
+def test_le_rappel_de_progres_ne_relit_pas_les_gros_fichiers_et_purge_ses_etats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """À chaque fin de tour, le rappel relisait jusqu'à 2 000 fichiers nouveaux, un mégaoctet
+    chacun : un dossier de données pas encore ignoré se relisait en entier, à chaque tour. Au-delà
+    de quelques centaines de kilooctets, taille et date suffisent. Et l'état de chaque session,
+    rangé dans .git/, n'était jamais effacé."""
+    import progres
+
+    repo = tmp_path / "repo"
+    (repo / "donnees").mkdir(parents=True)
+    (repo / "PROGRESS.md").write_text("# PROGRESS\n")
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "user.email", "t@example.invalid")
+    git(repo, "config", "user.name", "t")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base")
+    for numero in range(30):
+        (repo / "donnees" / f"lot{numero}.bin").write_bytes(b"x" * 600_000)
+    (repo / "petit.py").write_text("A = 1\n")
+    ouverts: list[str] = []
+    vrai = Path.open
+
+    def ouvre(self: Path, *args: Any, **kwargs: Any) -> Any:
+        ouverts.append(self.name)
+        return vrai(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", ouvre)
+    avant = progres.travail_du_depot(repo)
+    assert not [nom for nom in ouverts if nom.startswith("lot")], "rien de lu des gros fichiers"
+    assert "petit.py" in ouverts, "un petit fichier compte toujours par son contenu"
+    (repo / "donnees" / "lot3.bin").write_bytes(b"y" * 600_001)
+    assert progres.travail_du_depot(repo) != avant, "réécrit, il compte quand même"
+    monkeypatch.undo()
+
+    ancien = repo / ".git" / "ephor-progres-session-finie"
+    ancien.write_text("{}")
+    il_y_a_40_jours = time.time() - 40 * 86400
+    os.utime(ancien, (il_y_a_40_jours, il_y_a_40_jours))
+    subprocess.run(
+        [str(HOOKS / "progres.sh")],
+        input=json.dumps({"session_id": "vivante"}),
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(repo)},
+        timeout=60,
+        check=True,
+    )
+    assert not ancien.exists(), "une session finie depuis un mois : son état part"
+    assert (repo / ".git" / "ephor-progres-vivante").is_file()
+
+
 def test_steer_injects_only_real_content(tmp_path: Path) -> None:
     template = (ROOT / "STEER.md").read_text()
     (tmp_path / "STEER.md").write_text(template)

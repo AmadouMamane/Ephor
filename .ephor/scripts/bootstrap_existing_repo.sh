@@ -194,6 +194,16 @@ echo "[1/6] le moteur : .ephor/ (juge, garde-fous, scripts, livraison, greffon, 
 # fichiers du greffon que les adaptateurs DÉRIVENT des réglages de ce dépôt (étape 6) —
 # copiés ici, ils auraient « différé » au passage suivant, et fabriqué un .ephor-new à
 # chaque relance.
+# Sauf pour un projet né de l'archive d'Ephor (la recette « projet neuf » du README) : il a
+# aussi les tests d'Ephor, sa démonstration et ses scripts d'atelier, et sa CI lance ces tests.
+# Laissés à l'ancienne version, ils échouaient contre le nouveau moteur (mesuré le 30/09/2026 :
+# un projet 1.4.0 mis à jour, sa CI rouge), et le bilan les disait « à retirer ». Ceux-là
+# suivent donc la version quand le projet les a déjà (les tests : dès qu'il en suit un) ; un
+# projet installé par ce script ne les reçoit jamais.
+MODELE=0
+if [ "$MAJ" = "1" ] && [ -n "$(git ls-files -- .ephor/tests 2>/dev/null | head -n 1)" ]; then
+  MODELE=1
+fi
 moteur() {
   if [ -n "$(git -C "$SRC" ls-files .ephor/judge.py 2>/dev/null)" ]; then
     git -C "$SRC" ls-files .ephor
@@ -203,9 +213,10 @@ moteur() {
       -o -type f ! -name '*.pyc' ! -name .DS_Store ! -name '*.ephor-new' -print)
   fi | LC_ALL=C sort | while IFS= read -r f; do
     case "$f" in
-      .ephor/projet/*|.ephor/tests/*) continue ;;
-      .ephor/scripts/bootstrap_existing_repo.sh|.ephor/scripts/demo_judge.sh) continue ;;
-      .ephor/scripts/empreintes.py) continue ;;
+      .ephor/projet/*) continue ;;
+      .ephor/tests/*) [ "$MODELE" = "1" ] || continue ;;
+      .ephor/scripts/bootstrap_existing_repo.sh|.ephor/scripts/demo_judge.sh|.ephor/scripts/empreintes.py)
+        { [ "$MAJ" = "1" ] && [ -n "$(git ls-files -- "$f" 2>/dev/null)" ]; } || continue ;;
       .ephor/greffon-copilot/hooks/hooks.json) continue ;;
       .ephor/greffon-copilot/.claude-plugin/plugin.json) continue ;;
     esac
@@ -221,7 +232,8 @@ OBSOLETES=""
 if [ "$MAJ" = "1" ]; then
   while IFS= read -r f; do
     case "$f" in
-      ""|.ephor/projet/*|.ephor/tests/*) continue ;;
+      ""|.ephor/projet/*) continue ;;
+      .ephor/tests/*) [ "$MODELE" = "1" ] || continue ;;
       .ephor/greffon-copilot/hooks/hooks.json|.ephor/greffon-copilot/.claude-plugin/plugin.json) continue ;;
     esac
     printf '%s\n' "$MOTEUR" | grep -qxF -- "$f" || OBSOLETES="$OBSOLETES $f"

@@ -31,8 +31,9 @@ ignore = ["S101"]  # assert autorisé dans les tests
 "operateur.py" = ["T20"]
 # Le rappel de PROGRESS.md lit git (commandes fixes) et répond sur la console au hook.
 "progres.py" = ["S603", "S607", "T20"]
-# Le compteur de tokens écrit son résultat sur la console : c'est son métier.
-"usage.py" = ["T20"]
+# Le compteur de tokens écrit son résultat sur la console, et demande à git les dossiers de
+# travail du dépôt (commande fixe) : c'est son métier.
+"usage.py" = ["S603", "S607", "T20"]
 # L'aspirateur de docs télécharge (schéma vérifié avant) et rend compte sur la console.
 "fetch_docs.py" = ["S310", "T20"]
 # Le tableau de bord écrit son résultat sur la console : c'est son métier.

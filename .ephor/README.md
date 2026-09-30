@@ -104,7 +104,9 @@ bibliothèque standard, compatible avec le Python 3.9 livré par Apple.
    tokens, et le commit de chaque dépôt de référence — de quoi rejouer le verdict plus tard.
 8. **Trace.** Chaque jugement ajoute une ligne à `.verify/journal.jsonl`, qui survit à
    `make clean` : c'est la matière de `make score` et du rituel de `.ephor/docs/09`. Le rapport
-   détaillé, lui, est écrasé à chaque exécution.
+   détaillé, lui, est écrasé à chaque exécution. Une tâche se juge dans son propre dossier :
+   `make score`, `make taches` et `make usage` lisent le journal de chaque dossier du dépôt,
+   et `make task-clore` garde celui d'une tâche avant de retirer son dossier.
 
 ### Les verdicts
 

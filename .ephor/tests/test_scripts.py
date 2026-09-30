@@ -1065,9 +1065,13 @@ def test_la_tache_s_ouvre_avec_la_ligne_de_lancement_de_son_niveau(tmp_path: Pat
         check=False,
     )
     assert sortie.returncode == 0, sortie.stdout + sortie.stderr
-    assert "Le contrat demande le niveau fort, effort max" in sortie.stdout
-    assert "claude --model opus --effort max" in sortie.stdout
-    assert "opencode --model passerelle/fort" in sortie.stdout
+    assert "Le contrat demande le niveau fort et l'effort max" in sortie.stdout
+    assert 'claude --model opus --effort max "/feature FEAT-001"' in sortie.stdout
+    # L'écran d'opencode n'a pas `--variant` (seul `opencode run` l'a) : il affiche son aide et
+    # ne démarre pas (opencode 1.18.33, mesuré le 30/09/2026). L'effort se choisit dans l'écran.
+    ligne = next(ligne for ligne in sortie.stdout.splitlines() if "opencode    :" in ligne)
+    assert "opencode --model passerelle/fort, puis /variants : max" in ligne
+    assert "--variant" not in ligne
 
 
 def test_le_bac_a_sable_d_opencode_suit_la_liste_des_zones(tmp_path: Path) -> None:

@@ -77,9 +77,53 @@ Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
   d'outils, fichiers lus. Et le compte des sous-agents de Claude Code est corrigé : chaque bloc
   d'une réponse porte le compte de sortie du moment où il a été écrit, seul le dernier est
   juste, et Ephor gardait le premier ; les agents d'un « Workflow » n'étaient pas lus
-  (anthropics/claude-code#93620). Sur ce poste (Claude Code 2.1.278 à 2.1.281), même le dernier
-  bloc reste à quelques tokens : `make usage` le dit (« sortie non écrite ») au lieu d'afficher
+  (anthropics/claude-code#93620). Avec Claude Code 2.1.278 à 2.1.281, même le dernier bloc
+  reste à quelques tokens : `make usage` le dit (« sortie non écrite ») au lieu d'afficher
   un coût faux. L'effort du planner se décidera sur ces chiffres, sur de vraies tâches.
+- **Cent tâches, lues en moins d'une seconde.** `make taches`, `make task-check` sans `ID` et
+  la recherche des tests partagés posaient une question à git par jeton de commande et par
+  tâche. Mesuré avec 100 tâches : `make taches` 38 s, `make task-check` sans `ID` 35 s, et
+  30 s de plus à chaque `make task-check ID=…` (la même recherche tourne deux fois dans
+  `make task-approve`) ; `/feature` affiche le tableau à chaque appel. Un seul `git cat-file`
+  reste maintenant ouvert et répond à toutes les questions, et le contenu de `tasks/` se lit
+  une fois par commande. Mêmes 100 tâches : 0,7 s, 0,5 s, et le contrôle rouge d'une tâche
+  revient à la durée de ses critères. `make task-check` sans `ID` ne liste plus les tâches
+  fusionnées.
+- **Le verdict d'une tâche se voit du dossier principal, et reste après elle.** Une tâche se
+  juge dans son dossier, et son verdict y restait. Du dossier principal, `make taches` la
+  disait « en cours » une fois vérifiée, `make score` ne voyait aucun jugement, `make usage`
+  aucune mesure ; fusionnée en avance rapide, elle n'était pas « fusionnée », et
+  `make task-clore` refusait de la fermer ; et quand il la fermait, verdicts et mesure de
+  tokens partaient avec le dossier. Ces commandes lisent maintenant tous les dossiers du
+  dépôt, et `make task-clore` garde dans le dossier principal les jugements et la mesure
+  d'une tâche avant de retirer son dossier.
+- **La ligne qui lance opencode dans le dossier d'une tâche démarre.** Elle donnait
+  `opencode --model … --variant …` : l'écran d'opencode n'a pas `--variant` (seul
+  `opencode run` l'a) ; il affichait son aide et ne démarrait pas (opencode 1.18.33,
+  vérifié). L'effort se choisit dans l'écran : la ligne dit `/variants`. Un contrat qui ne
+  donne que l'effort a aussi sa ligne de lancement.
+- **Un projet né de l'archive d'Ephor garde des tests d'Ephor à jour.** La recette « projet
+  neuf » copie Ephor entier, ses tests compris, et la CI du projet les lance. La mise à jour
+  ne les touchait pas, et disait de retirer la démonstration et le script d'installation,
+  toujours livrés : un projet 1.4.0 mis à jour gardait ses anciens tests contre le nouveau
+  moteur, et sa CI passait au rouge (mesuré). Ils suivent maintenant la version, dans un
+  projet qui les a déjà ; un projet équipé par le script d'installation ne les reçoit
+  toujours pas.
+- **Et aussi.** Le résumé d'approbation et l'alerte de test partagé nomment le vrai dossier
+  d'une tâche rangée ; ce dossier se traduit aussi dans `--rootdir=tasks/<ID>` ou
+  `cd tasks/<ID> && …`, et jamais dans un autre nom qui le contient. `/feature` montre les
+  tâches même sans la cible `make taches` (son repli ne servait jamais). Le rappel de
+  `PROGRESS.md` ne relit plus en entier les gros fichiers nouveaux à chaque fin de tour, et
+  efface l'état des sessions finies depuis un mois. L'évaluateur et `/feature` savent qu'une
+  tâche peut être rangée dans `tasks/<lot>/<ID>/`.
+
+Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
+Les lignes `model:` et `effort:` des sous-agents que le projet a changées sont gardées, et
+passées à opencode ; si vous les changez ensuite, `make adapters`. Relancez Claude Code et
+opencode. Le greffon de Copilot ne change pas : rien à réinstaller. Une tâche ouverte dans
+son dossier se ferme par `make task-clore ID=<ID>` plutôt que par `git worktree remove`,
+pour garder son verdict. Le `AGENTS.md` du projet n'est pas touché : sa règle de revue
+(« l'évaluateur relit chaque tâche ») peut être reprise de celui d'Ephor.
 
 ## 1.4.0 — 30 septembre 2026
 

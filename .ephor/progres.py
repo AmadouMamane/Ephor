@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -32,9 +33,14 @@ def git(racine: Path, *args: str) -> bytes:
 
 
 # Un fichier nouveau, pas encore suivi par git, compte par son contenu : sa liste ne change pas
-# quand il est réécrit (mesuré en session réelle : A = 1 devenu A = 2, et rien de vu).
+# quand il est réécrit (mesuré en session réelle : A = 1 devenu A = 2, et rien de vu). Mais à
+# chaque fin de tour : au-delà de quelques mégaoctets, sa taille et sa date suffisent, sans
+# quoi un dossier de données pas encore ignoré se relisait en entier, à chaque tour.
 NOUVEAUX_LUS = 2000
-TAILLE_LUE = 1_000_000
+TAILLE_LUE = 256 * 1024
+TOTAL_LU = 8 * 1024 * 1024
+# L'état d'une série vit dans .git/, un fichier par session : au-delà d'un mois, il part.
+GARDE_SECONDES = 30 * 86400
 
 
 def travail_du_depot(racine: Path) -> str:
@@ -43,12 +49,26 @@ def travail_du_depot(racine: Path) -> str:
     empreinte.update(git(racine, "rev-parse", "HEAD"))
     empreinte.update(git(racine, "diff", "HEAD", "--no-ext-diff", "--no-textconv"))
     nouveaux = git(racine, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+    reste = TOTAL_LU
     for nom in [n for n in nouveaux if n][:NOUVEAUX_LUS]:
         empreinte.update(nom + b"\0")
         chemin = racine / nom.decode("utf-8", "surrogateescape")
-        with suppress(OSError), chemin.open("rb") as fichier:
-            empreinte.update(fichier.read(TAILLE_LUE))
+        with suppress(OSError):
+            etat = chemin.stat()
+            if etat.st_size <= min(TAILLE_LUE, reste):
+                reste -= etat.st_size
+                empreinte.update(chemin.read_bytes())
+            else:
+                empreinte.update(f"{etat.st_size}:{etat.st_mtime_ns}".encode())
     return empreinte.hexdigest()
+
+
+def purge(gitdir: Path, maintenant: float) -> None:
+    """Les états de séries des sessions finies depuis plus d'un mois."""
+    for vieux in gitdir.glob("ephor-progres-*"):
+        with suppress(OSError):
+            if maintenant - vieux.stat().st_mtime > GARDE_SECONDES:
+                vieux.unlink()
 
 
 def seuil() -> int:
@@ -85,6 +105,7 @@ def rappel(racine: Path, gitdir: Path, charge: dict[str, Any]) -> str:
         )
     with suppress(OSError):
         fichier.write_text(json.dumps(etat), encoding="utf-8")
+    purge(gitdir, time.time())
     return message
 
 

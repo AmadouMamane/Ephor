@@ -13,7 +13,7 @@ description: "Boucle complète d'une fonctionnalité, du contrat au juge et à l
 
 Tâches :
 
-!`make -s taches 2>/dev/null | head -40 || ls tasks 2>/dev/null | grep -v README || echo "aucune tâche"`
+!`{ make -s taches 2>/dev/null || ls tasks 2>/dev/null | grep -v README || echo "aucune tâche"; } | head -40`
 
 ## En automatique, par défaut
 
@@ -30,8 +30,9 @@ réponde « ok ». Sans cette option, n'attends aucun feu vert entre deux étape
 ## Déroulé imposé
 
 **1. Un contrat approuvé, avant tout code.**
-S'il n'existe pas de `tasks/<ID>/contract.json` sur la branche principale, délègue au
-sous-agent `planner`, avec la sortie de `make map` dans la demande : il n'a pas de
+S'il n'existe pas de contrat approuvé pour `<ID>` sur la branche principale (dans
+`tasks/<ID>/`, ou `tasks/<lot>/<ID>/` pour une tâche rangée : le tableau ci-dessus), délègue
+au sous-agent `planner`, avec la sortie de `make map` dans la demande : il n'a pas de
 terminal pour la faire lui-même. Enregistre sa réponse entière, telle quelle, dans
 `.verify/plans/<ID>.md`, et donne à l'opérateur la commande qui l'approuve d'un seul geste :
 `make task-approve ID=<ID> FROM=.verify/plans/<ID>.md LOT=<lot>` (résumé, « oui » tapé,

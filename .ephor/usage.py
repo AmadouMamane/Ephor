@@ -33,6 +33,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 from collections import Counter
 from contextlib import suppress
@@ -614,6 +615,154 @@ def facture_copilot(mesure: dict[str, Any]) -> str:
     return f"{aiu} AIU · {premium} requête{'s' if premium > 1 else ''} premium"
 
 
+# ------------------------------------------------ le dépôt entier : tous ses dossiers
+#
+# Une tâche s'ouvre dans son propre dossier (un worktree git, #32) : l'agent y travaille, le
+# juge y rend son verdict, le hook de budget y dépose la mesure. Lus dans le seul dossier
+# principal, verdicts et mesures n'existaient pas : `make score` disait « aucun jugement »,
+# `make taches` laissait « en cours » une tâche vérifiée, et `make task-clore` effaçait le tout
+# avec le dossier (mesuré le 30/09/2026). On lit donc tous les dossiers du dépôt, et
+# `make task-clore` rapatrie ce qu'un dossier contient avant de le retirer.
+
+
+def dossiers_du_depot(repo: Path) -> list[Path]:
+    """Ce dossier, puis les autres dossiers de travail du même dépôt (`git worktree list`)."""
+    dossiers = [repo]
+    try:
+        sortie = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.fsmonitor=false",
+                "-C",
+                str(repo),
+                "worktree",
+                "list",
+                "--porcelain",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return dossiers
+    vus = {repo.resolve()}
+    for ligne in sortie.splitlines():
+        if not ligne.startswith("worktree "):
+            continue
+        dossier = Path(ligne[len("worktree ") :])
+        with suppress(OSError):
+            if dossier.is_dir() and dossier.resolve() not in vus:
+                vus.add(dossier.resolve())
+                dossiers.append(dossier)
+    return dossiers
+
+
+def lire_journal(chemin: Path) -> list[dict[str, Any]]:
+    """Les jugements d'un journal, une ligne chacun ; une ligne abîmée ne masque pas les autres."""
+    try:
+        lignes = chemin.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    entrees: list[dict[str, Any]] = []
+    for ligne in lignes:
+        if not ligne.strip():
+            continue
+        try:
+            entree = json.loads(ligne)
+        except ValueError:
+            continue
+        if isinstance(entree, dict):
+            entrees.append(entree)
+    return entrees
+
+
+def journal_des_jugements(repo: Path, tache: str | None = None) -> list[dict[str, Any]]:
+    """Les jugements du dépôt, tous dossiers confondus, dans l'ordre où ils ont été rendus. Un
+    même jugement (son `run_id`), rapatrié d'un dossier de tâche, ne compte qu'une fois."""
+    journaux = [
+        entrees
+        for dossier in dossiers_du_depot(repo)
+        if (entrees := lire_journal(dossier / ".verify" / "journal.jsonl"))
+    ]
+    if len(journaux) == 1:
+        tout = journaux[0]
+    else:
+        vus: set[str] = set()
+        tout = []
+        for entrees in journaux:
+            for entree in entrees:
+                course = entree.get("run_id")
+                if isinstance(course, str) and course:
+                    if course in vus:
+                        continue
+                    vus.add(course)
+                tout.append(entree)
+        tout.sort(key=lambda entree: str(entree.get("finished_at") or ""))
+    return [entree for entree in tout if tache is None or entree.get("task_id") == tache]
+
+
+def fusionne_mesures(mesures: list[dict[str, Any]]) -> dict[str, Any]:
+    """Une tâche mesurée dans deux dossiers : ses journaux de session, réunis. Un même journal
+    garde la mesure qui l'a lu le plus loin."""
+    if len(mesures) == 1:
+        return mesures[0]
+    journaux: dict[str, dict[str, Any]] = {}
+    for mesure in mesures:
+        for chemin, sous in anciens_journaux(mesure).items():
+            if chemin not in journaux or nombre(sous.get("octets")) > nombre(
+                journaux[chemin].get("octets")
+            ):
+                journaux[chemin] = sous
+    return somme(journaux)
+
+
+def rapatrier(source: Path, cible: Path) -> list[str]:
+    """Garde dans `cible` (le dossier principal) les jugements et les mesures d'un dossier de
+    tâche qu'on va retirer (`make task-clore`). Rend ce qui a été gardé."""
+    faits: list[str] = []
+    journal = cible / ".verify" / "journal.jsonl"
+    deja = {entree.get("run_id") for entree in lire_journal(journal) if entree.get("run_id")}
+    nouvelles: list[str] = []
+    try:
+        lignes = (source / ".verify" / "journal.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lignes = []
+    for ligne in lignes:
+        try:
+            entree = json.loads(ligne)
+        except ValueError:
+            continue
+        if isinstance(entree, dict) and (not entree.get("run_id") or entree["run_id"] not in deja):
+            nouvelles.append(ligne.strip())
+    if nouvelles:
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        with journal.open("a", encoding="utf-8") as flux:
+            flux.write("".join(ligne + "\n" for ligne in nouvelles))
+        faits.append(f"{len(nouvelles)} jugement(s)")
+    dossier = source / ".verify" / "usage"
+    for fichier in sorted(dossier.glob("*.json")) if dossier.is_dir() else []:
+        try:
+            mesure = json.loads(fichier.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(mesure, dict):
+            continue
+        garde = cible / ".verify" / "usage" / fichier.name
+        mesures = [mesure]
+        with suppress(OSError, ValueError):
+            existante = json.loads(garde.read_text(encoding="utf-8"))
+            if isinstance(existante, dict):
+                mesures.insert(0, existante)
+        garde.parent.mkdir(parents=True, exist_ok=True)
+        garde.write_text(
+            json.dumps(fusionne_mesures(mesures), ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        faits.append(f"la mesure de tokens de {fichier.stem}")
+    return faits
+
+
 def lire_et_rafraichir(fichier: Path) -> dict[str, Any] | None:
     """Une mesure déposée par le hook, remise à jour si des journaux Copilot ont avancé."""
     try:
@@ -639,19 +788,24 @@ def rapport(repo: Path) -> str:
         "tokens facturables = entrée + écriture de cache + sortie",
         "(les lectures de cache, environ dix fois moins chères, sont comptées à part)",
     ]
-    dossier = repo / ".verify" / "usage"
-    mesures = sorted(dossier.glob("*.json")) if dossier.is_dir() else []
+    # Chaque dossier du dépôt : une tâche se mesure dans le sien (#32).
+    dossiers = dossiers_du_depot(repo)
+    fichiers: dict[str, list[Path]] = {}
+    for dossier in dossiers:
+        mesures_ici = dossier / ".verify" / "usage"
+        for fichier in sorted(mesures_ici.glob("*.json")) if mesures_ici.is_dir() else []:
+            fichiers.setdefault(fichier.stem, []).append(fichier)
+    mesures = sorted(fichiers)
     partiel = False
-    for fichier in mesures:
-        mesure = lire_et_rafraichir(fichier)
-        if mesure is None:
+    for tache in mesures:
+        lues = [m for m in (lire_et_rafraichir(f) for f in fichiers[tache]) if m is not None]
+        if not lues:
             continue
+        mesure = fusionne_mesures(lues)
         budget = ""
-        contrat = repo / "tasks" / fichier.stem / "contract.json"
+        contrat = repo / "tasks" / tache / "contract.json"
         if not contrat.exists():  # rangée par fonctionnalité : tasks/<lot>/<ID>/ (#35)
-            contrat = next(
-                iter(sorted((repo / "tasks").glob(f"*/{fichier.stem}/contract.json"))), contrat
-            )
+            contrat = next(iter(sorted((repo / "tasks").glob(f"*/{tache}/contract.json"))), contrat)
         if contrat.exists():
             try:
                 lu = json.loads(contrat.read_text(encoding="utf-8"))
@@ -668,7 +822,7 @@ def rapport(repo: Path) -> str:
         copilot = f" · {facture_copilot(mesure)}" if "nano_aiu" in mesure else ""
         lignes.append(
             "  {:<14}{:<14}{:>12}{}{}".format(
-                fichier.stem,
+                tache,
                 str(mesure.get("source", "?")),
                 minimum + milliers(nombre(mesure.get("facturables"))),
                 budget,
@@ -677,7 +831,12 @@ def rapport(repo: Path) -> str:
         )
     if partiel:
         lignes.append("  ≥ : un minimum, Copilot ne donne les tokens qu'en fermant la session")
-    oc = opencode(base_opencode(), repo.resolve())
+    oc = vide("opencode")
+    for dossier in dossiers:
+        ici = opencode(base_opencode(), dossier.resolve())
+        for champ in (*CHAMPS, "requetes"):
+            oc[champ] += nombre(ici.get(champ))
+    totalise(oc)
     if oc["requetes"]:
         lignes.append(
             "  {:<14}{:<14}{:>12}  ({} sessions, tout le dépôt)".format(
@@ -686,7 +845,12 @@ def rapport(repo: Path) -> str:
         )
     if not mesures and not oc["requetes"]:
         lignes.append("  (rien de mesuré : pas de tâche en cours, ou pas de session enregistrée)")
-    profils = sous_agents_claude(repo) + sous_agents_opencode(base_opencode(), repo.resolve())
+    profils = [
+        profil
+        for dossier in dossiers
+        for profil in sous_agents_claude(dossier)
+        + sous_agents_opencode(base_opencode(), dossier.resolve())
+    ]
     if profils:
         lignes.append("")
         lignes.append("sous-agents récents : durée, modèle et effort, sortie, appels d'outils")
@@ -725,9 +889,19 @@ def main(argv: list[str] | None = None) -> int:
     oc.add_argument("--db", type=Path, default=None)
     rap = sous.add_parser("rapport", help="ce que les tâches ont coûté, toutes sources")
     rap.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
+    rapa = sous.add_parser(
+        "rapatrier", help="garde ici les jugements et mesures d'un dossier de tâche (task-clore)"
+    )
+    rapa.add_argument("source", type=Path)
+    rapa.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
     options = analyseur.parse_args(argv)
     if options.commande == "rapport":
         print(rapport(options.repo))
+        return 0
+    if options.commande == "rapatrier":
+        faits = rapatrier(options.source, options.repo)
+        if faits:
+            print(f"gardé(s) dans {options.repo} : {', '.join(faits)}")
         return 0
     if options.commande == "rafraichir":
         lire_et_rafraichir(options.etat)

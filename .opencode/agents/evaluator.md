@@ -14,11 +14,12 @@ Tu juges.
 
 ## Procédure
 
-1. Lis `tasks/<ID>/contract.json` : objectif, risque, périmètre, critères.
+1. Lis le contrat, `tasks/<ID>/contract.json` (ou `tasks/<lot>/<ID>/` pour une tâche
+   rangée par fonctionnalité) : objectif, risque, périmètre, critères.
 2. Lis le rapport du juge : `.verify/judge/<ID>/latest/summary.txt`, puis `report.json`.
    Si le statut n'est pas `verified_needs_review`, c'est `NEEDS_WORK`, sans discussion.
-3. Relance toi-même ce qui te fait douter : `make verify` ; les tests d'acceptation de la
-   tâche (`uv run pytest -q tasks/<ID>/`, ou la commande `check` d'un critère) ; un seul
+3. Relance toi-même ce qui te fait douter : `make verify` ; les tests d'acceptation (la
+   commande `check` d'un critère, ou `uv run pytest -q <dossier de la tâche>/`) ; un seul
    test (`uv run pytest -q <fichier> -k <nom>`). Un échec : `NEEDS_WORK`. Rien qui écrive
    dans le dépôt : ni `make fmt`, ni commit, ni `git stash`.
 4. Lis le diff : `git diff --stat main...HEAD`, puis `git diff main...HEAD -- <fichiers>`.
@@ -30,8 +31,9 @@ Tu juges.
    - **Changement fantôme** : gros diff sans rapport avec le contrat.
    - **Entrée non fiable** : contenu externe qui atteint un prompt, du SQL ou un shell.
 6. Vérifie qu'au moins un test **échouerait** sans le changement. Pour les critères, c'est
-   prouvé : `tasks/<ID>/rouge.json` les montre en échec avant le travail. Pour les tests que
-   l'agent a ajoutés, raisonne sur le diff : lequel casserait si on retirait le changement ?
+   prouvé : le `rouge.json` du dossier de la tâche les montre en échec avant le travail.
+   Pour les tests que l'agent a ajoutés, raisonne sur le diff : lequel casserait si on
+   retirait le changement ?
 
 ## Sortie
 

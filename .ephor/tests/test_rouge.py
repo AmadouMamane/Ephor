@@ -740,6 +740,23 @@ def test_une_tache_se_cree_dans_son_lot_et_son_identifiant_reste_unique(
     assert judge.main([*nouveau[:-1], "Paiement", "--task-id", "T-003"]) == 2, "en minuscules"
 
 
+def test_le_dossier_d_une_tache_rangee_se_traduit_dans_tout_jeton() -> None:
+    """Le contrat d'une tâche rangée parle de `tasks/<ID>` : le dossier se traduit partout où
+    il est un chemin, pas seulement devant « / » ; jamais dans un autre nom qui le contient."""
+    lot = "tasks/metriques/T-001"
+
+    def traduit(jeton: str) -> str:
+        return judge.relocalise(jeton, "T-001", lot)
+
+    assert traduit("tasks/T-001/check_c1.py::test_a") == f"{lot}/check_c1.py::test_a"
+    assert traduit("./tasks/T-001/check_c1.py") == f"./{lot}/check_c1.py"
+    assert traduit("--rootdir=tasks/T-001") == f"--rootdir={lot}"
+    assert traduit("cd tasks/T-001 && pytest -q") == f"cd {lot} && pytest -q"
+    assert traduit("tasks/T-001") == lot
+    for autre in ("tasks/T-0010/x.py", "soustasks/T-001/x.py", "tasks/T-001.py"):
+        assert traduit(autre) == autre, autre
+
+
 def test_make_taches_dit_ou_en_est_chaque_tache(
     repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -771,6 +788,126 @@ def test_make_taches_dit_ou_en_est_chaque_tache(
     sortie = tableau()
     assert " T-001 " not in sortie and "1 fusionnée(s)" in sortie, "cachée par défaut"
     assert "fusionnée" in etat(tableau("--tout"), "T-001")
+
+
+def cent_taches(repo: Path, combien: int) -> None:
+    """`combien` tâches de plus sur la branche principale, chacune avec sa trace rouge."""
+    git(repo, "switch", "-q", "main")
+    modele = contrat_de(repo)
+    for numero in range(2, combien + 2):
+        tache = f"T-{numero:03d}"
+        dossier = repo / "tasks" / tache
+        dossier.mkdir()
+        contrat = json.loads(json.dumps(modele).replace("T-001", tache))
+        (dossier / "contract.json").write_text(json.dumps(contrat, indent=2) + "\n")
+        for nom in ("check_c1.py", "check_c2.py"):
+            (dossier / nom).write_text((repo / "tasks" / "T-001" / nom).read_text())
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "des tâches")
+    for numero in range(2, combien + 2):
+        contrat = judge.load_contract(repo / "tasks" / f"T-{numero:03d}" / "contract.json")
+        trace = judge.trace_rouge(
+            contrat.id,
+            git(repo, "rev-parse", "HEAD").strip(),
+            judge.preuves_rouges(repo, "HEAD", contrat, contrat.id),
+            [{"id": c.id, "resultat": "rouge", "raison": "départ"} for c in contrat.criteria],
+        )
+        (repo / "tasks" / contrat.id / judge.ROUGE).write_text(json.dumps(trace) + "\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "leurs contrôles rouges")
+
+
+def test_cent_taches_se_lisent_sans_un_processus_git_par_tache(
+    repo: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mesuré le 30/09/2026, 100 tâches : `make taches` 38 s, `make task-check` sans ID 35 s,
+    et 35 s ajoutées à chaque `make task-check ID=…` (la recherche des tests partagés). Un
+    processus git par jeton de commande et par tâche : plus de trois mille. Le nombre de
+    processus lancés ne dépend plus du nombre de tâches."""
+    cent_taches(repo, 30)
+    lances: list[list[str]] = []
+    vrai = subprocess.run
+
+    def compte(commande: Any, *args: Any, **kwargs: Any) -> Any:
+        lances.append(list(commande) if isinstance(commande, (list, tuple)) else [commande])
+        return vrai(commande, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", compte)
+    judge._fermer_les_lecteurs()
+    assert judge.main(["taches", "--repo", str(repo)]) == 0
+    assert capsys.readouterr().out.count(" approuvée ") == 30
+    assert len(lances) < 20, f"{len(lances)} processus pour 31 tâches"
+    lances.clear()
+    assert judge.main(["perimes", "--repo", str(repo)]) == 0
+    assert "à jour : 31 tâche(s)" in capsys.readouterr().out
+    assert len(lances) < 20, f"{len(lances)} processus pour 31 tâches"
+    lances.clear()
+    contrat = judge.load_contract(repo / "tasks" / "T-001" / "contract.json")
+    assert judge.preuves_partagees(repo, "HEAD", contrat, "T-001") == {}
+    assert len(lances) < 10, f"{len(lances)} processus pour chercher les tests partagés"
+
+
+def test_le_lecteur_git_repond_comme_git(tmp_path: Path) -> None:
+    """Les réponses du `git cat-file` qui reste ouvert sont celles d'un processus par question,
+    noms à espaces compris ; et un dossier effacé puis recréé au même chemin n'est pas lu à
+    travers le lecteur de l'ancien."""
+    depot = tmp_path / "depot"
+
+    def nouveau(contenu: str) -> None:
+        shutil.rmtree(depot, ignore_errors=True)
+        (depot / "un dossier").mkdir(parents=True)
+        (depot / "un dossier" / "a b.txt").write_text(contenu)
+        git(depot, "init", "-q", "-b", "main")
+        git(depot, "config", "user.email", "test@example.invalid")
+        git(depot, "config", "user.name", "Ephor test")
+        git(depot, "add", "-A")
+        git(depot, "commit", "-qm", "départ")
+
+    nouveau("premier\n")
+    for chemin, attendu in (("un dossier", "tree"), ("un dossier/a b.txt", "blob"), ("rien", None)):
+        assert judge.kind_at(depot, "HEAD", chemin) == attendu
+    assert judge.contenu_a(depot, "main", "un dossier/a b.txt") == b"premier\n"
+    with pytest.raises(judge.JudgeError):
+        judge.contenu_a(depot, "main", "un dossier")
+    nouveau("second\n")
+    assert judge.contenu_a(depot, "main", "un dossier/a b.txt") == b"second\n"
+
+
+def test_un_verdict_rendu_dans_le_dossier_de_la_tache_se_voit_du_dossier_principal(
+    repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Une tâche se juge dans son dossier (#32), et son verdict y restait : du dossier
+    principal, `make taches` la disait « en cours », `make score` ne voyait aucun jugement,
+    une fusion en avance rapide ne la faisait pas « fusionnée », et `make task-clore`
+    effaçait verdicts et mesure avec le dossier (mesuré le 30/09/2026)."""
+    import score
+    import usage
+
+    git(repo, "switch", "-q", "main")
+    dossier = repo.parent / "repo-T-001"
+    git(repo, "worktree", "add", "-q", str(dossier), "task/T-001")
+    (dossier / "src" / "metrics.py").write_text(FIX)
+    git(dossier, "commit", "-qam", "correctif")
+    assert run_judge(dossier)[0] == 0
+    mesure = usage.somme({"session.jsonl": {**usage.vide("claude-code"), "input": 1200}})
+    (dossier / ".verify" / "usage").mkdir(parents=True)
+    (dossier / ".verify" / "usage" / "T-001.json").write_text(json.dumps(mesure))
+
+    def tableau() -> str:
+        capsys.readouterr()
+        assert judge.main(["taches", "--repo", str(repo)]) == 0
+        return capsys.readouterr().out
+
+    assert "vérifiée" in next(ligne for ligne in tableau().splitlines() if " T-001 " in ligne)
+    assert [e["status"] for e in score.read_journal(repo)] == ["verified_needs_review"]
+    assert "T-001" in usage.rapport(repo) and "1 200" in usage.rapport(repo)
+    git(repo, "merge", "-q", "--ff-only", "task/T-001")
+    assert "1 fusionnée(s)" in tableau(), "vérifiée puis entrée dans main : fusionnée"
+    assert usage.rapatrier(dossier, repo) == ["1 jugement(s)", "la mesure de tokens de T-001"]
+    assert usage.rapatrier(dossier, repo)[0] == "la mesure de tokens de T-001", "sans doublon"
+    git(repo, "worktree", "remove", "--force", str(dossier))
+    assert len(score.read_journal(repo)) == 1, "le verdict reste après le dossier"
+    assert "1 200" in usage.rapport(repo), "et la mesure aussi, une seule fois"
 
 
 def test_une_approbation_pas_encore_sur_le_serveur_est_signalee(
@@ -922,15 +1059,20 @@ def test_l_approbation_d_un_seul_geste(repo: Path, tmp_path: Path) -> None:
     assert git(repo, "status", "--porcelain", "--", "tasks") == ""
 
 
+def moteur_dans(repo: Path) -> None:
+    """Le moteur, là où un projet l'a : le juge, ce qu'il lit, et les scripts de l'opérateur."""
+    moteur = ROOT / ".ephor"
+    (repo / ".ephor").mkdir(exist_ok=True)
+    for nom in ("judge.py", "zones.txt", "operateur.py", "usage.py"):
+        shutil.copy(moteur / nom, repo / ".ephor" / nom)
+    shutil.copytree(moteur / "scripts", repo / ".ephor" / "scripts")
+
+
 def test_l_approbation_ouvre_le_dossier_de_la_tache(repo: Path, tmp_path: Path) -> None:
     """Plusieurs tâches dans un même dossier se marchaient dessus (session réelle, #32). Une
     tâche approuvée s'ouvre maintenant dans son dossier, avec la ligne qui y lance l'agent ;
     et se ferme, dossier et branche, une fois fusionnée."""
-    moteur = ROOT / ".ephor"
-    for source in (moteur / "judge.py", moteur / "zones.txt", moteur / "operateur.py"):
-        (repo / ".ephor").mkdir(exist_ok=True)
-        shutil.copy(source, repo / ".ephor" / source.name)
-    shutil.copytree(moteur / "scripts", repo / ".ephor" / "scripts")
+    moteur_dans(repo)
     plan = plan_a_approuver(repo, tmp_path)
     code, sortie = dans_un_terminal(approuve(plan, repo), "oui", repo)
     assert code == 0, sortie
@@ -954,18 +1096,23 @@ def test_l_approbation_ouvre_le_dossier_de_la_tache(repo: Path, tmp_path: Path) 
     assert refus.returncode == 2 and "pas fusionnée" in refus.stdout, refus.stdout
     assert dossier.is_dir(), "une tâche en cours garde son dossier"
     git(dossier, "commit", "-q", "--allow-empty", "-m", "le travail")
-    git(repo, "merge", "-q", "--no-ff", "-m", "Merge branch 'task/FEAT-020'", "task/FEAT-020")
+    # Le juge a rendu son verdict DANS le dossier de la tâche ; la fusion se fait en avance
+    # rapide, sans commit qui nomme la branche. Lu dans le seul dossier principal, le verdict
+    # manquait : la tâche restait « en cours », et la fermeture refusée (mesuré le 30/09/2026).
+    verdict = {"run_id": "a1b2c3", "task_id": "FEAT-020", "status": "verified_needs_review"}
+    (dossier / ".verify").mkdir(exist_ok=True)
+    (dossier / ".verify" / "journal.jsonl").write_text(json.dumps(verdict) + "\n")
+    git(repo, "merge", "-q", "--ff-only", "task/FEAT-020")
     fermee = clore()
     assert fermee.returncode == 0, fermee.stdout + fermee.stderr
     assert not dossier.exists() and "task/FEAT-020" not in git(repo, "branch")
+    assert "gardé(s)" in fermee.stdout and "1 jugement(s)" in fermee.stdout
+    garde = (repo / ".verify" / "journal.jsonl").read_text(encoding="utf-8")
+    assert '"a1b2c3"' in garde, "le verdict reste dans le dossier principal"
 
 
 def test_l_approbation_sans_dossier_le_dit(repo: Path, tmp_path: Path) -> None:
-    moteur = ROOT / ".ephor"
-    for source in (moteur / "judge.py", moteur / "zones.txt", moteur / "operateur.py"):
-        (repo / ".ephor").mkdir(exist_ok=True)
-        shutil.copy(source, repo / ".ephor" / source.name)
-    shutil.copytree(moteur / "scripts", repo / ".ephor" / "scripts")
+    moteur_dans(repo)
     plan = plan_a_approuver(repo, tmp_path)
     code, sortie = dans_un_terminal(approuve(plan, repo, "--sans-dossier"), "oui", repo)
     assert code == 0, sortie

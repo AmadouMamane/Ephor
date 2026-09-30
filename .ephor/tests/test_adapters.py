@@ -152,6 +152,20 @@ def test_la_procedure_enchaine_tout_et_peut_aller_pas_a_pas() -> None:
     assert "pas-a-pas" in genere
 
 
+def test_la_procedure_montre_les_taches_meme_sans_le_tableau(tmp_path: Path) -> None:
+    """`make taches | head || ls tasks` : le code d'un tube est celui de `head`, et le repli ne
+    servait jamais. Sans la cible (un Makefile d'avant la 1.5), la procédure ne montrait rien."""
+    skill = (ROOT / ".claude" / "skills" / "feature" / "SKILL.md").read_text(encoding="utf-8")
+    ligne = next(ligne for ligne in skill.splitlines() if "make -s taches" in ligne)
+    commande = ligne.strip()[2:-1]  # !`…`
+    (tmp_path / "tasks" / "FEAT-009").mkdir(parents=True)
+    (tmp_path / "Makefile").write_text("verify:\n\t@true\n")
+    sortie = subprocess.run(
+        ["bash", "-c", commande], cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+    assert "FEAT-009" in sortie.stdout, sortie.stdout + sortie.stderr
+
+
 def test_l_effort_d_un_role_passe_a_opencode() -> None:
     """Sous opencode, l'effort d'un rôle est la variante du modèle. Mesuré (30/09/2026, faux
     serveur au format d'Anthropic) : `variant: high` dans le fichier de l'agent, modèle réglé

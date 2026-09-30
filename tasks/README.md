@@ -40,7 +40,8 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
    coller ; sinon `make task-worktree ID=FEAT-001`. Deux sessions dans un même dossier
    partagent la branche et les fichiers, et se marchent dessus : Ephor le signale au début du
    tour. L'agent ne peut modifier ni ce dossier `tasks/`, ni les zones de contrôle. Une fois la
-   tâche fusionnée : `make task-clore ID=FEAT-001` retire son dossier et sa branche locale.
+   tâche fusionnée : `make task-clore ID=FEAT-001` retire son dossier et sa branche locale,
+   après avoir gardé son verdict et sa mesure de tokens dans le dossier principal.
 5. **Juger.** `make judge TASK=FEAT-001` en local, puis le job `juge` de la CI sur la merge request.
 
 **D'un seul geste.** `make task-approve ID=FEAT-001 FROM=.verify/plans/FEAT-001.md` fait
@@ -50,8 +51,8 @@ préférer quand le plan vous convient tel quel ; sinon, `make task-new`, retouc
 `make task-check` et le commit.
 
 **Où en sont les tâches : `make taches`.** Une ligne par tâche approuvée : son lot, son
-état, son risque, son niveau, son objectif. L'état est calculé à partir de git et du journal
-du juge, jamais tenu à la main : approuvée, en cours (sa branche existe), vérifiée, en échec,
+état, son risque, son niveau, son objectif. L'état est calculé à partir de git et des
+journaux du juge (ceux de tous les dossiers du dépôt), jamais tenu à la main : approuvée, en cours (sa branche existe), vérifiée, en échec,
 rouge à refaire, fusionnée (un commit de la branche principale nomme `task/<ID>`, comme le
 fait la fusion d'une merge request). Les tâches fusionnées sont cachées : `TOUT=1` les montre.
 

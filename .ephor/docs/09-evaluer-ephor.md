@@ -125,7 +125,9 @@ Quatre indicateurs suffisent. Au-delà, personne ne les regarde.
 | Taux de régression post-merge | étage 3 de la CI | ce que la vérification a laissé passer |
 
 `make score` lit `.verify/journal.jsonl` : **une ligne par `make judge`**, écrite
-automatiquement, qui survit à `make clean`. Le rapport détaillé d'une tâche, lui, est
+automatiquement, qui survit à `make clean`. Il lit celui de chaque dossier du dépôt (une
+tâche se juge dans le sien), et `make task-clore` garde celui d'une tâche avant de retirer
+son dossier. Le rapport détaillé d'une tâche, lui, est
 écrasé à chaque exécution — sans ce journal, aucune tendance n'est observable et le
 rituel ci-dessous reste une intention. `make score TASK=<ID>` ne regarde qu'une tâche.
 Ce que le journal ne contient pas, la commande ne l'invente pas : elle dit où le prendre.

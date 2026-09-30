@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import atexit
+import bisect
 import functools
 import hashlib
 import json
@@ -323,6 +325,135 @@ def git(
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise JudgeError(f"git {args[0]} impossible : {exc}") from exc
     return result.stdout
+
+
+# Un objet git trouvé : « <hash> <sorte> <taille> ». Tout le reste (« <nom> missing »,
+# « ambiguous ») dit qu'il n'y a rien là, même quand le nom demandé contient des espaces.
+OBJET_TROUVE = re.compile(rb"^([0-9a-f]{40}|[0-9a-f]{64}) (blob|tree|commit|tag) ([0-9]+)$")
+
+
+class LecteurGit:
+    """Un `git cat-file` qui reste ouvert : une question, une ligne, et pas un processus.
+
+    Cent tâches coûtaient à `make taches` plus de trois mille processus git, un par jeton de
+    commande et par tâche : 38 s, et autant à chaque `make task-check` (mesuré le 30/09/2026).
+    Les réponses sont celles de `git cat-file -t` et de `git show <arbre>:<chemin>`."""
+
+    def __init__(self, repo: Path, contenus: bool) -> None:
+        self.contenus = contenus
+        self.identite = identite_du_dossier(repo)
+        self.processus = subprocess.Popen(
+            [
+                "git",
+                *GIT_HARDENING,
+                "-C",
+                str(repo),
+                "cat-file",
+                "--batch" if contenus else "--batch-check",
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            env=git_env(),
+        )
+
+    def demande(self, nom: str) -> tuple[str, str, bytes] | None:
+        """(hash, sorte, contenu) de l'objet `nom`, ou None s'il n'existe pas. OSError si le
+        lecteur ne répond plus : l'appelant repasse alors par un processus à la fois."""
+        entree, sortie = self.processus.stdin, self.processus.stdout
+        if entree is None or sortie is None or "\n" in nom:
+            raise OSError("question impossible à poser à git cat-file")
+        entree.write(nom.encode("utf-8", "surrogateescape") + b"\n")
+        entree.flush()
+        ligne = sortie.readline()
+        if not ligne.endswith(b"\n"):
+            raise OSError("git cat-file s'est arrêté")
+        trouve = OBJET_TROUVE.match(ligne[:-1])
+        if trouve is None:
+            return None
+        objet, sorte, taille = trouve.group(1).decode(), trouve.group(2).decode(), trouve.group(3)
+        if not self.contenus:
+            return objet, sorte, b""
+        contenu = sortie.read(int(taille))
+        sortie.read(1)  # le saut de ligne qui suit chaque contenu
+        return objet, sorte, contenu
+
+    def ferme(self) -> None:
+        with suppress(OSError, subprocess.TimeoutExpired):
+            if self.processus.stdin is not None:
+                self.processus.stdin.close()
+            self.processus.wait(timeout=5)
+        if self.processus.poll() is None:
+            self.processus.kill()
+
+
+# Les lecteurs ouverts, du plus ancien au plus récent. Au-delà de quelques-uns, le plus ancien
+# se ferme : un processus qui juge beaucoup de dépôts (la suite de tests d'Ephor) garderait
+# sinon des centaines de processus git, et leurs descripteurs de fichiers.
+_LECTEURS: dict[tuple[str, bool], LecteurGit | None] = {}
+LECTEURS_OUVERTS = 8
+
+
+def identite_du_dossier(repo: Path) -> tuple[int, int] | None:
+    """Ce qui distingue un dossier d'un autre créé au même chemin : un dossier effacé puis
+    recréé (la copie propre du juge, d'un jugement à l'autre) ne garde pas son lecteur."""
+    try:
+        etat = repo.stat()
+    except OSError:
+        return None
+    return etat.st_dev, etat.st_ino
+
+
+def _fermer_les_lecteurs() -> None:
+    for lecteur in _LECTEURS.values():
+        if lecteur is not None:
+            lecteur.ferme()
+    _LECTEURS.clear()
+
+
+atexit.register(_fermer_les_lecteurs)
+
+
+def interroge(repo: Path, nom: str, contenus: bool = False) -> tuple[str, str, bytes] | None:
+    """Une question à un `git cat-file` qui reste ouvert pour ce dépôt. OSError quand il n'y
+    en a pas : l'appelant fait alors comme avant, un processus par question."""
+    cle = (str(repo), contenus)
+    connu = cle in _LECTEURS
+    lecteur = _LECTEURS.pop(cle, None)
+    if lecteur is not None and lecteur.identite != identite_du_dossier(repo):
+        lecteur.ferme()
+        lecteur, connu = None, False
+    if not connu:
+        with suppress(OSError):
+            lecteur = LecteurGit(repo, contenus)
+    _LECTEURS[cle] = lecteur  # remis au bout : le plus récent
+    while len(_LECTEURS) > LECTEURS_OUVERTS:
+        ancien = _LECTEURS.pop(next(iter(_LECTEURS)))
+        if ancien is not None:
+            ancien.ferme()
+    if lecteur is None:
+        raise OSError("pas de lecteur git")
+    try:
+        return lecteur.demande(nom)
+    except (OSError, ValueError):
+        # Un lecteur qui a cessé de répondre ne resservira pas : les questions suivantes
+        # repassent par un processus chacune, comme avant.
+        lecteur.ferme()
+        _LECTEURS[cle] = None
+        raise OSError("git cat-file ne répond plus") from None
+
+
+def contenu_a(repo: Path, arbre: str, chemin: str) -> bytes:
+    """Le contenu d'un fichier à cet arbre git, comme `git show <arbre>:<chemin>` ; JudgeError
+    s'il n'y est pas."""
+    nom = f"{arbre}:{chemin}"
+    try:
+        trouve = interroge(repo, nom, contenus=True)
+    except OSError:
+        return git(repo, "show", nom)
+    if trouve is None or trouve[1] != "blob":
+        raise JudgeError(f"git show a échoué : {chemin} absent de {arbre}")
+    return trouve[2]
 
 
 def safe_path(value: str) -> bool:
@@ -923,9 +1054,11 @@ def relocalise(valeur: str, task_id: str, dossier: str) -> str:
     canon = f"tasks/{task_id}"
     if dossier == canon:
         return valeur
-    if valeur in (canon, canon + "/"):
-        return dossier + valeur[len(canon) :]
-    return valeur.replace(canon + "/", dossier + "/")
+    # Le dossier lui-même, où qu'il soit dans le jeton : `tasks/<ID>/test.py`, mais aussi
+    # `--rootdir=tasks/<ID>` ou `cd tasks/<ID> && …`. Jamais un autre nom qui le contient :
+    # `tasks/<ID>2` est une autre tâche, `soustasks/<ID>` un autre dossier.
+    motif = rf"(?<![A-Za-z0-9_-]){re.escape(canon)}(?![A-Za-z0-9_.-])"
+    return re.sub(motif, lambda _: dossier, valeur)
 
 
 def canonique(chemin: str, task_id: str, dossier: str) -> str:
@@ -1162,13 +1295,18 @@ def taches_sur_disque(repo: Path) -> dict[str, list[str]]:
 def taches_a(repo: Path, arbre: str) -> dict[str, str]:
     """Les tâches d'un arbre git (la branche principale, en général) : identifiant -> dossier.
     Un identifiant présent deux fois garde son dossier non rangé : `make taches` le signale."""
+    fige = arbre_fige(repo, arbre)
     try:
-        entrees = git(repo, "ls-tree", "-r", "-z", "--name-only", arbre, "--", "tasks").split(b"\0")
+        if fige is not None:
+            noms = liste_de_tasks(repo, fige).noms
+        else:
+            sortie = git(repo, "ls-tree", "-r", "-z", "--name-only", arbre, "--", "tasks")
+            noms = [brut.decode("utf-8", "replace") for brut in sortie.split(b"\0")]
     except JudgeError:
         return {}
     trouvees: dict[str, str] = {}
-    for brut in entrees:
-        morceaux = brut.decode("utf-8", "replace").split("/")
+    for nom in noms:
+        morceaux = nom.split("/")
         if morceaux[-1:] != ["contract.json"]:
             continue
         if len(morceaux) == 3 and ID_PATTERN.match(morceaux[1]):
@@ -1332,6 +1470,12 @@ def acceptance_files(repo: Path, base: str, contract: Contract) -> set[str]:
 def kind_at(repo: Path, commit: str, path: str) -> str | None:
     """`blob` (un fichier), `tree` (un dossier), ou None si rien n'existe là à ce commit."""
     try:
+        trouve = interroge(repo, f"{commit}:{path}")
+    except OSError:
+        pass
+    else:
+        return None if trouve is None else trouve[1]
+    try:
         return git(repo, "cat-file", "-t", f"{commit}:{path}").decode().strip()
     except JudgeError:
         return None
@@ -1455,22 +1599,93 @@ def racines_de_preuve(repo: Path, arbre: str, contract: Contract, task_id: str) 
     return {"."} if "." in racines else racines
 
 
-def preuves_rouges(repo: Path, arbre: str, contract: Contract, task_id: str) -> dict[str, str]:
-    """Ce dont dépend le verdict rouge, à cet arbre git : le dossier de la tâche (contrat
-    compris), les fichiers et les dossiers que les critères citent. Un seul changé après le
-    contrôle, et ce qui a été vu échouer n'est plus ce qui sera jugé."""
-    racines = racines_de_preuve(repo, arbre, contract, task_id)
-    sortie = git(repo, "ls-tree", "-r", "-z", "--full-tree", arbre, "--", *sorted(racines))
-    objets: dict[str, str] = {}
+def entrees_ls_tree(sortie: bytes) -> list[tuple[str, str, str]]:
+    """La sortie de `git ls-tree -r -z`, en `(chemin, sorte, objet)`."""
+    entrees: list[tuple[str, str, str]] = []
     for ligne in sortie.split(b"\0"):
         if not ligne:
             continue
         meta, chemin = ligne.split(b"\t", 1)
         _, sorte, objet = meta.split()
-        nom = chemin.decode("utf-8", "replace")
-        if sorte == b"blob" and nom != f"{contract.ou}/{ROUGE}":
+        entrees.append((chemin.decode("utf-8", "replace"), sorte.decode(), objet.decode()))
+    return entrees
+
+
+def arbre_fige(repo: Path, arbre: str) -> str | None:
+    """Le hash de l'arbre git que désigne `arbre` (une branche, un commit, un arbre) : ce qu'il
+    contient ne bouge plus, on peut donc le garder en mémoire. None si on ne le sait pas."""
+    try:
+        trouve = interroge(repo, f"{arbre}^{{tree}}")
+    except OSError:
+        return None
+    return trouve[0] if trouve is not None and trouve[1] == "tree" else None
+
+
+@dataclass(frozen=True)
+class ListeDeTasks:
+    """Tout ce qui vit sous `tasks/` à un arbre figé : les entrées triées, leurs chemins, et la
+    place de chaque chemin."""
+
+    entrees: list[tuple[str, str, str]]
+    noms: list[str]
+    places: dict[str, int]
+
+
+_LISTES_DE_TASKS: dict[tuple[str, str], ListeDeTasks] = {}
+
+
+def liste_de_tasks(repo: Path, fige: str) -> ListeDeTasks:
+    """Une lecture de `tasks/` par arbre, pour toutes les tâches, au lieu d'une par tâche."""
+    cle = (str(repo), fige)
+    if cle not in _LISTES_DE_TASKS:
+        if len(_LISTES_DE_TASKS) > 32:
+            _LISTES_DE_TASKS.clear()
+        entrees = sorted(
+            entrees_ls_tree(git(repo, "ls-tree", "-r", "-z", "--full-tree", fige, "--", "tasks"))
+        )
+        noms = [chemin for chemin, _, _ in entrees]
+        _LISTES_DE_TASKS[cle] = ListeDeTasks(entrees, noms, {nom: i for i, nom in enumerate(noms)})
+    return _LISTES_DE_TASKS[cle]
+
+
+def entrees_sous(repo: Path, arbre: str, racines: set[str]) -> list[tuple[str, str, str]]:
+    """Ce que `git ls-tree -r <arbre> -- <racines>` rendrait : les fichiers de ces racines,
+    `(chemin, sorte, objet)`. Ce qui vit sous `tasks/` se lit dans la liste de l'arbre, gardée
+    en mémoire ; le reste, par git, comme avant."""
+    dans_tasks = sorted(r for r in racines if r == "tasks" or r.startswith("tasks/"))
+    ailleurs = sorted(set(racines) - set(dans_tasks))
+    fige = arbre_fige(repo, arbre) if dans_tasks else None
+    if fige is None:
+        ailleurs = sorted(racines)
+    trouvees: dict[str, tuple[str, str, str]] = {}
+    if fige is not None:
+        liste = liste_de_tasks(repo, fige)
+        for racine in dans_tasks:
+            if racine in liste.places:
+                trouvees[racine] = liste.entrees[liste.places[racine]]
+            # Le contenu d'un dossier : les chemins qui commencent par « <racine>/ » se suivent.
+            for i in range(bisect.bisect_left(liste.noms, racine + "/"), len(liste.noms)):
+                if not liste.noms[i].startswith(racine + "/"):
+                    break
+                trouvees[liste.noms[i]] = liste.entrees[i]
+    if ailleurs:
+        for entree in entrees_ls_tree(
+            git(repo, "ls-tree", "-r", "-z", "--full-tree", arbre, "--", *ailleurs)
+        ):
+            trouvees[entree[0]] = entree
+    return list(trouvees.values())
+
+
+def preuves_rouges(repo: Path, arbre: str, contract: Contract, task_id: str) -> dict[str, str]:
+    """Ce dont dépend le verdict rouge, à cet arbre git : le dossier de la tâche (contrat
+    compris), les fichiers et les dossiers que les critères citent. Un seul changé après le
+    contrôle, et ce qui a été vu échouer n'est plus ce qui sera jugé."""
+    racines = racines_de_preuve(repo, arbre, contract, task_id)
+    objets: dict[str, str] = {}
+    for nom, sorte, objet in entrees_sous(repo, arbre, racines):
+        if sorte == "blob" and nom != f"{contract.ou}/{ROUGE}":
             # Sous son nom canonique : une tâche rangée ensuite garde une trace valable.
-            objets[canonique(nom, task_id, contract.ou)] = objet.decode()
+            objets[canonique(nom, task_id, contract.ou)] = objet
     # Un seul processus pour tous les contenus : un par fichier coûtait 7 s pour un dossier
     # de 400 fichiers (mesuré le 26/09/2026), payées à chaque jugement.
     contenus = lire_objets(repo, sorted(set(objets.values())))
@@ -1481,10 +1696,7 @@ def chemins_de_preuve(repo: Path, arbre: str, contract: Contract, task_id: str) 
     """Les fichiers dont dépend le verdict d'une tâche, à cet arbre git (ceux que relève son
     contrôle rouge), sans lire leur contenu."""
     racines = racines_de_preuve(repo, arbre, contract, task_id)
-    sortie = git(
-        repo, "ls-tree", "-r", "-z", "--name-only", "--full-tree", arbre, "--", *sorted(racines)
-    )
-    noms = {brut.decode("utf-8", "replace") for brut in sortie.split(b"\0") if brut}
+    noms = {chemin for chemin, _, _ in entrees_sous(repo, arbre, racines)}
     return noms - {f"{contract.ou}/{ROUGE}"}
 
 
@@ -1494,7 +1706,7 @@ def _preuves_d_une_tache(repo: str, arbre: str, task_id: str, dossier: str) -> f
     plus). Vide si son contrat est illisible : ce n'est pas à cette tâche de le juger."""
     depot = Path(repo)
     try:
-        brut = git(depot, "show", f"{arbre}:{dossier}/contract.json").decode("utf-8")
+        brut = contenu_a(depot, arbre, f"{dossier}/contract.json").decode("utf-8")
         contrat = parse_contract(lire_json(brut), task_id, dossier)
     except (JudgeError, UnicodeDecodeError):
         return frozenset()
@@ -1511,10 +1723,12 @@ def preuves_partagees(
     """
     if miennes is None:
         miennes = chemins_de_preuve(repo, arbre, contract, task_id)
-    try:
-        fige = git(repo, "rev-parse", f"{arbre}^{{tree}}").decode().strip()
-    except JudgeError:
-        return {}
+    fige = arbre_fige(repo, arbre)
+    if fige is None:
+        try:
+            fige = git(repo, "rev-parse", f"{arbre}^{{tree}}").decode().strip()
+        except JudgeError:
+            return {}
     partages: dict[str, list[str]] = {}
     for autre, dossier in sorted(taches_a(repo, fige).items()):
         if autre == task_id:
@@ -1547,6 +1761,15 @@ def lire_objets(repo: Path, objets: list[str]) -> dict[str, bytes]:
     """Le contenu de plusieurs objets git, en une seule lecture (`git cat-file --batch`)."""
     if not objets:
         return {}
+    # D'abord le lecteur qui reste ouvert : cent tâches, cent lectures, et pas cent processus.
+    with suppress(OSError):
+        lus: dict[str, bytes] = {}
+        for objet in objets:
+            trouve = interroge(repo, objet, contenus=True)
+            if trouve is None:
+                raise JudgeError(f"git cat-file : réponse inattendue pour {objet}")
+            lus[objet] = trouve[2]
+        return lus
     try:
         sortie = subprocess.run(
             ["git", *GIT_HARDENING, "-C", str(repo), "cat-file", "--batch"],
@@ -1593,7 +1816,7 @@ def lire_trace_rouge(repo: Path, base: str, contract: Contract, task_id: str) ->
         f"{chemin} avec le contrat (Makefile d'avant la 1.1 : `{COMMANDE_ROUGE} {task_id}`)"
     )
     try:
-        brut = git(repo, "show", f"{base}:{chemin}")
+        brut = contenu_a(repo, base, chemin)
     except JudgeError:
         raise JudgeError(
             f"contrôle rouge absent de la base ({chemin}) : rien ne montre que les critères "
@@ -3418,21 +3641,46 @@ ETATS_DU_JUGE = {
 
 
 def derniers_verdicts(repo: Path) -> dict[str, str]:
-    """Le dernier verdict de chaque tâche, dans le journal des jugements."""
+    """Le dernier verdict de chaque tâche, dans les journaux des jugements de TOUS les dossiers
+    du dépôt. Une tâche se juge dans son dossier (#32), et son verdict y reste : lu dans le seul
+    dossier principal, une tâche vérifiée y restait « en cours » (mesuré le 30/09/2026)."""
+    sys.dont_write_bytecode = True  # rien de compilé dans le moteur, une zone
+    from usage import journal_des_jugements
+
     verdicts: dict[str, str] = {}
-    chemin = repo / ".verify" / "journal.jsonl"
-    try:
-        lignes = chemin.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return verdicts
-    for ligne in lignes:
-        try:
-            entree = json.loads(ligne)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(entree, dict) and isinstance(entree.get("task_id"), str):
+    for entree in journal_des_jugements(repo):
+        if isinstance(entree.get("task_id"), str):
             verdicts[entree["task_id"]] = str(entree.get("status") or "")
     return verdicts
+
+
+def taches_nommees(repo: Path, ref: str) -> set[str]:
+    """Les tâches qu'un commit de cette branche nomme `task/<ID>`, comme le fait le commit de
+    fusion d'une merge request. Une lecture de l'histoire pour toutes les tâches, au lieu d'une
+    par tâche : cent tâches, et autant de parcours de toute l'histoire."""
+    try:
+        messages = git(repo, "log", "--format=%B%x00", "--fixed-strings", "--grep=task/", ref)
+    except JudgeError:
+        return set()
+    return set(
+        re.findall(r"task/([A-Z][A-Z0-9-]{2,50})(?![A-Z0-9-])", messages.decode("utf-8", "replace"))
+    )
+
+
+def branches_entrees(repo: Path, ref: str) -> set[str]:
+    """Les références `task/…` déjà entrées dans cette branche : leur dernier commit y est."""
+    try:
+        sortie = git(
+            repo,
+            "for-each-ref",
+            f"--merged={ref}",
+            "--format=%(refname)",
+            "refs/heads/task/",
+            "refs/remotes",
+        )
+    except JudgeError:
+        return set()
+    return set(sortie.decode("utf-8", "replace").split())
 
 
 def branches_de_tache(repo: Path) -> dict[str, str]:
@@ -3449,28 +3697,57 @@ def branches_de_tache(repo: Path) -> dict[str, str]:
     return trouvees
 
 
-def etat_de_tache(
-    repo: Path, ref: str, task_id: str, contrat: Contract, branche: str | None, verdict: str
-) -> str:
-    """Ce que dit git, puis le juge, d'une tâche approuvée sur la branche principale.
+@dataclass
+class VueDesTaches:
+    """Ce que git et le juge disent de toutes les tâches, lu une fois pour toutes : la branche
+    principale figée à un commit, les tâches nommées par ses commits, les branches de tâche et
+    celles qui y sont entrées, et le dernier verdict de chacune."""
 
-    Fusionnée : un commit de la branche principale nomme `task/<ID>` (le commit de fusion
-    d'une merge request le fait), ou la branche, jugée VÉRIFIÉE, y est entrée. Une branche
-    sans travail est aussi « dans » la branche principale : sans verdict, elle est en cours."""
-    motif = f"task/{task_id}([^A-Z0-9-]|$)"
-    if git(repo, "log", "-1", "--format=%h", "-E", f"--grep={motif}", ref).strip():
+    ref: str
+    commit: str
+    nommees: set[str]
+    entrees: set[str]
+    branches: dict[str, str]
+    verdicts: dict[str, str]
+
+    @classmethod
+    def lire(cls, repo: Path) -> VueDesTaches:
+        ref, _ = resolve_base(repo, None)
+        commit = git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").decode().strip()
+        return cls(
+            ref=ref,
+            commit=commit,
+            nommees=taches_nommees(repo, commit),
+            entrees=branches_entrees(repo, commit),
+            branches=branches_de_tache(repo),
+            verdicts=derniers_verdicts(repo),
+        )
+
+    def fusionnee(self, task_id: str) -> bool:
+        """Un commit de la branche principale nomme `task/<ID>` (le commit de fusion d'une merge
+        request le fait), ou la branche, jugée VÉRIFIÉE, y est entrée. Une branche sans travail
+        est aussi « dans » la branche principale : sans verdict, elle est en cours."""
+        if task_id in self.nommees:
+            return True
+        branche = self.branches.get(task_id)
+        return (
+            branche is not None
+            and branche in self.entrees
+            and self.verdicts.get(task_id) == "verified_needs_review"
+        )
+
+
+def etat_de_tache(repo: Path, vue: VueDesTaches, task_id: str, contrat: Contract) -> str:
+    """Ce que dit git, puis le juge, d'une tâche approuvée sur la branche principale."""
+    if vue.fusionnee(task_id):
         return "fusionnée"
-    if branche is not None and verdict == "verified_needs_review":
-        with suppress(JudgeError):
-            git(repo, "merge-base", "--is-ancestor", branche, ref)
-            return "fusionnée"
     try:
-        lire_trace_rouge(repo, ref, contrat, task_id)
+        lire_trace_rouge(repo, vue.commit, contrat, task_id)
     except JudgeError:
         return "rouge à refaire"
-    if branche is None:
+    if task_id not in vue.branches:
         return "approuvée"
-    return ETATS_DU_JUGE.get(verdict, "en cours")
+    return ETATS_DU_JUGE.get(vue.verdicts.get(task_id, ""), "en cours")
 
 
 def cmd_taches(args: argparse.Namespace) -> int:
@@ -3478,17 +3755,15 @@ def cmd_taches(args: argparse.Namespace) -> int:
     du juge, jamais tenu à la main. Avec une centaine de tâches dans `tasks/`, on ne s'y
     retrouvait plus (30/09/2026, #35) ; les tâches fusionnées sont cachées par défaut."""
     repo = repo_root(args.repo)
-    ref, _ = resolve_base(repo, None)
-    verdicts = derniers_verdicts(repo)
-    branches = branches_de_tache(repo)
+    vue = VueDesTaches.lire(repo)
     doubles = {
         tache: dossiers for tache, dossiers in taches_sur_disque(repo).items() if len(dossiers) > 1
     }
     lignes: list[tuple[str, str, str, str, str, str]] = []
     cachees = 0
-    for tache, dossier in taches_a(repo, ref).items():
+    for tache, dossier in taches_a(repo, vue.commit).items():
         try:
-            brut = git(repo, "show", f"{ref}:{dossier}/contract.json").decode("utf-8")
+            brut = contenu_a(repo, vue.commit, f"{dossier}/contract.json").decode("utf-8")
             contrat = parse_contract(lire_json(brut), tache, dossier)
         except (JudgeError, UnicodeDecodeError):
             lignes.append(
@@ -3502,9 +3777,7 @@ def cmd_taches(args: argparse.Namespace) -> int:
                 )
             )
             continue
-        etat = etat_de_tache(
-            repo, ref, tache, contrat, branches.get(tache), verdicts.get(tache, "")
-        )
+        etat = etat_de_tache(repo, vue, tache, contrat)
         if etat == "fusionnée" and not args.tout:
             cachees += 1
             continue
@@ -3512,7 +3785,7 @@ def cmd_taches(args: argparse.Namespace) -> int:
         objectif = " ".join(contrat.objective.split())
         objectif = objectif if len(objectif) <= 60 else objectif[:59] + "…"
         lignes.append((lot, tache, etat, contrat.risk, contrat.niveau or "", objectif))
-    print(f"tâches approuvées sur {ref} :")
+    print(f"tâches approuvées sur {vue.ref} :")
     if lignes:
         entete = ("Lot", "ID", "État", "Risque", "Niveau")
         largeurs = [max([len(entete[i])] + [len(ligne[i]) for ligne in lignes]) for i in range(5)]
@@ -3537,16 +3810,14 @@ def cmd_taches(args: argparse.Namespace) -> int:
 def cmd_etat(args: argparse.Namespace) -> int:
     """L'état d'une tâche, tel que `make taches` le calcule : pour `make task-clore`."""
     repo = repo_root(args.repo)
-    ref, _ = resolve_base(repo, None)
-    dossier = taches_a(repo, ref).get(args.task_id)
+    vue = VueDesTaches.lire(repo)
+    dossier = taches_a(repo, vue.commit).get(args.task_id)
     if dossier is None:
         print("inconnue")
         return 1
-    brut = git(repo, "show", f"{ref}:{dossier}/contract.json").decode("utf-8")
+    brut = contenu_a(repo, vue.commit, f"{dossier}/contract.json").decode("utf-8")
     contrat = parse_contract(lire_json(brut), args.task_id, dossier)
-    branche = branches_de_tache(repo).get(args.task_id)
-    verdict = derniers_verdicts(repo).get(args.task_id, "")
-    print(etat_de_tache(repo, ref, args.task_id, contrat, branche, verdict))
+    print(etat_de_tache(repo, vue, args.task_id, contrat))
     return 0
 
 
@@ -3658,18 +3929,28 @@ def cmd_perimes(args: argparse.Namespace) -> int:
     traces qu'il touche ; on les découvrait une par une, au juge (session réelle, 30/09/2026).
     Rien n'est lancé : la liste se lit dans git."""
     repo = repo_root(args.repo)
-    ref, _ = resolve_base(repo, None)
+    vue = VueDesTaches.lire(repo)
+    ref = vue.ref
     print(f"contrôles rouges, lus sur {ref} :")
     a_jour = 0
+    fusionnees = 0
     a_refaire: list[str] = []
-    for tache, dossier in sorted(taches_a(repo, ref).items()):
+    for tache, dossier in sorted(taches_a(repo, vue.commit).items()):
+        # Une tâche fusionnée ne se juge plus : sa trace n'a plus rien à dire, et cent tâches
+        # finies noyaient les quelques-unes qui restent à refaire.
+        if vue.fusionnee(tache):
+            fusionnees += 1
+            continue
         try:
-            brut = git(repo, "show", f"{ref}:{dossier}/contract.json")
+            brut = contenu_a(repo, vue.commit, f"{dossier}/contract.json")
         except JudgeError:
             continue
         try:
             lire_trace_rouge(
-                repo, ref, parse_contract(lire_json(brut.decode("utf-8")), tache, dossier), tache
+                repo,
+                vue.commit,
+                parse_contract(lire_json(brut.decode("utf-8")), tache, dossier),
+                tache,
             )
         except JudgeError as exc:
             a_refaire.append(tache)
@@ -3688,13 +3969,13 @@ def cmd_perimes(args: argparse.Namespace) -> int:
         else:
             a_jour += 1
     print(f"à jour : {a_jour} tâche(s)")
+    if fusionnees:
+        print(f"fusionnée(s), plus à juger : {fusionnees}")
     if not a_refaire:
         return 0
     print(
-        f"à refaire sur {ref}, pour chaque tâche encore ouverte : "
-        + " ; ".join(f"make task-check ID={tache}" for tache in a_refaire)
+        f"à refaire sur {ref} : " + " ; ".join(f"make task-check ID={tache}" for tache in a_refaire)
     )
-    print("Une tâche déjà fusionnée n'a plus besoin de sa trace : laissez-la telle quelle.")
     return 1
 
 
@@ -4001,8 +4282,11 @@ def confirme(question: str) -> bool:
         return False
 
 
-def resume_du_plan(task_id: str, contract: Contract, fournis: dict[str, str], plan: str) -> str:
-    """Ce que l'opérateur approuve, en quelques lignes : le reste est dans le plan."""
+def resume_du_plan(
+    task_id: str, contract: Contract, fournis: dict[str, str], plan: str, dossier: str = ""
+) -> str:
+    """Ce que l'opérateur approuve, en quelques lignes : le reste est dans le plan. Les tests
+    sont nommés là où ils seront écrits (`tasks/<lot>/<ID>/` pour une tâche rangée)."""
     lignes = [
         f"Approbation de {task_id}, d'après {plan}",
         f"  objectif  : {contract.objective}",
@@ -4013,7 +4297,8 @@ def resume_du_plan(task_id: str, contract: Contract, fournis: dict[str, str], pl
     lignes += [f"    {c.id} {c.description}" for c in contract.criteria]
     lignes.append("  tests d'examen :")
     lignes += [
-        f"    {nom} ({len(contenu.splitlines())} lignes)"
+        f"    {relocalise(nom, task_id, dossier or f'tasks/{task_id}')}"
+        f" ({len(contenu.splitlines())} lignes)"
         for nom, contenu in sorted(fournis.items())
     ]
     lignes.append(
@@ -4087,8 +4372,8 @@ def cmd_approuve(args: argparse.Namespace) -> int:
             " et le contrôle rouge le refuserait. Complétez le plan, ou passez par make task-new."
         )
         return 2
-    print(resume_du_plan(task_id, contract, fournis, args.from_file))
-    for ligne in dire_partages(preuves_partagees(repo, "HEAD", contract, task_id), task_id):
+    print(resume_du_plan(task_id, contract, fournis, args.from_file, chemin))
+    for ligne in dire_partages(preuves_partagees(repo, "HEAD", contract, task_id), task_id, chemin):
         print(ligne)
     if not confirme(f"Approuver {task_id} ? Tapez « oui » pour approuver : "):
         print("rien n'est fait : l'approbation n'a pas été confirmée")

@@ -162,6 +162,44 @@ def test_le_moteur_intact_est_remplace_et_le_projet_n_est_pas_touche(
     assert not any(".ephor/" in ligne for ligne in touches), "le moteur a sa propre ligne"
 
 
+def test_un_projet_ne_de_l_archive_suit_aussi_les_tests_d_ephor(
+    tmp_path: Path, copie_d_ephor: Path, version_suivante: Path
+) -> None:
+    """La recette « projet neuf » du README copie Ephor entier : ses tests, sa démonstration et
+    ses scripts d'atelier viennent avec, et la CI du projet lance ces tests. La mise à jour ne
+    les touchait pas, et disait de les retirer : vieux tests contre moteur neuf, CI rouge
+    (mesuré le 30/09/2026 sur un projet 1.4.0 mis à jour). Un projet installé par le script,
+    lui, ne les reçoit toujours pas."""
+    cible = tmp_path / "projet"
+    shutil.copytree(copie_d_ephor, cible)
+    git(cible, "init", "-q", "-b", "main")
+    git(cible, "add", "-A")
+    git(cible, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-qm", "neuf")
+    tests, scripts = version_suivante / ".ephor" / "tests", version_suivante / ".ephor" / "scripts"
+    ajoute(tests / "test_score.py", "# changé dans la version suivante\n")
+    ajoute(scripts / "demo_judge.sh", "# changé dans la version suivante\n")
+    (tests / "test_nouveau.py").write_text("def test_nouveau() -> None:\n    pass\n")
+    (tests / "test_refs.py").unlink()
+    git(version_suivante, "add", "-A")
+    git(version_suivante, "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+        "commit", "-qm", "tests")  # fmt: skip
+
+    sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
+
+    for rel in (".ephor/tests/test_score.py", ".ephor/scripts/demo_judge.sh"):
+        assert (cible / rel).read_bytes() == (version_suivante / rel).read_bytes(), rel
+    assert (cible / ".ephor" / "tests" / "test_nouveau.py").is_file()
+    retirer = next(ligne for ligne in sortie.splitlines() if "git rm" in ligne)
+    assert ".ephor/tests/test_refs.py" in retirer, "un test que la version n'a plus"
+    for script in ("bootstrap_existing_repo.sh", "demo_judge.sh", "empreintes.py"):
+        assert script not in retirer, f"{script} est toujours livré"
+
+    installe = projet_equipe(tmp_path / "noderepo")
+    mettre_a_jour(installe, version_suivante, "--mettre-a-jour")
+    assert not (installe / ".ephor" / "tests").exists()
+    assert not (installe / ".ephor" / "scripts" / "demo_judge.sh").exists()
+
+
 def test_une_retouche_cachee_a_git_n_est_pas_ecrasee(
     tmp_path: Path, version_suivante: Path
 ) -> None:
