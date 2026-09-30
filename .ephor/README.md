@@ -47,7 +47,9 @@ bibliothèque standard, compatible avec le Python 3.9 livré par Apple.
    autant. Si le code de la base a bougé depuis ce contrôle, ou si le contrôle a été fait
    sur un commit que la base ne contient pas, le verdict le dit.
 2. **Périmètre.** Il calcule le patch entre la base et l'état courant du dossier, commits,
-   modifications et nouveaux fichiers compris, sans toucher à votre index Git. Tout fichier
+   modifications et nouveaux fichiers compris, sans toucher à votre index Git. Ce qui n'est
+   pas encore commité est nommé, et le verdict le dit : la merge request, elle, part de la
+   branche. Tout fichier
    hors de `allowed_paths` est refusé. Les zones de contrôle le sont toujours : celles de
    `.ephor/zones.txt`, la liste du moteur que lisent aussi les gardes, la sentinelle et la
    CI — `tasks/`, `.ephor/` tout entier, la CI, `.git/`, `Makefile` et `GNUmakefile`,
@@ -65,10 +67,18 @@ bibliothèque standard, compatible avec le Python 3.9 livré par Apple.
    plus dans votre dépôt. Git y tourne durci : aucun hook du dépôt,
    aucun moniteur de fichiers. La ruse du hook Git planté par un agent est neutralisée.
    Avant d'exécuter quoi que ce soit, il relève aussi les **silencieux** que le patch
-   ajoute (`# noqa`, `# type: ignore`, `pytest.mark.skip`…) et les **réglages des
-   contrôles** qu'il touche (un `ruff.toml` posé dans un sous-dossier, `setup.cfg`,
-   `tsconfig.json`…) : nommés au verdict, et refusés sur une tâche à risque `eleve`.
-   `pyproject.toml` et `package.json` portent aussi les dépendances : nommés seulement.
+   ajoute (`# noqa`, `# type: ignore`, `pytest.mark.skip`…), les **tests retirés** (un
+   fichier de test supprimé, un `test_…` disparu d'un fichier ; un test qui change de
+   fichier n'est pas retiré) et les **réglages des contrôles** qu'il touche (un `ruff.toml`
+   posé dans un sous-dossier, `setup.cfg`, `tsconfig.json`…) : nommés au verdict, et
+   refusés sur une tâche à risque `eleve`. Un test vidé (son corps remplacé par `pass`) ou
+   un cas de paramétrage retiré ne se voit pas ainsi : la revue le lit.
+   `pyproject.toml` et `package.json` portent aussi les dépendances : le juge lit quelles
+   sections changent. Les dépendances et la fiche du paquet (`[project]`,
+   `[dependency-groups]`, `[tool.uv]`, `"devDependencies"`…) sont nommées seulement ; toute
+   autre section (`[tool.ruff.lint]`, `[tool.pytest.ini_options]`, `"scripts"`, `"jest"`…)
+   compte comme un réglage des contrôles. Une dépendance peut pourtant remplacer un outil
+   de contrôle (un `pytest` pris dans un dossier local) : la revue la lit.
 4. **Exécution.** Installation (`setup`), puis vérification (`verify`, en mode strict : un
    outil absent est un échec), puis chaque critère (`check`). Le tout sous un budget de
    temps ; un critère peut en plus fixer le sien avec `max_duration_seconds`, et il est
@@ -104,7 +114,7 @@ bibliothèque standard, compatible avec le Python 3.9 livré par Apple.
 | `budget_exhausted` | Le budget de temps du contrat est épuisé. | 1 |
 | `stale` | Le code a changé pendant la vérification. Relancer. | 1 |
 | `no_change` | Rien à juger par rapport à la base. | 1 |
-| `rejected` | Contrat invalide ou non approuvé, contrôle rouge absent ou périmé, patch hors contrat, preuve que l'agent pourrait écrire lui-même (fichier ou dossier), ou, sur une tâche à risque élevé, silencieux ajouté ou réglage des contrôles modifié. Rien n'a été exécuté. | 2 |
+| `rejected` | Contrat invalide ou non approuvé, contrôle rouge absent ou périmé, patch hors contrat, preuve que l'agent pourrait écrire lui-même (fichier ou dossier), ou, sur une tâche à risque élevé, silencieux ajouté, test retiré ou réglage des contrôles modifié. Rien n'a été exécuté. | 2 |
 
 ### Commandes
 
@@ -131,10 +141,16 @@ téléchargée en cours de route (`--pull=never`). L'installation a le réseau, 
 JFrog. La vérification et les critères tournent **sans réseau**. Les rapports de tests
 s'écrivent dans un dossier monté à part, hors de la copie jugée. La copie vérifiée est placée sous
 votre dossier personnel, car `podman machine` ne partage que lui avec sa machine virtuelle.
+Elle n'emprunte rien à votre dépôt : son histoire et les étiquettes de la base y sont
+recopiées, pour que git y marche. Un projet qui tire sa version de git (hatch-vcs,
+setuptools-scm…) demande une image **avec git** — celle de `make ci-image` ; avec l'image
+par défaut, qui n'en a pas, le juge refuse avant de rien lancer, et dit quoi prendre.
+Mesuré le 29/09/2026 : sans cela, le conteneur installait en silence une fausse version
+(`0.1.dev1` au lieu de `0.2.1.dev1`).
 
 | Variable | Rôle | Défaut |
 |---|---|---|
-| `EPHOR_IMAGE` | Image du juge, avec `uv` et Python. En entreprise : une image JFrog, épinglée par digest, en arm64. | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` |
+| `EPHOR_IMAGE` | Image du juge, avec `uv`, Python et git (`make ci-image`). En entreprise : une image JFrog, épinglée par digest, en arm64. | `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` (sans git) |
 | `EPHOR_CONTAINER_MEMORY`, `EPHOR_CONTAINER_CPUS` | Limites du conteneur | `4g`, `2` |
 | `EPHOR_CONTAINER_ARGS` | Options en plus. Sous Podman Linux sans droits root, le juge ajoute seul `--userns=keep-id --user <votre uid>` ; une option `--user`, `--uidmap` ou `--pod` posée ici l'en dispense | vide |
 | `EPHOR_CONTAINER_HARDENING` | `0` retire le durcissement, pour une image de la maison qui en aurait besoin. Sous Podman Linux, le conteneur tourne sous votre identité, plus en root : une étape qui écrit dans le système de l'image demande en plus `EPHOR_CONTAINER_ARGS=--user=0` | durci |

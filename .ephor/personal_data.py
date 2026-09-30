@@ -22,6 +22,8 @@ import argparse
 import ast
 import os
 import re
+import unicodedata
+from collections import Counter
 from pathlib import Path
 
 # Appels qui finissent dans un journal, donc sur un disque, donc dans une sauvegarde.
@@ -53,6 +55,7 @@ SINGLE = {
     "mobile",
     "passeport",
     "passport",
+    "prenom",
 }
 # Deux mots voisins : « nom » ou « carte » seuls sont trop courants pour alerter.
 PAIRS = {
@@ -69,6 +72,8 @@ PAIRS = {
     ("last", "name"),
     ("first", "name"),
     ("full", "name"),
+    ("nom", "complet"),
+    ("adresse", "mail"),
     ("adresse", "postale"),
     ("postal", "address"),
     ("numero", "secu"),
@@ -124,12 +129,79 @@ SKIPPED = {
     ".tox",
     "site-packages",
 }
+# La personne elle-même : l'objet passé TOUT ENTIER à un journal (`%r`, `str(client)`,
+# `f"{client}"`) sort tous ses champs d'un coup. `client.id` ou `client_id`, non : c'est
+# l'identifiant technique qu'on demande de journaliser.
+ENTITES = {
+    "client",
+    "customer",
+    "beneficiaire",
+    "titulaire",
+    "personne",
+    "emprunteur",
+    "souscripteur",
+}
+# Ce qu'il ne sait pas lire, et qu'il doit donc dire : un « rien trouvé » sur un service Java
+# était un faux vert (audit du 29/09/2026).
+AUTRES_LANGAGES = {
+    ".java": "Java",
+    ".kt": "Kotlin",
+    ".kts": "Kotlin",
+    ".scala": "Scala",
+    ".groovy": "Groovy",
+    ".js": "JavaScript",
+    ".jsx": "JavaScript",
+    ".mjs": "JavaScript",
+    ".cjs": "JavaScript",
+    ".ts": "TypeScript",
+    ".tsx": "TypeScript",
+    ".mts": "TypeScript",
+    ".cts": "TypeScript",
+    ".go": "Go",
+    ".cs": "C#",
+    ".rb": "Ruby",
+    ".php": "PHP",
+    ".rs": "Rust",
+    ".swift": "Swift",
+}
+# Réglages d'outils, dépendances et sorties de construction : pas du code du projet.
+PAS_DU_PROJET = {
+    ".opencode",
+    ".claude",
+    ".github",
+    ".gitlab",
+    ".vscode",
+    ".idea",
+    ".husky",
+    ".gradle",
+    ".mvn",
+    ".next",
+    ".nuxt",
+    "dist",
+    "build",
+    "target",
+    "out",
+    "coverage",
+    "vendor",
+    "bower_components",
+}
 CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
 def parts(name: str) -> list[str]:
-    """Découpe un identifiant en mots : numeroCarteBancaire -> numero, carte, bancaire."""
-    return [word for word in CAMEL.sub("_", name).lower().split("_") if word]
+    """Découpe un identifiant en mots : numeroCarteBancaire -> numero, carte, bancaire.
+
+    Sans accents : `prénom` et `téléphone` sont des identifiants Python valides."""
+    sans_accent = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+    return [word for word in CAMEL.sub("_", sans_accent).lower().split("_") if word]
+
+
+def entite(name: str) -> str | None:
+    """`objet client entier` si l'identifiant EST la personne, pas l'un de ses champs."""
+    if name.isupper():
+        return None
+    words = parts(name)
+    return f"objet {words[0]} entier" if len(words) == 1 and words[0] in ENTITES else None
 
 
 def sensitive(name: str) -> str | None:
@@ -220,6 +292,12 @@ def exposed(call: ast.Call, portees: dict[str, str]) -> list[tuple[int, str, str
     found: list[tuple[int, str, str]] = []
     morceaux: list[ast.AST] = [*call.args, *call.keywords]
     for morceau in morceaux:
+        # Les noms dont on lit un champ (`client.id`) ou qu'on appelle : pas l'objet entier.
+        acces = {
+            id(noeud.value)
+            for noeud in ast.walk(morceau)
+            if isinstance(noeud, (ast.Attribute, ast.Subscript))
+        } | {id(noeud.func) for noeud in ast.walk(morceau) if isinstance(noeud, ast.Call)}
         for node in ast.walk(morceau):
             # `"{iban}".format(iban=compte)` : le nom du paramètre dit déjà ce qui sort.
             if isinstance(node, ast.keyword) and node.arg:
@@ -242,6 +320,8 @@ def exposed(call: ast.Call, portees: dict[str, str]) -> list[tuple[int, str, str
                 champ = portees.get(node.id)
                 if champ is not None:
                     label = f"{node.id} (porte {champ})"
+                elif id(node) not in acces:
+                    champ = entite(node.id)
             if champ is not None:
                 found.append((getattr(node, "lineno", 0), label, champ))
     return found
@@ -307,6 +387,25 @@ def fichiers_python(repo: Path) -> list[Path]:
     return trouves
 
 
+def non_lus(repo: Path) -> Counter[str]:
+    """Les fichiers de code qu'il ne sait pas lire, par langage."""
+    compte: Counter[str] = Counter()
+    for dossier, sous, noms in os.walk(repo):
+        ici = Path(dossier)
+        sous[:] = [
+            nom
+            for nom in sous
+            if nom not in SKIPPED
+            and nom not in PAS_DU_PROJET
+            and not (ici == repo and nom == ".ephor")
+        ]
+        for nom in noms:
+            langage = AUTRES_LANGAGES.get(Path(nom).suffix)
+            if langage is not None:
+                compte[langage] += 1
+    return compte
+
+
 def scan_repo(repo: Path) -> list[str]:
     """Tout le dépôt, sauf `.ephor/` (l'outil ne se juge pas lui-même) et les exceptions."""
     waived = allowed(repo)
@@ -331,20 +430,48 @@ def scan_repo(repo: Path) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[1])
-    args = parser.parse_args(argv)
-    findings = scan_repo(args.repo.resolve())
-    if not findings:
-        print("aucune donnée personnelle dans les journaux")
-        return 0
-    for finding in findings:
-        print(finding)
-    print(
-        f"\n{len(findings)} fuite(s) possible(s). Une donnée client n'entre jamais dans un\n"
-        "journal ni dans un message d'erreur : journalise un identifiant technique à la\n"
-        "place. Faux positif ? Dis-le à l'opérateur : la liste d'exceptions est dans\n"
-        ".ephor/projet/fuites-autorisees.txt, hors de ta portée."
+    parser.add_argument(
+        "--code-si-partiel",
+        type=int,
+        default=0,
+        help="code de sortie quand du code d'un autre langage n'a pas été lu"
+        " (0 par défaut, pour les appels d'avant la 1.2 ; verify.sh demande 3 : SKIP)",
     )
-    return 1
+    args = parser.parse_args(argv)
+    repo = args.repo.resolve()
+    lus = len(fichiers_python(repo))
+    findings = scan_repo(repo)
+    manques = non_lus(repo)
+    partiel = ""
+    if manques:
+        detail = ", ".join(f"{langage} {nombre}" for langage, nombre in sorted(manques.items()))
+        partiel = (
+            f"PARTIEL : {sum(manques.values())} fichier(s) de code non lu(s) ({detail}) — ce"
+            " contrôle ne lit que le Python. Pour le reste, le scanner de la maison\n"
+            "(.ephor/projet/sast.sh ou EPHOR_SAST, lancé par make sec)."
+        )
+    if findings:
+        for finding in findings:
+            print(finding)
+        print(
+            f"\n{len(findings)} fuite(s) possible(s). Une donnée client n'entre jamais dans un\n"
+            "journal ni dans un message d'erreur : journalise un identifiant technique à la\n"
+            "place. Faux positif ? Dis-le à l'opérateur : la liste d'exceptions est dans\n"
+            ".ephor/projet/fuites-autorisees.txt, hors de ta portée."
+        )
+        if partiel:
+            print(partiel)
+        return 1
+    if lus:
+        print(f"aucune donnée personnelle dans les journaux ({lus} fichier(s) Python lu(s))")
+    elif manques:
+        print("aucun fichier Python : rien n'a été lu")
+    else:
+        print("aucun fichier de code à lire")
+    if partiel:
+        print(partiel)
+        return int(args.code_si_partiel)
+    return 0
 
 
 if __name__ == "__main__":

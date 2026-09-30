@@ -173,7 +173,7 @@ question posée en revue de sécurité.
 
 | Outil | Installation | Ce qu'il apporte |
 |---|---|---|
-| **snyk/agent-scan** (Apache-2.0) | `uvx snyk-agent-scan@latest` (nécessite `SNYK_TOKEN`) | Découvre et analyse les serveurs MCP, les skills et les configurations d'agent sur la machine et dans le dépôt — Claude, Cursor, VS Code, Windsurf, Gemini CLI. Détecte injection de prompt, empoisonnement d'outil, téléchargements suspects, code malveillant, manipulation d'identifiants, secrets, flux toxiques. Drapeau `--ci` pour un code de retour non nul. Déjà câblé dans `.github/workflows/post-merge.yml`. |
+| **snyk/agent-scan** (Apache-2.0) | `uvx snyk-agent-scan@latest` (nécessite `SNYK_TOKEN`) | Découvre et analyse les serveurs MCP, les skills et les configurations d'agent sur la machine et dans le dépôt — Claude, Cursor, VS Code, Windsurf, Gemini CLI. Détecte injection de prompt, empoisonnement d'outil, téléchargements suspects, code malveillant, manipulation d'identifiants, secrets, flux toxiques. Drapeau `--ci` pour un code de retour non nul. Déjà câblé dans les deux CI (nuit ou après fusion). Sans `SNYK_TOKEN`, il ne tourne pas, et le dit : un avertissement sur la page du passage (GitHub), un travail « réussi avec avertissements » (GitLab). |
 
 **Le modèle de menace, en trois lignes.** Un serveur MCP tiers voit vos prompts, vos
 fichiers et ses propres descriptions d'outils sont injectées dans le contexte du

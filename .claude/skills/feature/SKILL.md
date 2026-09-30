@@ -2,7 +2,7 @@
 name: feature
 description: Boucle complète d'une fonctionnalité, du contrat au juge et à la revue. Utilise-la pour tout travail qui dépasse une correction triviale.
 argument-hint: [identifiant de tâche ou description courte]
-allowed-tools: Read Grep Glob Bash(make *) Bash(git *) Bash(bash .ephor/scripts/*) Bash(python3 .ephor/judge.py check *) Edit Write Task
+allowed-tools: Read Grep Glob Bash(make *) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git add *) Bash(git commit *) Bash(git switch *) Bash(git restore *) Bash(bash .ephor/scripts/*) Bash(python3 .ephor/judge.py check *) Edit Write Task
 ---
 
 # Fonctionnalité : $ARGUMENTS

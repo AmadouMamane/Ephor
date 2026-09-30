@@ -1,7 +1,7 @@
 ---
 name: debt-sweep
 description: Passe de nettoyage courte et sans risque sur le dépôt. À lancer en fin de journée ou entre deux fonctionnalités, jamais au milieu d'une implémentation.
-allowed-tools: Bash(make *) Bash(git *) Bash(rg *) Read Edit Task
+allowed-tools: Bash(make *) Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git show *) Bash(git add *) Bash(git commit *) Bash(git restore *) Bash(rg *) Read Edit Task
 ---
 
 # Ramassage de dette

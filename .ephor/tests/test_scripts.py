@@ -179,11 +179,21 @@ def test_le_doctor_nomme_le_greffon_copilot_manquant(tmp_path: Path) -> None:
     greffon = tmp_path / "pose" / "ephor"
     (greffon / "hooks").mkdir(parents=True)
     shutil.copy(ROOT / ".ephor" / "greffon-copilot" / "hooks" / "relais.sh", greffon / "hooks")
+    modele = (ROOT / ".ephor" / "greffon-copilot" / "hooks" / "hooks.json").read_text()
+    liste = modele.replace("__RACINE_DU_GREFFON__", str(greffon))
+    (greffon / "hooks" / "hooks.json").write_text(liste, encoding="utf-8")
     (greffon / "depots.txt").write_text("", encoding="utf-8")
     assert "n'y est pas déclaré" in doctor(tmp_path / "pose")
 
     (greffon / "depots.txt").write_text(str(ROOT) + "\n", encoding="utf-8")
     assert "greffon Copilot installé et ce dépôt déclaré" in doctor(tmp_path / "pose")
+
+    # Le relais à jour, mais une liste de gardes d'avant : une garde ne tournait pas.
+    ancienne = liste.replace("budget.sh checkpoint.sh", "checkpoint.sh")
+    assert ancienne != liste
+    (greffon / "hooks" / "hooks.json").write_text(ancienne, encoding="utf-8")
+    assert "n'enchaîne pas la liste de garde-fous du dépôt" in doctor(tmp_path / "pose")
+    (greffon / "hooks" / "hooks.json").write_text(liste, encoding="utf-8")
 
     (greffon / "hooks" / "relais.sh").write_text("vieille version\n", encoding="utf-8")
     assert "ne correspond plus" in doctor(tmp_path / "pose")
@@ -192,6 +202,47 @@ def test_le_doctor_nomme_le_greffon_copilot_manquant(tmp_path: Path) -> None:
     # reconnaît pas les garde-fous, et laisse passer au lieu de refuser.
     (greffon / "depots.txt").write_text("", encoding="utf-8")
     assert "ne correspond plus" in doctor(tmp_path / "pose")
+
+
+def test_le_doctor_dit_si_les_roles_ont_leur_modele_sous_opencode(tmp_path: Path) -> None:
+    """Sous opencode, un sous-agent sans modèle prend celui de l'agent qui l'appelle : la doc
+    disait « rien à faire », et scout comme planner tournaient sur le modèle de la session."""
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "opencode").write_text("#!/bin/sh\nexit 0\n")
+    (shim / "opencode").chmod(0o755)
+    conf = tmp_path / "conf" / "opencode"
+    conf.mkdir(parents=True)
+    env = dict(os.environ, PATH=f"{shim}:{os.environ['PATH']}", XDG_CONFIG_HOME=str(conf.parent))
+    env.pop("OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX", None)
+    doctor = ["bash", str(ROOT / ".ephor" / "scripts" / "doctor.sh")]
+    sortie = subprocess.run(doctor, capture_output=True, text=True, env=env, check=False).stdout
+    assert "aucun modèle réglé sur ce poste pour scout, planner, evaluator" in sortie
+    (conf / "opencode.json").write_text(
+        '{\n  "model": "p/standard",\n  "agent": {\n    "scout": {"model": "p/rapide"},\n'
+        '    "planner": { "model": "p/fort" }\n  }\n}\n',
+        encoding="utf-8",
+    )
+    (conf / "agents").mkdir()
+    (conf / "agents" / "evaluator.md").write_text("---\nmodel: p/fort\n---\n", encoding="utf-8")
+    env["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX"] = "16000"
+    sortie = subprocess.run(doctor, capture_output=True, text=True, env=env, check=False).stdout
+    assert "un modèle réglé pour scout, planner et evaluator" in sortie
+    assert "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=16000" in sortie
+
+
+def test_le_doctor_se_lance_avant_setup(tmp_path: Path) -> None:
+    """La recette « nouveau projet » lance `make doctor` AVANT `make setup` : un `.venv`
+    absent la faisait finir sur `make: *** [doctor] Error 1` (audit du 29/09/2026)."""
+    projet = tmp_path / "neuf"
+    (projet / ".ephor" / "scripts").mkdir(parents=True)
+    shutil.copy(ROOT / ".ephor" / "scripts" / "doctor.sh", projet / ".ephor" / "scripts")
+    (projet / "pyproject.toml").write_text('[project]\nname = "neuf"\n', encoding="utf-8")
+    sortie = subprocess.run(
+        ["bash", ".ephor/scripts/doctor.sh"], cwd=projet, capture_output=True, text=True
+    ).stdout
+    assert "environnement pas encore installé" in sortie
+    assert "[FAIL] environnement" not in sortie
 
 
 def test_doctor_refuses_a_python_that_is_too_old(tmp_path: Path) -> None:
@@ -361,6 +412,16 @@ def test_en_ci_le_juge_vient_de_la_branche_cible() -> None:
         texte = chemin.read_text(encoding="utf-8")
         assert "git archive" in texte and "juge-de-base/.ephor/judge.py" in texte, forge
         assert "python3 .ephor/judge.py" not in texte, f"{forge} lance le juge de la branche jugée"
+
+
+def test_un_scan_qui_ne_peut_pas_tourner_le_dit() -> None:
+    """Sans SNYK_TOKEN, le scan des agents sortait vert sans rien scanner, toutes les nuits :
+    le « ce qui ne peut pas tourner dit que tout va bien » qu'Ephor combat ailleurs."""
+    github = (ROOT / ".github" / "workflows" / "post-merge.yml").read_text(encoding="utf-8")
+    assert "::warning title=scan des agents non lancé::" in github
+    gitlab = (ROOT / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    assert 'non_lance="$non_lance agents(pas de SNYK_TOKEN)"' in gitlab
+    assert 'if [ -n "$non_lance" ]; then exit 3; fi' in gitlab
 
 
 def test_verify_ne_croit_pas_une_suite_coupee_avant_la_fin() -> None:
@@ -609,3 +670,30 @@ def test_la_revue_trouve_le_contrat_sur_master_comme_le_juge(tmp_path: Path) -> 
     )
     assert "approbation qui manque" not in sortie.stderr
     assert "Niveau de risque   : modere" in sortie.stdout
+
+
+def test_la_revue_va_au_bout_et_dit_son_bilan(tmp_path: Path) -> None:
+    """En `set -e`, un `verify` rouge arrêtait `make review` : le juge ne tournait pas, et
+    rien ne résumait la revue (audit du 29/09/2026)."""
+    cible = tmp_path / "depot"
+    cible.mkdir()
+    git(cible, "init", "-q", "-b", "main")
+    git(cible, "config", "user.email", "test@example.invalid")
+    git(cible, "config", "user.name", "Ephor test")
+    bootstrap(cible)
+    (cible / "tasks" / "T-001").mkdir(parents=True)
+    (cible / "tasks" / "T-001" / "contract.json").write_text('{"risk": "faible"}\n')
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "base")
+    (cible / ".ephor" / "projet" / "verify.sh").write_text("echo rouge\nexit 1\n")
+    sortie = subprocess.run(
+        ["bash", ".ephor/scripts/review.sh", "T-001"],
+        cwd=cible,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert sortie.returncode != 0
+    assert "-> juge" in sortie.stdout, "le juge tourne même après un verify rouge"
+    assert "revue : 0 étape(s) sur 2 vertes — en échec : vérification, juge" in sortie.stdout

@@ -36,8 +36,8 @@
       "Bash(wget *)"
     ],
     "deny": [
-      "Read(./.env)",
-      "Read(./.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
       "Read(**/*.pem)",
       "Read(**/*.key)",
       "Read(**/id_rsa*)",
@@ -76,6 +76,7 @@
       "Bash(make task-check *)",
       "Bash(make adapters *)",
       "Bash(make fetch-docs *)",
+      "Bash(make checkpoints-purge *)",
       "Bash(python3 .ephor/fetch_docs.py *)",
       "Bash(python3 .ephor/judge.py new *)",
       "Bash(python3 .ephor/judge.py rouge *)",
@@ -92,8 +93,7 @@
   },
   "env": {
     "PYTHONDONTWRITEBYTECODE": "1",
-    "PYTEST_ADDOPTS": "-p no:cacheprovider",
-    "MAX_THINKING_TOKENS": "16000"
+    "PYTEST_ADDOPTS": "-p no:cacheprovider"
   },
   "hooks": {
     "PreToolUse": [

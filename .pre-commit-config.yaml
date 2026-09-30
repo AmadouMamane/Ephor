@@ -27,8 +27,9 @@ repos:
         entry: bash -c 'command -v gitleaks >/dev/null 2>&1 && exec gitleaks protect --staged --no-banner --redact -v || { echo "gitleaks absent — contrôle ignoré (brew install gitleaks)"; exit 0; }'
         language: system
         pass_filenames: false
+  # Épinglé par empreinte, comme les actions de la CI : une étiquette peut être déplacée.
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # frozen: v5.0.0
     hooks:
       - id: check-merge-conflict
       - id: check-added-large-files

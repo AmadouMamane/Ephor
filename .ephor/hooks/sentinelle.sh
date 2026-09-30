@@ -18,7 +18,12 @@
 #     comparé — ce qui compte, c'est qu'il coupe les hooks ou les permissions ;
 #   - le dossier git : sa configuration (hors branches), ses hooks, ses exclusions ;
 #   - le tour INTERROMPU : Claude Code ne lance pas le hook de fin de tour quand on
-#     interrompt l'agent (2.1.282). Un tour jamais contrôlé l'est au début du suivant.
+#     interrompt l'agent (2.1.282). Un tour jamais contrôlé l'est au début du suivant ;
+#   - l'HISTOIRE, pas seulement le disque (audit du 29/09/2026) : un commit créé pendant le
+#     tour qui touche une zone, et toute branche principale déplacée (`git switch -C main`
+#     y portait un contrat « approuvé »). À l'inverse, un changement de branche ou un
+#     rebase sur main n'est plus une alerte : les zones du nouveau commit existaient déjà,
+#     personne ne les a écrites. La référence suit donc le commit courant.
 # Et c'est la sentinelle du dernier commit qui tourne, pas celle du disque (voir steer.sh et
 # checkpoint.sh) : réécrite pendant le tour, elle ne pourrait pas se juger elle-même.
 #
@@ -176,27 +181,108 @@ $( { specs_moteur; lue spec; specs_reglages; } | sort -u )
 SPECS_LISTE
 [ "${#SPECS[@]}" -gt 0 ] || exit 0
 
+# Les branches principales : main, master, et celle que le dépôt distant désigne. Le commit
+# d'un contrat sur l'une d'elles EST l'approbation que le juge lit : la déplacer pendant un
+# tour, c'est pouvoir s'approuver (`git switch -C main <branche>`, vu à l'audit du 29/09/2026).
+principales() {
+  local distante nom
+  distante="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  for nom in main master "${distante#*/}"; do
+    [ -n "$nom" ] || continue
+    printf '%s %s\n' "$nom" "$(git rev-parse -q --verify "refs/heads/$nom" 2>/dev/null || echo absente)"
+  done | sort -u
+}
+
 photographier() { # photographier <état> : la référence du prochain contrôle
   local tree
   tree="$(arbre "${SPECS[@]}")" || return 0
   [ -n "$tree" ] || return 0
   {
-    printf 'arbre %s\netat %s\ngit %s\nlocal %s\n' "$tree" "$1" "$(etat_git)" "$(drapeaux)"
+    printf 'arbre %s\nhead %s\netat %s\ngit %s\nlocal %s\n' "$tree" \
+      "$(git rev-parse -q --verify HEAD 2>/dev/null)" "$1" "$(etat_git)" "$(drapeaux)"
     printf 'spec %s\n' "${SPECS[@]}"
+    # Ce qui existait au début du tour : un commit que rien de tout ceci n'atteint a été créé
+    # pendant le tour.
+    git for-each-ref --format='ref %(objectname)' refs/heads refs/tags 2>/dev/null
+    principales | sed 's/^/principale /'
   } > "$PHOTO"
 }
 
+reporter() { # reporter <commit d'avant> <photo> <commit de maintenant> : l'arbre de référence
+  # Quand le commit courant a changé pendant le tour (changement de branche, rebase), les
+  # zones du nouveau commit ne sont l'écriture de personne : la référence devient ce nouveau
+  # commit, plus ce que la photo avait de pas commité dans les zones. Sans cela, revenir sur
+  # la branche principale ou la reprendre sous sa branche de tâche arrêtait l'agent pour une
+  # « zone changée » que personne n'avait écrite (vu à l'audit du 29/09/2026).
+  local tmp resultat=""
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/ephor-sentinelle.XXXXXX")" || return 1
+  if GIT_INDEX_FILE="$tmp/index" git read-tree "$3" 2>/dev/null; then
+    git diff-tree -z -r --no-renames "$1^{tree}" "$2" -- "${SPECS[@]}" "${EXCLUS[@]}" 2>/dev/null \
+      | while IFS= read -r -d '' meta && IFS= read -r -d '' chemin; do
+          read -r _ mode _ objet _ <<META
+$meta
+META
+          # Le mode 0 retire le chemin : un fichier que la photo n'avait plus sur le disque.
+          printf '%s %s\t%s\0' "$mode" "$objet" "$chemin"
+        done | GIT_INDEX_FILE="$tmp/index" git update-index -z --index-info 2>/dev/null \
+      && resultat="$(GIT_INDEX_FILE="$tmp/index" git write-tree 2>/dev/null)"
+  fi
+  rm -rf "$tmp"
+  [ -n "$resultat" ] && printf '%s' "$resultat"
+}
+
+commits_du_tour() { # les zones que touchent les commits créés pendant le tour : « état\tchemin »
+  local refs commit
+  refs="$(lue ref)"
+  # Une photo d'avant cette liste (prise par la sentinelle d'une version précédente) ne dit
+  # pas ce qui existait : toute l'histoire passerait pour créée pendant le tour.
+  [ -n "$refs" ] || return 0
+  # Atteints depuis HEAD ou une branche, pas depuis ce qui existait à la photo ni depuis le
+  # dépôt distant (un `git fetch` rapporte le travail des autres, pas celui de l'agent).
+  # shellcheck disable=SC2086  # une empreinte par mot, c'est voulu
+  for commit in $(git rev-list HEAD --branches --not $refs --remotes 2>/dev/null); do
+    git -c core.quotepath=off diff-tree --no-commit-id -r --name-status --no-renames "$commit" \
+      -- "${SPECS[@]}" "${EXCLUS[@]}" 2>/dev/null
+  done
+}
+
 controler() { # controler <quand> : compare à la photo ; alerte et rend 1 si une zone a changé
-  local avant maintenant changes liste total raison nouveaux drapeau
+  local avant maintenant reference tete_avant tete changes liste total raison nouveaux drapeau
+  local deplacees nom sha actuel remedes
   avant="$(lue arbre)"
   if [ -z "$avant" ] || ! git cat-file -e "$avant^{tree}" 2>/dev/null; then
     return 0  # pas de photo pour ce tour (hook branché en cours de session) : on commence ici
   fi
   maintenant="$(arbre "${SPECS[@]}")" || return 0
   [ -n "$maintenant" ] || return 0
+  reference="$avant"
+  tete_avant="$(lue head)"
+  tete="$(git rev-parse -q --verify HEAD 2>/dev/null)"
+  if [ -n "$tete_avant" ] && [ "$tete" != "$tete_avant" ] && git cat-file -e "$tete_avant^{commit}" 2>/dev/null; then
+    reference="$(reporter "$tete_avant" "$avant" "$tete")" || reference=""
+    [ -n "$reference" ] || reference="$avant"
+  fi
   changes=""
-  if [ "$avant" != "$maintenant" ]; then
-    changes="$(git -c core.quotepath=off diff-tree -r --name-status "$avant" "$maintenant" -- "${SPECS[@]}" 2>/dev/null)"
+  if [ "$reference" != "$maintenant" ]; then
+    changes="$(git -c core.quotepath=off diff-tree -r --name-status "$reference" "$maintenant" -- "${SPECS[@]}" 2>/dev/null)"
+  fi
+  # Un commit créé pendant le tour qui touche une zone : le changement est dans l'histoire,
+  # plus sur le disque. Dédoublonné : un fichier écrit puis commité n'est nommé qu'une fois.
+  changes="$(printf '%s\n%s\n' "$changes" "$(commits_du_tour)" | sed '/^$/d' | awk -F '\t' '!vu[$2]++')"
+  remedes=""
+  deplacees=""
+  while IFS=' ' read -r nom sha; do
+    [ -n "$nom" ] || continue
+    actuel="$(git rev-parse -q --verify "refs/heads/$nom" 2>/dev/null || echo absente)"
+    if [ "$actuel" != "$sha" ]; then
+      deplacees="${deplacees:+$deplacees, }$nom ${sha:0:7} → ${actuel:0:7}"
+      [ "$sha" = absente ] || remedes="$remedes git update-ref refs/heads/$nom $sha la remet ;"
+    fi
+  done <<PRINCIPALES
+$(lue principale)
+PRINCIPALES
+  if [ -n "$deplacees" ]; then
+    changes="${changes:+$changes$'\n'}X"$'\t'"branche principale déplacée : $deplacees"
   fi
   if [ "$(lue git)" != "$(etat_git)" ]; then
     changes="${changes:+$changes$'\n'}M"$'\t'"dossier git (configuration, hooks ou exclusions)"
@@ -210,11 +296,11 @@ controler() { # controler <quand> : compare à la photo ; alerte et rend 1 si un
   fi
   [ -n "$changes" ] || return 0
   liste="$(printf '%s\n' "$changes" | head -n 8 | awk -F '\t' '
-    { etat = $1 == "A" ? "ajouté" : $1 == "D" ? "supprimé" : "modifié"
-      printf "%s%s (%s)", (NR > 1 ? ", " : ""), $2, etat }')"
+    { etat = $1 == "A" ? " (ajouté)" : $1 == "D" ? " (supprimé)" : $1 == "X" ? "" : " (modifié)"
+      printf "%s%s%s", (NR > 1 ? ", " : ""), $2, etat }')"
   total="$(printf '%s\n' "$changes" | wc -l | tr -d ' ')"
   [ "$total" -gt 8 ] && liste="$liste, et $((total - 8)) autre(s)"
-  raison="sentinelle : zone de contrôle changée $1 — $liste. À vérifier (git diff ; git status pour un fichier nouveau), à défaire au besoin (git restore -- <fichier>). Si c'est l'opérateur qui l'a changée : make resume."
+  raison="sentinelle : zone de contrôle changée $1 — $liste. À vérifier (git diff ; git status pour un fichier nouveau ; git log --stat pour un commit du tour), à défaire au besoin (git restore -- <fichier>).${remedes:+ Branche principale :$remedes} Si c'est l'opérateur qui l'a changée : make resume."
   printf '%s\n' "$raison" >> "$ROOT/AGENT_STOP"
   echo "ATTENTION — $raison AGENT_STOP posé : l'agent est arrêté." >&2
   return 1

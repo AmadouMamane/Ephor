@@ -167,15 +167,32 @@ Derrière une passerelle, ces trois noms ne veulent plus rien dire : parlez en *
 standard, fort**, et branchez-les une fois, sur votre poste, jamais dans le dépôt — les noms
 de modèles de l'entreprise n'ont rien à faire dans un dépôt partagé.
 
-| Alias | Claude Code | opencode |
+| Alias | Claude Code | opencode (`~/.config/opencode/opencode.json`) |
 |---|---|---|
-| rapide | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `small_model` dans `~/.config/opencode/opencode.json` |
-| standard | `ANTHROPIC_DEFAULT_SONNET_MODEL` | `model` |
-| fort | `ANTHROPIC_DEFAULT_OPUS_MODEL` | `agent.<nom>.model` pour les agents qui le méritent |
+| rapide | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | `agent.scout.model` |
+| standard | `ANTHROPIC_DEFAULT_SONNET_MODEL` | `model`, celui de la session |
+| fort | `ANTHROPIC_DEFAULT_OPUS_MODEL` | `agent.planner.model`, `agent.evaluator.model` |
 
-Les sous-agents d'Ephor nomment déjà leur niveau (`haiku`, `sonnet`, `opus`) ; les
-adaptateurs ne recopient aucun nom de modèle chez opencode, exprès : c'est votre configuration
-personnelle qui décide.
+Sous Claude Code, rien d'autre à faire : les sous-agents d'Ephor nomment leur niveau
+(`haiku`, `sonnet`, `opus`). Sous opencode, **à régler une fois sur le poste** : les
+adaptateurs ne recopient aucun nom de modèle, exprès (les noms de l'entreprise n'ont rien à
+faire dans le dépôt), et un sous-agent sans modèle prend celui de l'agent qui l'appelle (doc
+d'opencode). Sans ces lignes, `scout` comme `planner` tournent sur le modèle de la session.
+`small_model` n'y change rien : il ne sert qu'aux petites tâches d'opencode, comme le titre
+des sessions. `make doctor` dit si les rôles sont réglés.
+
+```json
+{
+  "model": "<passerelle>/<modèle standard>",
+  "agent": {
+    "scout": { "model": "<passerelle>/<modèle rapide>" },
+    "planner": { "model": "<passerelle>/<modèle fort>" },
+    "evaluator": { "model": "<passerelle>/<modèle fort>" }
+  }
+}
+```
+
+`reviewer` et `debt-collector` sont au niveau standard : ils prennent celui de la session.
 
 Chez opencode, une sortie d'outil est plafonnée à 600 lignes ou 50 ko (`tool_output` dans
 `.opencode/opencode.json`, généré) ; le reste part sur disque. C'est un plafond, pas un
@@ -183,12 +200,13 @@ résumé : la discipline du `.verify/` reste la vraie économie.
 
 ### 2.7 Ajuster l'effort de réflexion
 
-La réflexion étendue est facturée en tokens de sortie et son budget par défaut peut
-atteindre des dizaines de milliers de tokens par requête. Pour les tâches simples,
-baisser avec `/effort`, ou plafonner via `MAX_THINKING_TOKENS` (positionné à 16000
-dans `.claude/settings.json` de ce template — remontez-le pour les phases d'architecture).
-Les modèles à raisonnement adaptatif ignorent un budget non nul : chez eux, seul le
-niveau d'effort compte.
+La réflexion étendue est facturée en tokens de sortie. Les modèles actuels (Sonnet 5 et
+suivants, Opus 4.7 et suivants, Fable) la dosent eux-mêmes : c'est le **niveau d'effort**
+qui la règle, `/effort` dans la session, ou `effort:` dans l'en-tête d'un sous-agent.
+Baissez-le pour la routine, montez-le pour l'architecture. Ephor ne plafonne rien d'office :
+`MAX_THINKING_TOKENS`, longtemps posé à 16 000 dans les réglages, ne vaut plus que pour
+d'anciens modèles (doc de Claude Code) ; sur eux, c'était une baisse de qualité que rien
+ne disait.
 
 Plus d'effort demande plus de place : la réflexion est comptée dans la réponse. opencode
 plafonne une réponse à 32 000 tokens ; au plus haut niveau, la réflexion du `planner` le

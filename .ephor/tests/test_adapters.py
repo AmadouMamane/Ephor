@@ -840,3 +840,21 @@ def test_les_gestes_de_l_operateur_sont_refuses_aux_trois_outils() -> None:
         assert f"Bash({geste})" in reglages["permissions"]["deny"], geste
         assert opencode["permission"]["bash"][geste] == "deny", geste
     assert "make task-check" in vscode
+
+
+def test_une_skill_n_ouvre_pas_plus_que_les_reglages() -> None:
+    """`/feature` ouvrait `Bash(git *)`, et `/brownfield-onboard` tout le terminal : pendant
+    la skill, `git reset`, `git branch -f` ou `git clean -fdx` passaient sans question
+    (audit du 29/09/2026). Une skill reprend des commandes des réglages, jamais plus."""
+    reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    permis = set(reglages["permissions"]["allow"])
+    vues = 0
+    for skill in sorted((ROOT / ".claude" / "skills").glob("*/SKILL.md")):
+        entete = skill.read_text(encoding="utf-8").split("---")[1]
+        outils = re.search(r"^allowed-tools:(.*)$", entete, re.M)
+        texte = outils.group(1) if outils else ""
+        assert not re.search(r"(?<![(\w])Bash(?![(\w])", texte), f"{skill.parent.name} : Bash nu"
+        for commande in re.findall(r"Bash\([^)]*\)", texte):
+            vues += 1
+            assert commande in permis, f"{skill.parent.name} ouvre {commande}"
+    assert vues, "les skills nomment leurs commandes"

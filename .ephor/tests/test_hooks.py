@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -500,6 +501,126 @@ def test_chaque_session_copilot_a_son_point_de_reprise(tmp_path: Path, sans: boo
     assert hook("checkpoint.sh", charge, project=repo, path=chemin).returncode == 0
     points = git(repo, "for-each-ref", "--format=%(refname)", "refs/ephor/checkpoints")
     assert points.split() == ["refs/ephor/checkpoints/c829c62b"]
+
+
+def depot_de_reprise(tmp_path: Path, **fichiers: bytes) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "user.email", "t@example.invalid")
+    git(repo, "config", "user.name", "t")
+    (repo / "a.py").write_text("A = 1\n")
+    for nom, contenu in fichiers.items():
+        (repo / nom).parent.mkdir(parents=True, exist_ok=True)
+        (repo / nom).write_bytes(contenu)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base")
+    return repo
+
+
+def test_un_gros_fichier_n_entre_pas_dans_le_point_de_reprise(tmp_path: Path) -> None:
+    """Tout fichier présent à une fin de tour entrait dans `.git`, pour de bon : un fichier de
+    200 Mo, effacé puis `git gc`, laissait le dépôt 157 Mo plus lourd. Au-delà de 5 Mo, le
+    point de reprise garde la version commitée, et nomme le fichier."""
+    repo = depot_de_reprise(tmp_path, **{"suivi.bin": b"z" * (6 << 20)})
+    (repo / "a.py").write_text("A = 2\n")
+    (repo / "suivi.bin").write_bytes(b"w" * (6 << 20))
+    (repo / "donnees [brutes].csv").write_bytes(b"x" * (6 << 20))
+    (repo / "petit.bin").write_bytes(b"y" * (4 << 20))
+    gros = [git(repo, "hash-object", nom).strip() for nom in ("suivi.bin", "donnees [brutes].csv")]
+    assert hook("checkpoint.sh", {"session_id": "s1"}, project=repo).returncode == 0
+    ref = "refs/ephor/checkpoints/s1"
+    assert git(repo, "show", f"{ref}:a.py") == "A = 2\n"
+    assert git(repo, "rev-parse", f"{ref}:petit.bin") == git(repo, "hash-object", "petit.bin")
+    assert git(repo, "rev-parse", f"{ref}:suivi.bin") == git(repo, "rev-parse", "HEAD:suivi.bin")
+    assert "donnees [brutes].csv" not in git(repo, "ls-tree", "--name-only", ref).splitlines()
+    for objet in gros:
+        absent = subprocess.run(["git", "-C", str(repo), "cat-file", "-e", objet], check=False)
+        assert absent.returncode != 0, "le gros fichier n'est même pas copié dans .git"
+    message = git(repo, "log", "-1", "--format=%B", ref)
+    assert "donnees [brutes].csv" in message and "suivi.bin" in message
+
+
+def test_les_points_de_reprise_de_plus_de_30_jours_partent(tmp_path: Path) -> None:
+    """Rien ne supprimait jamais un point de reprise : un secret écrit un instant dans un
+    fichier non ignoré survivait dans `.git`, même effacé, même après `git gc`. La purge
+    passe à chaque fin de tour, dossier propre compris."""
+    repo = depot_de_reprise(tmp_path)
+    arbre = git(repo, "rev-parse", "HEAD^{tree}").strip()
+    for session, jours in (("vieille", 31), ("recente", 29)):
+        date = f"{int(time.time()) - jours * 86400} +0000"
+        commit = subprocess.run(
+            ["git", "-C", str(repo), "commit-tree", arbre, "-m", "point"],
+            env={**os.environ, "GIT_COMMITTER_DATE": date, "GIT_AUTHOR_DATE": date},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        git(repo, "update-ref", f"refs/ephor/checkpoints/{session}", commit)
+    assert hook("checkpoint.sh", {"session_id": "s1"}, project=repo).returncode == 0
+    reste = git(repo, "for-each-ref", "--format=%(refname)", "refs/ephor/checkpoints")
+    assert reste.split() == ["refs/ephor/checkpoints/recente"]
+
+
+def test_make_checkpoints_purge_les_supprime_tous(tmp_path: Path) -> None:
+    repo = depot_de_reprise(tmp_path)
+    (repo / "a.py").write_text("A = 2\n")
+    assert hook("checkpoint.sh", {"session_id": "s1"}, project=repo).returncode == 0
+    assert git(repo, "for-each-ref", "refs/ephor/checkpoints").strip()
+    purge = subprocess.run(
+        ["make", "-s", "-f", str(ROOT / "Makefile"), "checkpoints-purge"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert purge.returncode == 0, purge.stderr
+    assert git(repo, "for-each-ref", "refs/ephor/checkpoints") == ""
+    assert "git gc --prune=now" in purge.stdout, "dit comment libérer la place tout de suite"
+
+
+def test_le_point_de_reprise_ne_relit_que_ce_qui_a_change(tmp_path: Path) -> None:
+    """Il repartait d'un index vide et relisait TOUT le dépôt à chaque fin de tour : 3 à 4 s
+    sur 20 000 fichiers et 600 Mo. Il part d'une copie de l'index réel, qui sait déjà quels
+    fichiers n'ont pas bougé. Un filtre git qui note chaque fichier lu le montre."""
+    lus = tmp_path / "lus.txt"
+    filtre = tmp_path / "filtre.sh"
+    filtre.write_text(f'#!/bin/sh\necho "$1" >> "{lus}"\nexec cat\n')
+    filtre.chmod(0o755)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "user.email", "t@example.invalid")
+    git(repo, "config", "user.name", "t")
+    git(repo, "config", "filter.trace.clean", f"{filtre} %f")
+    (repo / ".gitattributes").write_text("*.txt filter=trace\n")
+    avant = time.time() - 100  # plus vieux que l'index : aucun fichier « à revérifier »
+    for i in range(5):
+        (repo / f"f{i}.txt").write_text(f"{i}\n")
+        os.utime(repo / f"f{i}.txt", (avant, avant))
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base")
+    (repo / "f0.txt").write_text("changé\n")
+    lus.unlink(missing_ok=True)
+    assert hook("checkpoint.sh", {"session_id": "s1"}, project=repo).returncode == 0
+    assert git(repo, "show", "refs/ephor/checkpoints/s1:f0.txt") == "changé\n"
+    assert set(lus.read_text().split()) == {"f0.txt"}, "les fichiers inchangés ne sont pas relus"
+
+
+def test_un_conflit_de_fusion_n_empeche_pas_le_point_de_reprise(tmp_path: Path) -> None:
+    repo = depot_de_reprise(tmp_path)
+    git(repo, "switch", "-qc", "autre")
+    (repo / "a.py").write_text("A = 3\n")
+    git(repo, "commit", "-qam", "autre")
+    git(repo, "switch", "-q", "main")
+    (repo / "a.py").write_text("A = 2\n")
+    git(repo, "commit", "-qam", "main")
+    fusion = subprocess.run(["git", "-C", str(repo), "merge", "-q", "autre"], capture_output=True)
+    assert fusion.returncode != 0, "le conflit est voulu"
+    avant = git(repo, "ls-files", "-u")
+    assert hook("checkpoint.sh", {"session_id": "s1"}, project=repo).returncode == 0
+    assert "<<<<<<<" in git(repo, "show", "refs/ephor/checkpoints/s1:a.py")
+    assert git(repo, "ls-files", "-u") == avant, "l'index réel garde son conflit"
 
 
 # --------------------------------------------------------------------------- Copilot
@@ -1127,6 +1248,170 @@ def test_l_agent_n_ecrit_pas_l_histoire_de_la_branche_principale(tmp_path: Path)
     for commande in ("git switch main && git commit -m x", "git checkout main && git merge x"):
         assert code(commande) == 2, "la garde suit le changement de branche : " + commande
     assert code("git switch main") == 0, "changer de branche n'écrit rien"
+
+
+def projet_git(tmp_path: Path) -> Path:
+    """Un dépôt avec les réglages d'Ephor, un commit, et une branche de tâche courante."""
+    projet = projet_avec_reglages(tmp_path)
+    (projet / "README.md").write_text("# projet\n", encoding="utf-8")
+    git(projet, "init", "-q", "-b", "main")
+    git(projet, "config", "user.email", "t@example.invalid")
+    git(projet, "config", "user.name", "t")
+    git(projet, "add", "-A")
+    git(projet, "commit", "-qm", "base")
+    git(projet, "switch", "-qc", "task/T-1")
+    return projet
+
+
+def au_terminal_de(projet: Path, commande: str) -> int:
+    charge = {"tool_name": "Bash", "tool_input": {"command": commande}}
+    return hook("shell-guard.sh", charge, cwd=projet, project=projet).returncode
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "git switch -C main task/T-1",
+        "git checkout -B main HEAD",
+        "git branch -f main HEAD",
+        "git branch -M main",
+        "git branch -m main",
+        "git update-ref refs/heads/main HEAD",
+        "git update-ref -m raison refs/heads/main HEAD",
+        "git push . HEAD:main",
+        "git fetch . task/T-1:main",
+        "git rebase --onto HEAD~1 HEAD main",
+        "git worktree add -B main ../ailleurs",
+        "git switch main && git reset --soft task/T-1",
+        "git switch main && git reset HEAD~1",
+    ],
+)
+def test_l_agent_ne_deplace_pas_la_branche_principale(tmp_path: Path, commande: str) -> None:
+    """Refuser `git commit` sur main ne suffisait pas : `git switch -C main <branche>`, qui
+    passe sans question, y portait un contrat que l'agent s'était écrit (audit du
+    29/09/2026). Tout ce qui crée, déplace, renomme ou supprime la branche principale est
+    une écriture de son histoire."""
+    assert au_terminal_de(projet_git(tmp_path), commande) == 2
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "git switch -c task/T-2",
+        "git branch",
+        "git branch --contains main",
+        "git branch -u origin/main",
+        "git switch main && git reset",
+        "git switch main && git reset -- README.md",
+        "git rebase main",
+        "git push origin HEAD:task/T-1",
+        "git log main..HEAD",
+    ],
+)
+def test_ce_qui_ne_deplace_pas_la_branche_principale_passe(tmp_path: Path, commande: str) -> None:
+    assert au_terminal_de(projet_git(tmp_path), commande) == 0
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "make task-check ID=T-1",
+        "make ID=T-1 task-check",
+        "make -e task-new ID=T-2",
+        "make -s adapters",
+        "make copilot-install",
+        "make checkpoints-purge",
+        "make fetch-docs URL=https://exemple.fr",
+        "python3 -B -X pycache_prefix=/dev/null/x .ephor/judge.py rouge --task-id T-1",
+        "python3 .ephor/judge.py new --task-id T-2",
+        "uv run python .ephor/adapters.py write",
+        "bash .ephor/scripts/install_copilot_plugin.sh",
+        'bash -c "make ID=T-2 task-new"',
+    ],
+)
+def test_les_gestes_de_l_operateur_dans_n_importe_quel_ordre(tmp_path: Path, commande: str) -> None:
+    """Les refus des réglages comparent le DÉBUT de la commande : `make ID=X task-check`
+    passait par la règle générale `make *` (audit du 29/09/2026). La garde lit la commande."""
+    assert au_terminal_de(projet_git(tmp_path), commande) == 2
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "make verify",
+        "make judge TASK=T-1",
+        "make -j4 test",
+        "python3 .ephor/judge.py check --task-id T-1",
+        "python3 .ephor/adapters.py check",
+        "make map REPO=task-check",
+    ],
+)
+def test_les_commandes_de_l_agent_passent(tmp_path: Path, commande: str) -> None:
+    assert au_terminal_de(projet_git(tmp_path), commande) == 0
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        'rg "" .env',
+        "cat api/.env",
+        "grep -r TOKEN api/.env",
+        "head -5 ./api/.env",
+        "grep -f .env src/",
+        "source .env && echo ok",
+        ". ./api/.env",
+        "jq . .env",
+        "python3 -c \"print(open('.env').read())\"",
+        "make -pn help",
+        "env",
+        "printenv",
+        "printenv GITLAB_TOKEN",
+        "export -p",
+        "cat ~/.ssh/id_rsa",
+        "cat server.pem",
+    ],
+)
+def test_le_terminal_ne_montre_pas_un_secret(tmp_path: Path, commande: str) -> None:
+    """`rg` et `make` passent sans question : `rg "" .env` affichait le fichier, `make -pn`
+    tout l'environnement de l'opérateur, jetons compris ; et un `.env` de sous-dossier n'était
+    refusé nulle part (audit du 29/09/2026)."""
+    assert au_terminal_de(projet_git(tmp_path), commande) == 2
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        'rg "\\.env" src/',
+        "grep -rn env src/",
+        "cat README.md",
+        "printenv HOME",
+        "env VAR=1 make verify",
+        "echo API_KEY= >> .env.example",
+        "ls -la",
+    ],
+)
+def test_lire_ce_qui_n_est_pas_un_secret_passe(tmp_path: Path, commande: str) -> None:
+    assert au_terminal_de(projet_git(tmp_path), commande) == 0
+
+
+def test_un_env_de_sous_dossier_est_refuse_a_la_lecture() -> None:
+    """`Read(./.env)` ne couvrait que la racine : `api/.env` se lisait sans question."""
+    reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    refus = reglages["permissions"]["deny"]
+    assert "Read(**/.env)" in refus and "Read(**/.env.*)" in refus
+    lecture = hook(
+        "read-guard.sh",
+        charge_copilot("view", {"path": str(ROOT / "api" / ".env")}, ROOT),
+        project=ROOT,
+    )
+    assert lecture.returncode == 2
+
+
+def test_aucun_plafond_de_reflexion_cache() -> None:
+    """Sans effet sur les modèles actuels, et une baisse de qualité silencieuse sur les
+    anciens (doc de Claude Code) : l'effort se règle à la vue de tous, pas ici."""
+    reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert "MAX_THINKING_TOKENS" not in reglages.get("env", {})
 
 
 def test_les_hooks_ne_lancent_pas_ce_qu_on_glisse_dans_git(tmp_path: Path) -> None:

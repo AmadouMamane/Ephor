@@ -115,6 +115,22 @@ def test_committed_branch_work_is_judged_too(repo: Path, run_judge: Runner) -> N
     assert report["changed_paths"] == ["src/metrics.py"]
 
 
+def test_le_verdict_dit_quand_le_travail_n_est_pas_commite(repo: Path, run_judge: Runner) -> None:
+    """Le juge juge le disque. Correctif écrit, jamais commité : il rendait VÉRIFIÉ sans le
+    dire, et la merge request partait vide (audit du 29/09/2026)."""
+    resume = repo / ".verify" / "judge" / "T-001" / "latest" / "summary.txt"
+    (repo / "src" / "metrics.py").write_text(FIX)
+    code, report = run_judge(repo)
+    assert code == 0 and report["uncommitted_paths"] == ["src/metrics.py"]
+    lignes = resume.read_text().splitlines()
+    assert any("pas encore commité" in ligne and "src/metrics.py" in ligne for ligne in lignes)
+    assert lignes[-1].startswith("VERDICT : VÉRIFIÉ") and "pas encore commité" in lignes[-1]
+    git(repo, "commit", "-qam", "fix")
+    code, report = run_judge(repo)
+    assert code == 0 and report["uncommitted_paths"] == []
+    assert "commité" not in resume.read_text()
+
+
 def test_change_outside_the_contract_is_rejected(repo: Path, run_judge: Runner) -> None:
     (repo / "src" / "metrics.py").write_text(FIX)
     (repo / "README.md").write_text("hors périmètre\n")
@@ -225,6 +241,21 @@ def test_contract_must_be_approved_on_the_base(repo: Path, run_judge: Runner) ->
     assert any("approuvée" in reason for reason in report["reasons"])
 
 
+def test_une_base_choisie_a_la_main_n_approuve_rien(repo: Path, run_judge: Runner) -> None:
+    """`make judge TASK=X BASE=<sa branche>` : l'agent commitait sur sa propre branche un
+    contrat qu'il s'était écrit, et le juge local le lisait « approuvé » (audit du
+    29/09/2026). Une base est la branche principale, ou une branche du serveur."""
+    git(repo, "branch", "travail-agent", "main")
+    code, report = run_judge(repo, "--base", "travail-agent")
+    assert code == 2
+    assert any("base choisie à la main (travail-agent)" in r for r in report["reasons"])
+    git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    code, report = run_judge(repo, "--base", "origin/main")
+    assert report["status"] != "rejected", "une branche du serveur reste une base : la CI"
+    code, report = run_judge(repo, "--base", "main")
+    assert report["status"] != "rejected"
+
+
 def test_contract_created_only_on_the_branch_is_rejected(repo: Path, tmp_path: Path) -> None:
     folder = repo / "tasks" / "T-002"
     folder.mkdir()
@@ -284,6 +315,42 @@ def test_api_keys_never_reach_the_tests(
     (repo / "src" / "metrics.py").write_text(FIX)
     code, report = run_judge(repo)
     assert code == 0, report
+
+
+def test_un_jeton_dans_l_adresse_de_l_index_ne_passe_qu_a_l_installation(
+    make_repo: Callable[..., Path], run_judge: Runner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`UV_DEFAULT_INDEX=https://moi:jeton@jfrog/...` est la forme la plus courante, et elle
+    passait à toutes les étapes, tests compris (audit du 29/09/2026). L'installation garde
+    l'adresse entière ; la vérification et les critères, l'adresse sans l'identifiant."""
+    monkeypatch.setenv("UV_DEFAULT_INDEX", "https://moi:jeton-secret@jfrog.exemple/simple")
+    monkeypatch.setenv("UV_INDEX", "interne=https://u:autre-jeton@jfrog.exemple/b/simple")
+    setup_probe = (
+        "import os, sys; "
+        "sys.exit(0 if 'jeton-secret' in os.environ['UV_DEFAULT_INDEX'] else 'absent')"
+    )
+    probe = (
+        "import os, sys; v, i = os.environ['UV_DEFAULT_INDEX'], os.environ['UV_INDEX']; "
+        "ok = v == 'https://jfrog.exemple/simple'"
+        " and i == 'interne=https://jfrog.exemple/b/simple'; "
+        "sys.exit(0 if ok else 'fuite : ' + v + ' ' + i)"
+    )
+    repo = make_repo(setup=["{python}", "-c", setup_probe], verify=["{python}", "-c", probe])
+    (repo / "src" / "metrics.py").write_text(FIX)
+    code, report = run_judge(repo)
+    assert code == 0, report
+
+
+def test_le_conteneur_recoit_l_adresse_d_index_sans_identifiant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("UV_DEFAULT_INDEX", "https://moi:jeton-secret@jfrog.exemple/simple")
+    runtime = judge.Runtime(kind="docker", image="img@sha256:" + "a" * 64)
+    verification = judge.container_command(runtime, ["pytest"], tmp_path, "verify", True, "n")[0]
+    assert "UV_DEFAULT_INDEX=https://jfrog.exemple/simple" in verification
+    assert not any("jeton-secret" in argument for argument in verification)
+    installation = judge.container_command(runtime, ["uv"], tmp_path, "setup", True, "n")[0]
+    assert "UV_DEFAULT_INDEX" in installation, "relayée par son nom, entière, à l'installation"
 
 
 def test_git_hook_trick_is_neutralized(repo: Path, run_judge: Runner, tmp_path: Path) -> None:
@@ -566,6 +633,95 @@ def test_container_runtime_runs_the_checks_offline(
         shutil.rmtree(workdir, ignore_errors=True)
     assert code == 0, report
     assert report["runtime"]["kind"] in ("podman", "docker")
+
+
+def test_la_copie_du_conteneur_se_passe_de_votre_depot(repo: Path, tmp_path: Path) -> None:
+    """La copie emprunte les objets de votre dépôt par un chemin du poste, que le conteneur ne
+    voit pas : git y trouvait un dépôt cassé, et un projet versionné par git (hatch-vcs) ne
+    s'installait pas (audit du 29/09/2026). Rendue autonome, elle garde les étiquettes de sa
+    base, et seulement elles."""
+    git(repo, "tag", "v0.2.0", "main")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    git(repo, "commit", "-qam", "travail de la tâche")
+    git(repo, "tag", "v-tache")
+    copie = tmp_path / "copie"
+    judge.create_copy(repo, copie, git(repo, "rev-parse", "main").strip())
+    judge.rendre_autonome(copie)
+    assert not (copie / ".git" / "objects" / "info" / "alternates").exists()
+    repo.rename(tmp_path / "hors-de-portee")  # comme dans le conteneur
+    assert git(copie, "describe", "--tags").strip() == "v0.2.0"
+    assert git(copie, "tag").split() == ["v0.2.0"]
+    git(copie, "fsck", "--connectivity-only", "--no-dangling")
+
+
+def image_de_test_avec_git() -> str | None:
+    image = os.environ.get("EPHOR_TEST_IMAGE_GIT", "ephor-ci:test")
+    moteur = engine()
+    if moteur is None:
+        return None
+    present = subprocess.run([moteur, "image", "inspect", image], capture_output=True, check=False)
+    return image if present.returncode == 0 else None
+
+
+@pytest.mark.container
+@pytest.mark.skipif(image_de_test_avec_git() is None, reason="pas d'image avec git (make ci-image)")
+def test_git_marche_dans_la_copie_du_conteneur(
+    make_repo: Callable[..., Path], run_judge: Runner
+) -> None:
+    critere = {
+        "id": "C3",
+        "description": "git lit l'histoire de la copie",
+        "check": ["git", "describe", "--tags"],
+        "expected_output": "v0.2.0\n",
+    }
+    repo = make_repo(criteria=[critere])
+    git(repo, "tag", "v0.2.0", "main")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    workdir = Path.home() / ".cache" / "ephor" / "tests" / uuid.uuid4().hex[:8]
+    try:
+        code, report = run_judge(
+            repo,
+            "--runtime",
+            str(engine()),
+            "--image",
+            str(image_de_test_avec_git()),
+            "--workdir",
+            str(workdir),
+        )
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+    assert code == 0, report
+
+
+@pytest.mark.container
+@pytest.mark.skipif(engine() is None, reason="ni podman ni docker prêts")
+def test_un_projet_versionne_par_git_sans_git_dans_l_image_est_dit(
+    make_repo: Callable[..., Path], run_judge: Runner
+) -> None:
+    repo = make_repo(setup=["uv", "sync"])
+    ajoute_sur_la_base(
+        repo,
+        {
+            "pyproject.toml": (
+                '[build-system]\nrequires = ["hatchling", "hatch-vcs"]\n'
+                'build-backend = "hatchling.build"\n\n'
+                '[project]\nname = "app"\ndynamic = ["version"]\n\n'
+                '[tool.hatch.version]\nsource = "vcs"\n'
+            )
+        },
+    )
+    (repo / "src" / "metrics.py").write_text(FIX)
+    image = os.environ.get("EPHOR_TEST_IMAGE", "python:3.12-slim")
+    workdir = Path.home() / ".cache" / "ephor" / "tests" / uuid.uuid4().hex[:8]
+    try:
+        code, report = run_judge(
+            repo, "--runtime", str(engine()), "--image", image, "--workdir", str(workdir)
+        )
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+    assert code == 2 and report["steps"] == [], report
+    raison = " ".join(report["reasons"])
+    assert "hatch-vcs" in raison and "n'a pas git" in raison and "RUNTIME=local" in raison
 
 
 def test_ephor_keeps_python_3_9_syntax() -> None:
@@ -1560,6 +1716,96 @@ def test_les_porteurs_de_dependances_sont_nommes_jamais_refuses() -> None:
     assert porteurs == ["pyproject.toml", "web/package.json"]
 
 
+PYPROJECT = (
+    '[project]\nname = "app"\nversion = "0.1.0"\ndependencies = ["httpx"]\n\n'
+    '[tool.ruff.lint]\nselect = ["E", "F", "I", "S"]\n'
+)
+
+
+@pytest.mark.parametrize(
+    ("apres", "sections"),
+    [
+        (PYPROJECT.replace('["httpx"]', '["httpx", "rich"]'), []),
+        (PYPROJECT + '\n[[tool.uv.index]]\nname = "jfrog"\nurl = "https://x.invalid"\n', []),
+        (PYPROJECT + '\n[tool.poetry.group.dev.dependencies]\npytest = "*"\n', []),
+        (PYPROJECT.replace('"E", "F", "I", "S"', '"E"'), ["[tool.ruff.lint]"]),
+        (PYPROJECT.replace("[tool.ruff.lint]", "[tool.ruff.lint]  # réglé"), ["[tool.ruff.lint]"]),
+        ("tool.ruff.lint.ignore = ['ALL']\n" + PYPROJECT, ["(hors table)"]),
+        (PYPROJECT + '\n[tool]\nruff.lint.ignore = ["ALL"]\n', ["[tool]"]),
+        (
+            PYPROJECT + '\n[ tool . "pytest" . ini_options ]\naddopts = "-k ok"\n',
+            ["[tool.pytest.ini_options]"],
+        ),
+        (
+            PYPROJECT + '\n[project.entry-points.pytest11]\nx = "src.greffon"\n',
+            ["[project.entry-points.pytest11]"],
+        ),
+        (PYPROJECT.replace("\n", "\r\n"), []),
+    ],
+    ids=[
+        "dépendance",
+        "index",
+        "poetry",
+        "ruff",
+        "en-tête",
+        "clé pointée",
+        "table tool",
+        "nom cité",
+        "greffon pytest",
+        "fins de ligne",
+    ],
+)
+def test_un_pyproject_compte_pour_ce_qu_il_change(apres: str, sections: list[str]) -> None:
+    """Audit du 29/09/2026 : `select` de ruff vidé dans `pyproject.toml`, nommé seulement, et
+    VÉRIFIÉ sur une tâche à risque élevé. Hors dépendances, toute section changée compte."""
+    avant = PYPROJECT.encode()
+    assert judge.controles_d_un_porteur("pyproject.toml", avant, apres.encode()) == sections
+
+
+PACKAGE = {"name": "web", "version": "1.0.0", "scripts": {"test": "jest"}, "devDependencies": {}}
+
+
+@pytest.mark.parametrize(
+    ("changement", "sections"),
+    [
+        ({"devDependencies": {"zod": "^3"}}, []),
+        ({"version": "1.1.0"}, []),
+        ({"scripts": {"test": "echo ok"}}, ['"scripts"']),
+        ({"jest": {"testPathIgnorePatterns": ["."]}}, ['"jest"']),
+        ({"eslintConfig": {"rules": {}}}, ['"eslintConfig"']),
+    ],
+    ids=["dépendance", "version", "scripts", "jest", "eslint"],
+)
+def test_un_package_json_compte_pour_ce_qu_il_change(
+    changement: dict[str, Any], sections: list[str]
+) -> None:
+    avant = json.dumps(PACKAGE).encode()
+    apres = json.dumps({**PACKAGE, **changement}).encode()
+    assert judge.controles_d_un_porteur("web/package.json", avant, apres) == sections
+    illisible = judge.controles_d_un_porteur("package.json", avant, b"{ pas du json")
+    assert illisible == ["(illisible)"]
+
+
+def test_un_pyproject_qui_eteint_le_lint_est_refuse_sur_risque_eleve(
+    tmp_path: Path, run_judge: Runner
+) -> None:
+    from conftest import build_repo
+
+    permis = ["src/", "tests/", "pyproject.toml"]
+    repo = build_repo(tmp_path / "eleve", contract(risk="eleve", allowed_paths=permis))
+    ajoute_sur_la_base(repo, {"pyproject.toml": PYPROJECT})
+    (repo / "src" / "metrics.py").write_text(FIX)
+    (repo / "pyproject.toml").write_text(PYPROJECT.replace('"E", "F", "I", "S"', '"E"'))
+    code, report = run_judge(repo)
+    assert code == 2 and report["steps"] == []
+    assert any("pyproject.toml ([tool.ruff.lint])" in raison for raison in report["reasons"])
+    (repo / "pyproject.toml").write_text(PYPROJECT.replace('["httpx"]', '["httpx", "rich"]'))
+    code, report = run_judge(repo)
+    assert code == 0, report.get("reasons")
+    resume = (repo / ".verify" / "judge" / "T-001" / "latest" / "summary.txt").read_text()
+    assert "dépendance(s) modifiée(s), à lire en revue : pyproject.toml" in resume
+
+
 def test_la_garde_de_la_ci_nomme_les_reglages_des_controles(repo: Path) -> None:
     (repo / "src" / "metrics.py").write_text(FIX)
     (repo / "src" / ".ruff.toml").write_text("[lint]\nselect = []\n")
@@ -1573,6 +1819,120 @@ def test_la_garde_de_la_ci_nomme_les_reglages_des_controles(repo: Path) -> None:
     )
     assert sortie.returncode == 3
     assert "réglage des contrôles modifié : src/.ruff.toml" in sortie.stdout
+
+
+def test_la_garde_de_la_ci_lit_les_sections_du_pyproject(repo: Path) -> None:
+    ajoute_sur_la_base(repo, {"pyproject.toml": PYPROJECT})
+    garde = [
+        sys.executable,
+        str(EPHOR / "judge.py"),
+        "garde",
+        "--repo",
+        str(repo),
+        "--base",
+        "main",
+    ]
+    (repo / "pyproject.toml").write_text(PYPROJECT.replace('["httpx"]', '["httpx", "rich"]'))
+    git(repo, "commit", "-qam", "une dépendance")
+    sortie = subprocess.run(garde, capture_output=True, text=True, check=False)
+    assert sortie.returncode == 0, sortie.stdout
+    (repo / "pyproject.toml").write_text(PYPROJECT.replace('"E", "F", "I", "S"', '"E"'))
+    git(repo, "commit", "-qam", "lint éteint")
+    sortie = subprocess.run(garde, capture_output=True, text=True, check=False)
+    assert sortie.returncode == 3
+    assert "réglage des contrôles modifié : pyproject.toml ([tool.ruff.lint])" in sortie.stdout
+
+
+AVANT_TESTS = {
+    "tests/test_archi.py": "def test_taille():\n    pass\n\n\ndef test_print():\n    pass\n",
+    "tests/test_svc.py": (
+        "import unittest\n\n\ndef test_garde():\n    pass\n\n\ndef test_renomme(a):\n    pass\n"
+        "\n\nclass Svc(unittest.TestCase):\n    def test_methode(self):\n        pass\n"
+    ),
+    "tests/test_deplace.py": "def test_voyage():\n    pass\n",
+    "web/a.test.ts": "it('refuse un jeton', () => {});\nit('garde', () => {});\n",
+    "svc/x_test.go": "package svc\n\nfunc TestJeton(t *testing.T) {}\n",
+    "api/src/test/java/JetonTest.java": (
+        "class JetonTest {\n    @Test\n    void refuse() {}\n\n    @Test\n    void garde() {}\n}\n"
+    ),
+    "src/app.py": "def test_pas_un_test():\n    pass\n",
+}
+APRES_TESTS: dict[str, str | None] = {
+    "tests/test_archi.py": None,
+    "tests/test_svc.py": (
+        "import unittest\n\n\ndef test_renomme(a, b):\n    pass\n\n\n"
+        'X = """\ndef test_garde():\n"""\n\n\nclass Svc(unittest.TestCase):\n    pass\n'
+    ),
+    "tests/test_deplace.py": None,
+    "tests/test_arrivee.py": "def test_voyage():\n    pass\n",
+    "web/a.test.ts": "it('garde', () => {});\n",
+    "svc/x_test.go": "package svc\n",
+    "api/src/test/java/JetonTest.java": "class JetonTest {\n    @Test\n    void garde() {}\n}\n",
+    "src/app.py": "",
+}
+
+
+def test_les_tests_retires_sont_nommes() -> None:
+    """Un test retiré n'ajoute aucune ligne : aucun silencieux ne le trahit. Rejoué le
+    29/09/2026 : `tests/test_architecture.py` supprimé, VÉRIFIÉ, et le verdict n'en disait rien.
+    Un test qui change de fichier n'est pas retiré ; un `def test_…` écrit dans une chaîne
+    n'en est pas un."""
+
+    def lire(chemin: str) -> tuple[bytes | None, bytes | None]:
+        avant, apres = AVANT_TESTS.get(chemin), APRES_TESTS.get(chemin)
+        return (
+            None if avant is None else avant.encode(),
+            None if apres is None else apres.encode(),
+        )
+
+    chemins = sorted(set(AVANT_TESTS) | set(APRES_TESTS))
+    assert judge.tests_retires(chemins, lire) == [
+        "api/src/test/java/JetonTest.java::refuse",
+        "svc/x_test.go::TestJeton",
+        "tests/test_archi.py (supprimé, 2 test(s))",
+        "tests/test_svc.py::Svc::test_methode",
+        "tests/test_svc.py::test_garde",
+        "web/a.test.ts::refuse un jeton",
+    ]
+
+
+def test_un_test_retire_est_nomme_puis_refuse_sur_risque_eleve(
+    tmp_path: Path, run_judge: Runner
+) -> None:
+    from conftest import build_repo
+
+    garde = (
+        "import unittest\n\n\nclass Garde(unittest.TestCase):\n"
+        "    def test_a(self):\n        self.assertTrue(True)\n\n"
+        "    def test_b(self):\n        self.assertTrue(True)\n"
+    )
+    for risque, attendu in (("faible", 0), ("eleve", 2)):
+        repo = build_repo(tmp_path / risque, contract(risk=risque))
+        ajoute_sur_la_base(repo, {"tests/test_garde.py": garde})
+        (repo / "src" / "metrics.py").write_text(FIX)
+        (repo / "tests" / "test_garde.py").write_text(garde.split("\n\n    def test_b")[0] + "\n")
+        code, report = run_judge(repo)
+        assert code == attendu, report.get("reasons")
+        assert report["tests_removed"] == ["tests/test_garde.py::Garde::test_b"]
+        if risque == "faible":
+            resume = (repo / ".verify" / "judge" / "T-001" / "latest" / "summary.txt").read_text()
+            ligne = "test(s) retiré(s), à justifier en revue : tests/test_garde.py::Garde::test_b"
+            assert ligne in resume
+        else:
+            assert any("test retiré" in raison for raison in report["reasons"])
+
+
+def test_la_garde_de_la_ci_nomme_les_tests_retires(repo: Path) -> None:
+    git(repo, "rm", "-q", "tests/test_smoke.py")
+    git(repo, "commit", "-qm", "test retiré")
+    sortie = subprocess.run(
+        [sys.executable, str(EPHOR / "judge.py"), "garde", "--repo", str(repo), "--base", "main"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert sortie.returncode == 3
+    assert "test retiré : tests/test_smoke.py (supprimé, 1 test(s))" in sortie.stdout
 
 
 def test_un_contrat_hors_de_tasks_n_est_pas_juge(repo: Path, tmp_path: Path) -> None:

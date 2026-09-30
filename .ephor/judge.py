@@ -19,6 +19,7 @@ est celle de la CI, qui part d'un clone frais.
 from __future__ import annotations
 
 import argparse
+import ast
 import functools
 import hashlib
 import json
@@ -33,7 +34,8 @@ import tempfile
 import time
 import uuid
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Sequence
+from collections import Counter
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -183,6 +185,17 @@ SECRET_HINT = re.compile(
     r"TOKEN|SECRET|PASSW|API_?KEY|ACCESS_KEY|PRIVATE|CREDENTIAL|AUTH|SESSION|COOKIE", re.I
 )
 INDEX_CREDENTIAL = re.compile(r"^UV_INDEX_[A-Z0-9_]+_(USERNAME|PASSWORD)$")
+# Un identifiant écrit DANS l'adresse d'un index (`https://moi:jeton@jfrog/...`), la forme la
+# plus courante : `UV_DEFAULT_INDEX` et ses voisines passaient telles quelles à toutes les
+# étapes, tests compris (audit du 29/09/2026). Hors installation, l'adresse reste, sans lui.
+IDENTIFIANTS_URL = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@")
+
+
+def sans_identifiants(valeur: str) -> str:
+    """L'adresse sans son `utilisateur:mot-de-passe@`, pour chaque adresse de la valeur."""
+    return IDENTIFIANTS_URL.sub(r"\1", valeur)
+
+
 UV_HOST_ONLY = {"UV_PROJECT_ENVIRONMENT", "UV_PYTHON_INSTALL_DIR", "UV_TOOL_DIR", "UV_CACHE_DIR"}
 
 GIT_HARDENING = (
@@ -262,11 +275,14 @@ def git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
-def git(repo: Path, *args: str, env: dict[str, str] | None = None) -> bytes:
+def git(
+    repo: Path, *args: str, env: dict[str, str] | None = None, entree: bytes | None = None
+) -> bytes:
     """Git durci : aucun hook du dépôt, aucun moniteur de fichiers."""
     try:
         result = subprocess.run(
             ["git", *GIT_HARDENING, "-C", str(repo), *args],
+            input=entree,
             capture_output=True,
             check=True,
             timeout=300,
@@ -549,8 +565,8 @@ def executes_d_office(chemins: Sequence[str]) -> tuple[list[str], list[str]]:
 # plus proche : un `src/app/ruff.toml` qui dit `select = []` éteint le lint de ce dossier
 # sans une seule ligne de `noqa` (mesuré le 25/09/2026). C'est un silencieux à l'échelle d'un
 # fichier : nommé au verdict, refusé sur un risque élevé. `pyproject.toml` et `package.json`
-# portent aussi les dépendances, et changent pour mille raisons honnêtes : nommés, jamais
-# refusés — la revue lit ce qu'ils changent aux contrôles.
+# portent aussi les dépendances, et changent pour mille raisons honnêtes : le juge lit quelles
+# sections changent (voir `controles_d_un_porteur`).
 REGLAGES_CONTROLES = (
     "ruff.toml",
     ".ruff.toml",
@@ -571,15 +587,248 @@ REGLAGES_CONTROLES = (
 PREFIXES_REGLAGES = (".eslintrc", "eslint.config.", "jest.config.", "vitest.config.")
 PORTEURS_DE_DEPENDANCES = ("pyproject.toml", "package.json")
 
+# Ce qu'un porteur peut changer sans toucher aux contrôles : les dépendances et la fiche du
+# paquet. Une liste de ce qui est PERMIS, pas de ce qui est interdit : `[tool.ruff…]`,
+# `[tool.pytest…]`, mais aussi un outil que personne n'a prévu, `[project.entry-points.pytest11]`
+# (un greffon que pytest charge tout seul) ou `"scripts"` (ce que lance `npm test`) comptent.
+# Audit du 29/09/2026 : `select` de ruff vidé dans `pyproject.toml`, VÉRIFIÉ sur un risque élevé.
+TABLES_DE_DEPENDANCES = frozenset(
+    {
+        "project",
+        "project.optional-dependencies",
+        "project.urls",
+        "dependency-groups",
+        "tool.uv",
+        "tool.uv.sources",
+        "tool.uv.index",
+        "tool.uv.workspace",
+        "tool.poetry",
+        "tool.poetry.dependencies",
+        "tool.poetry.dev-dependencies",
+    }
+)
+GROUPE_POETRY = re.compile(r"tool\.poetry\.group\.[^.]+\.dependencies")
+CLES_DE_DEPENDANCES = frozenset(
+    {
+        "name",
+        "version",
+        "description",
+        "keywords",
+        "author",
+        "contributors",
+        "license",
+        "homepage",
+        "repository",
+        "bugs",
+        "funding",
+        "private",
+        "engines",
+        "packageManager",
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "peerDependenciesMeta",
+        "optionalDependencies",
+        "bundleDependencies",
+        "bundledDependencies",
+        "overrides",
+        "resolutions",
+    }
+)
+# Un en-tête de table TOML, `[a.b]` ou `[[a.b]]`, et les morceaux de son nom : nus, ou cités.
+EN_TETE_TOML = re.compile(r"[ \t]*\[\[?(?P<nom>[^\[\]]*)\]\]?[ \t]*(?:#.*)?")
+CLE_TOML = re.compile(r"""[ \t]*(?:"((?:[^"\\]|\\.)*)"|'([^']*)'|([A-Za-z0-9_-]+))[ \t]*""")
 
-def reglages_des_controles(chemins: Sequence[str]) -> tuple[list[str], list[str]]:
-    """(réglages des contrôles, fichiers qui les portent avec les dépendances) parmi ces chemins."""
-    noms = [(c, PurePosixPath(c).name) for c in chemins]
-    reglages = [
-        c for c, nom in noms if nom in REGLAGES_CONTROLES or nom.startswith(PREFIXES_REGLAGES)
+
+def nom_de_table(brut: str) -> str:
+    """`tool . "ruff".lint` → `tool.ruff.lint`. Un nom qui ne se lit pas ainsi garde sa forme :
+    il ne vaudra jamais une table de dépendances."""
+    parties: list[str] = []
+    reste = brut
+    while True:
+        morceau = CLE_TOML.match(reste)
+        if morceau is None:
+            return brut
+        parties.append(next(g for g in morceau.groups() if g is not None))
+        reste = reste[morceau.end() :]
+        if not reste:
+            return ".".join(parties)
+        if not reste.startswith("."):
+            return brut
+        reste = reste[1:]
+
+
+def tables_toml(texte: str) -> dict[str, list[str]]:
+    """Chaque table du fichier et ses lignes, en-têtes compris, dans l'ordre.
+
+    Ni tomllib (Python 3.11) ni analyse complète : la même lecture partout, pour que le juge
+    local et celui de la CI disent la même chose. Elle voit une table de plus quand une ligne
+    de chaîne ressemble à un en-tête — jamais une de moins : une ligne changée sous
+    `[tool.ruff]` ne peut pas passer pour une ligne de `[project]`. Ce qui précède le premier
+    en-tête (des clés pointées, `tool.ruff.lint.select = []`) est la table « (hors table) »."""
+    tables: dict[str, list[str]] = {}
+    courante = "(hors table)"
+    for brute in texte.split("\n"):
+        ligne = brute.rstrip()
+        en_tete = EN_TETE_TOML.fullmatch(ligne)
+        if en_tete:
+            courante = nom_de_table(en_tete.group("nom"))
+        if ligne.strip():
+            tables.setdefault(courante, []).append(ligne)
+    return tables
+
+
+def controles_d_un_porteur(chemin: str, avant: bytes | None, apres: bytes | None) -> list[str]:
+    """Les sections d'un `pyproject.toml` ou d'un `package.json` que le changement touche, hors
+    dépendances et fiche du paquet : `[tool.ruff.lint]`, `"scripts"`… Vide : rien d'autre."""
+    texte_avant = (avant or b"").decode("utf-8", "replace")
+    texte_apres = (apres or b"").decode("utf-8", "replace")
+    if PurePosixPath(chemin).name == "package.json":
+        try:
+            ancien = json.loads(texte_avant or "{}")
+            nouveau = json.loads(texte_apres or "{}")
+        except ValueError:
+            return ["(illisible)"]
+        if not isinstance(ancien, dict) or not isinstance(nouveau, dict):
+            return ["(illisible)"]
+        absente = object()
+        return [
+            f'"{cle}"'
+            for cle in sorted(set(ancien) | set(nouveau))
+            if ancien.get(cle, absente) != nouveau.get(cle, absente)
+            and cle not in CLES_DE_DEPENDANCES
+        ]
+    ancien_t, nouveau_t = tables_toml(texte_avant), tables_toml(texte_apres)
+    changees = [
+        nom
+        for nom in sorted(set(ancien_t) | set(nouveau_t))
+        if ancien_t.get(nom) != nouveau_t.get(nom)
     ]
-    porteurs = [c for c, nom in noms if nom in PORTEURS_DE_DEPENDANCES]
+    return [
+        nom if nom == "(hors table)" else f"[{nom}]"
+        for nom in changees
+        if nom not in TABLES_DE_DEPENDANCES and not GROUPE_POETRY.fullmatch(nom)
+    ]
+
+
+def reglages_des_controles(
+    chemins: Sequence[str],
+    lire: Callable[[str], tuple[bytes | None, bytes | None]] | None = None,
+) -> tuple[list[str], list[str]]:
+    """(réglages des contrôles, porteurs de dépendances qui ne changent que les dépendances).
+
+    `lire` rend le contenu d'un chemin avant et après le changement. Un porteur qui touche à
+    autre chose que ses dépendances devient un réglage, nommé avec ses sections :
+    `pyproject.toml ([tool.ruff.lint])`. Sans `lire`, il n'est que nommé."""
+    reglages: list[str] = []
+    porteurs: list[str] = []
+    for chemin in chemins:
+        nom = PurePosixPath(chemin).name
+        if nom in REGLAGES_CONTROLES or nom.startswith(PREFIXES_REGLAGES):
+            reglages.append(chemin)
+        elif nom in PORTEURS_DE_DEPENDANCES:
+            sections = controles_d_un_porteur(chemin, *lire(chemin)) if lire else []
+            if sections:
+                reglages.append(f"{chemin} ({', '.join(sections)})")
+            else:
+                porteurs.append(chemin)
     return reglages, porteurs
+
+
+def blob_a(repo: Path, commit: str, chemin: str) -> bytes | None:
+    """Le contenu d'un fichier à ce commit, tel quel (ni filtre, ni conversion), ou None."""
+    try:
+        return git(repo, "cat-file", "blob", f"{commit}:{chemin}")
+    except JudgeError:
+        return None
+
+
+# Un test retiré n'ajoute aucune ligne : aucun silencieux ne le trahit. Rejoué le 29/09/2026 :
+# `tests/test_architecture.py` supprimé (taille des fichiers, `print`, sens des dépendances),
+# VÉRIFIÉ, et le verdict n'en disait rien. Le juge compare les tests que chaque fichier de
+# test déclare avant et après : Python par son arbre syntaxique (un `def test_…` écrit dans
+# une chaîne n'en est pas un), les autres langages par leur forme usuelle.
+FICHIER_DE_TEST = re.compile(
+    r"(?:^|/)(?:test[^/]*\.py|[^/]*_test\.py|[^/]*_test\.go"
+    r"|[^/]*\.(?:test|spec)\.[cm]?[jt]sx?|[^/]*(?:Tests?|IT|TestCase)\.(?:java|kt))$"
+    r"|(?:^|/)__tests__/[^/]*\.[cm]?[jt]sx?$|(?:^|/)src/test/.*\.(?:java|kt)$"
+)
+TEST_GO = re.compile(r"^func\s+(Test\w*)\s*\(", re.M)
+TEST_JS = re.compile(r"""^\s*(?:it|test)(?:\.\w+)*\s*\(\s*(['"`])(.*?)\1""", re.M)
+ANNOTATION_TEST = re.compile(r"@Test\b")
+METHODE_JVM = re.compile(r"\b(?:void|fun)\s+(`[^`]+`|\w+)\s*\(")
+
+
+def _tests_python(corps: list[ast.stmt], prefixe: str) -> Iterator[str]:
+    for noeud in corps:
+        if isinstance(noeud, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if noeud.name.startswith("test"):
+                yield prefixe + noeud.name
+        elif isinstance(noeud, ast.ClassDef):
+            yield from _tests_python(noeud.body, f"{prefixe}{noeud.name}::")
+
+
+def tests_du_fichier(chemin: str, contenu: bytes | None) -> list[str] | None:
+    """Les tests qu'un fichier de test déclare, par leur nom. None : il ne se lit pas."""
+    if contenu is None:
+        return []
+    texte = contenu.decode("utf-8", "replace")
+    if chemin.endswith(".py"):
+        try:
+            return list(_tests_python(ast.parse(texte).body, ""))
+        except (SyntaxError, ValueError):
+            return None
+    if chemin.endswith(".go"):
+        return TEST_GO.findall(texte)
+    if chemin.endswith((".java", ".kt")):
+        noms: list[str] = []
+        lignes = texte.split("\n")
+        for i, ligne in enumerate(lignes):
+            if ANNOTATION_TEST.search(ligne):
+                methodes = (METHODE_JVM.search(suite) for suite in lignes[i : i + 6])
+                trouvee = next((m for m in methodes if m), None)
+                noms.append(trouvee.group(1) if trouvee else "@Test")
+        return noms
+    return [trouve.group(2) for trouve in TEST_JS.finditer(texte)]
+
+
+def tests_retires(
+    chemins: Sequence[str], lire: Callable[[str], tuple[bytes | None, bytes | None]]
+) -> list[str]:
+    """Les tests que le changement retire : `fichier::nom`, ou `fichier (supprimé, N test(s))`.
+
+    `lire` rend le contenu d'un chemin avant et après. Un test qui réapparaît sous le même nom
+    dans un autre fichier a déménagé : il n'est pas retiré. Un fichier qui ne se lit plus
+    (erreur de syntaxe) a perdu tous ses tests."""
+    perdus: dict[str, list[str]] = {}
+    gagnes: Counter[str] = Counter()
+    supprimes: set[str] = set()
+    for chemin in chemins:
+        if not FICHIER_DE_TEST.search(chemin):
+            continue
+        avant, apres = lire(chemin)
+        if apres is None:
+            supprimes.add(chemin)
+        restent = Counter(tests_du_fichier(chemin, apres) or [])
+        for nom in tests_du_fichier(chemin, avant) or []:
+            if restent[nom]:
+                restent[nom] -= 1
+            else:
+                perdus.setdefault(chemin, []).append(nom)
+        gagnes.update(+restent)
+    retires: list[str] = []
+    for chemin, noms in perdus.items():
+        vrais: list[str] = []
+        for nom in noms:
+            if gagnes[nom]:
+                gagnes[nom] -= 1
+            else:
+                vrais.append(nom)
+        if vrais and chemin in supprimes:
+            retires.append(f"{chemin} (supprimé, {len(vrais)} test(s))")
+        else:
+            retires.extend(f"{chemin}::{nom}" for nom in vrais)
+    return sorted(retires)
 
 
 # --------------------------------------------------------------------------- contrat
@@ -785,7 +1034,32 @@ def resolve_task(repo: Path, task_id: str | None, task_path: str | None) -> tupl
     return path, path.parent.name
 
 
+def principales(repo: Path) -> set[str]:
+    """Les branches où l'approbation se lit : main, master, et celle que le serveur désigne."""
+    noms = {"main", "master"}
+    with suppress(JudgeError):
+        distante = git(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+        noms.add(distante.decode().strip().split("/", 1)[-1])
+    return noms
+
+
+def base_d_approbation(repo: Path, base: str) -> bool:
+    """Une base où un contrat commité vaut approbation : la branche principale, ou une
+    branche du serveur (la CI juge contre la branche cible, `origin/<cible>`)."""
+    nom = base[len("refs/heads/") :] if base.startswith("refs/heads/") else base
+    return nom in principales(repo) or base.startswith(("origin/", "refs/remotes/"))
+
+
 def resolve_base(repo: Path, base: str | None) -> tuple[str, str]:
+    # La base se choisit à l'appel, et `make` passe sans question : l'agent commitait sur
+    # SA branche un contrat qu'il s'était écrit, puis `make judge BASE=<sa branche>`, et le
+    # juge local le lisait « approuvé » (audit du 29/09/2026).
+    if base and not base_d_approbation(repo, base):
+        raise JudgeError(
+            f"base choisie à la main ({base}) : un contrat n'est approuvé que commité sur la "
+            f"branche principale ({', '.join(sorted(principales(repo)))}) ; pour juger contre "
+            "une autre branche du serveur, passez origin/<branche>"
+        )
     candidates = [base] if base else ["main", "master", "origin/main", "origin/master"]
     for ref in candidates:
         try:
@@ -798,16 +1072,31 @@ def resolve_base(repo: Path, base: str | None) -> tuple[str, str]:
     raise JudgeError(f"base introuvable ({', '.join(candidates)}) : précisez --base")
 
 
-def snapshot(repo: Path, base: str, seulement: Sequence[str] = ()) -> tuple[bytes, list[str]]:
+def snapshot(
+    repo: Path,
+    base: str,
+    seulement: Sequence[str] = (),
+    hors_commit: list[str] | None = None,
+) -> tuple[bytes, list[str]]:
     """Patch entre la base et l'état courant du dossier, sans toucher à l'index de l'utilisateur.
 
-    `seulement` le restreint à ces chemins, pris à la lettre (ni joker, ni motif)."""
+    `seulement` le restreint à ces chemins, pris à la lettre (ni joker, ni motif). `hors_commit`,
+    quand on le passe, reçoit les fichiers où le dossier diffère du dernier commit : ce qui est
+    jugé et que la branche ne contient pas.
+
+    Un index vide, remonté depuis HEAD, et jamais une copie de celui de l'utilisateur : un
+    fichier marqué `assume-unchanged` y passerait pour intact, modifié ou non."""
     with tempfile.TemporaryDirectory(prefix="ephor-index-") as tmp:
         env = {"GIT_INDEX_FILE": str(Path(tmp) / "index")}
         git(repo, "read-tree", "HEAD", env=env)
         git(repo, "add", "-A", "--", ".", env=env)
         # Les rapports du juge ne font jamais partie du patch, ignorés ou non par le dépôt.
         git(repo, "rm", "-r", "--cached", "--ignore-unmatch", "--quiet", "--", ".verify", env=env)
+        if hors_commit is not None:
+            ecarts = git(
+                repo, "diff", "--cached", "--name-only", "-z", "--no-renames", "HEAD", env=env
+            )
+            hors_commit.extend(chemins_z(ecarts))
         if seulement:
             env["GIT_LITERAL_PATHSPECS"] = "1"
         cibles = ["--", *seulement] if seulement else []
@@ -827,8 +1116,12 @@ def snapshot(repo: Path, base: str, seulement: Sequence[str] = ()) -> tuple[byte
             *cibles,
             env=env,
         )
-    paths = sorted({item.decode("utf-8", errors="strict") for item in names.split(b"\0") if item})
-    return patch, paths
+    return patch, chemins_z(names)
+
+
+def chemins_z(sortie: bytes) -> list[str]:
+    """Les chemins d'une sortie `git … -z`, triés et sans doublon."""
+    return sorted({item.decode("utf-8", errors="strict") for item in sortie.split(b"\0") if item})
 
 
 def exists_at(repo: Path, commit: str, path: str) -> bool:
@@ -1269,6 +1562,75 @@ def create_copy(repo: Path, copy: Path, base: str) -> None:
     git(copy, "remote", "remove", "origin")
 
 
+def rendre_autonome(copy: Path) -> None:
+    """La copie, sans plus rien emprunter à votre dépôt : pour le conteneur.
+
+    `--shared` fait lire à la copie les objets de votre dépôt par un chemin du poste, que le
+    conteneur ne voit pas : git y trouvait un dépôt cassé, et un projet versionné par git
+    (hatch-vcs, setuptools-scm) ne s'installait pas — VÉRIFIÉ en local, ÉCHEC en conteneur
+    (audit du 29/09/2026). Seul ce que la base atteint est recopié : son histoire et ses
+    étiquettes, pas vos autres branches."""
+    a_retirer = git(copy, "for-each-ref", "--format=delete %(refname)", "refs/heads")
+    a_retirer += git(
+        copy, "for-each-ref", "--no-merged", "HEAD", "--format=delete %(refname)", "refs/tags"
+    )
+    if a_retirer:
+        git(copy, "update-ref", "--stdin", entree=a_retirer)
+    git(copy, "reflog", "expire", "--expire=now", "--all")
+    git(copy, "repack", "-a", "-d", "-q")
+    (copy / ".git" / "objects" / "info" / "alternates").unlink(missing_ok=True)
+
+
+# Ce qui tire la version d'un projet de son histoire git, à l'installation.
+VERSION_PAR_GIT = re.compile(
+    r"\b(setuptools[-_]scm|hatch-vcs|versioningit|dunamai|poetry-dynamic-versioning"
+    r"|uv-dynamic-versioning|setuptools-git-versioning|use_scm_version)\b"
+)
+
+
+def version_par_git(copy: Path) -> str | None:
+    """L'outil qui tire la version du projet de git à l'installation, s'il y en a un."""
+    for nom in ("pyproject.toml", "setup.cfg", "setup.py"):
+        with suppress(OSError):
+            texte = (copy / nom).read_text(encoding="utf-8", errors="replace")
+            trouve = VERSION_PAR_GIT.search(texte)
+            if trouve:
+                return trouve.group(1)
+    return None
+
+
+def image_a_git(runtime: Runtime) -> bool:
+    """L'image a-t-elle git ? Lancée comme le juge la lance, sans réseau."""
+    assert runtime.image is not None
+    extra = shlex.split(os.environ.get("EPHOR_CONTAINER_ARGS", ""))
+    commande = [runtime.kind, "run", "--rm", "--pull=never", "--network", "none"]
+    commande += identite_du_poste(runtime.kind, extra) + extra
+    try:
+        sonde = subprocess.run(
+            [*commande, runtime.image, "git", "--version"],
+            capture_output=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return sonde.returncode == 0
+
+
+def preparer_pour_le_conteneur(runtime: Runtime, copy: Path, installe: bool) -> None:
+    """La copie rendue autonome ; et, pour un projet qui a besoin de git pour s'installer,
+    une image qui a git — sinon le dire, plutôt que l'erreur de setuptools-scm, qui ne dit
+    rien de la vraie cause."""
+    rendre_autonome(copy)
+    outil = version_par_git(copy) if installe else None
+    if outil and not image_a_git(runtime):
+        raise JudgeError(
+            f"le projet tire sa version de git ({outil}) et l'image {runtime.image} n'a pas"
+            " git : l'installation échouerait. Prenez une image avec git (make ci-image, puis"
+            " EPHOR_IMAGE=<image>), ou jugez en local (RUNTIME=local)"
+        )
+
+
 def remove_copy(copy: Path) -> None:
     """Efface la copie, même si un outil y a laissé des dossiers en lecture seule."""
     for dossier, sous_dossiers, _ in os.walk(copy):
@@ -1300,8 +1662,10 @@ def filtered_env(phase: str, has_setup: bool) -> dict[str, str]:
         setup_only = phase == "setup" and (
             name in SETUP_ONLY_ENV or INDEX_CREDENTIAL.match(name) is not None
         )
-        if basic or uv_config or setup_only:
+        if basic or setup_only:
             env[name] = value
+        elif uv_config:
+            env[name] = value if phase == "setup" else sans_identifiants(value)
     env.update(
         {
             "VERIFY_STRICT": "1",
@@ -1596,7 +1960,12 @@ def container_command(
     for key, value in fixed.items():
         command += ["-e", f"{key}={value}"]
     for key in relayed_names(phase):
-        command += ["-e", key]
+        # Relayée par son nom, la valeur ne s'affiche pas. Mais un identifiant dans une
+        # adresse d'index n'a rien à faire hors installation : l'adresse passe alors sans
+        # lui, en clair, puisqu'elle ne contient plus rien de secret.
+        valeur = os.environ.get(key, "")
+        propre = valeur if phase == "setup" else sans_identifiants(valeur)
+        command += ["-e", key if propre == valeur else f"{key}={propre}"]
     extra = shlex.split(os.environ.get("EPHOR_CONTAINER_ARGS", ""))
     command += identite_du_poste(runtime.kind, extra) + extra
     command += [runtime.image, *argv]
@@ -1761,6 +2130,8 @@ def format_summary(report: dict[str, Any], lines: list[str]) -> str:
         head += f" · base {report.get('base_ref')}@{report['base_commit'][:7]}"
     head += f" · exécution {report.get('runtime', {}).get('kind', '?')}"
     verdict = VERDICTS.get(report["status"], report["status"])
+    if report["status"] == "verified_needs_review" and report.get("uncommitted_paths"):
+        verdict += " — sur du travail pas encore commité : commitez-le tel quel"
     return "\n".join([head, *lines, f"VERDICT : {verdict}"]) + "\n"
 
 
@@ -2061,8 +2432,11 @@ def cmd_check(args: argparse.Namespace) -> int:
                 f" ont échoué ; make task-check ID={task_id} sur la branche principale le refait"
             )
 
-        patch, paths = snapshot(repo, base)
-        report.update(changed_paths=paths, patch_sha256=sha256(patch))
+        hors_commit: list[str] = []
+        patch, paths = snapshot(repo, base, hors_commit=hors_commit)
+        report.update(
+            changed_paths=paths, patch_sha256=sha256(patch), uncommitted_paths=hors_commit
+        )
         if not paths:
             report["status"] = "no_change"
             return 1
@@ -2073,8 +2447,23 @@ def cmd_check(args: argparse.Namespace) -> int:
         report["silencers_added"] = silences
         demarrage, d_office = executes_d_office(paths)
         report["autorun_files"] = demarrage + d_office
-        reglages, porteurs = reglages_des_controles(paths)
+
+        def base_et_disque(chemin: str) -> tuple[bytes | None, bytes | None]:
+            fichier = repo / chemin
+            return blob_a(repo, base, chemin), fichier.read_bytes() if fichier.is_file() else None
+
+        reglages, porteurs = reglages_des_controles(paths, base_et_disque)
         report["control_config_files"] = reglages + porteurs
+        retires = tests_retires(paths, base_et_disque)
+        report["tests_removed"] = retires
+        if retires and contract.risk == "eleve":
+            raise JudgeError(
+                [f"test retiré sur une tâche à risque élevé : {t}" for t in retires]
+                + [
+                    "un test ne se retire pas pour faire passer ; s'il doit vraiment partir,"
+                    " c'est l'opérateur qui le retire sur la branche principale"
+                ]
+            )
         if reglages and contract.risk == "eleve":
             raise JudgeError(
                 [f"réglage des contrôles modifié, sur un risque élevé : {c}" for c in reglages]
@@ -2104,22 +2493,37 @@ def cmd_check(args: argparse.Namespace) -> int:
             )
         lines.append(f"  ok    périmètre : {len(paths)} fichier(s)")
         junit.append({"name": "périmètre", "ok": True})
+        if hors_commit:
+            # Le juge juge le disque ; la merge request, elle, part de la branche. Un correctif
+            # jamais commité ressortait VÉRIFIÉ sans un mot (audit du 29/09/2026).
+            montres = ", ".join(hors_commit[:5]) + (" …" if len(hors_commit) > 5 else "")
+            lines.append(
+                f"  info  {len(hors_commit)} fichier(s) jugé(s) sur le disque, pas encore"
+                f" commité(s) : {montres} — la branche ne les contient pas"
+            )
         if silences:
             montres = ", ".join(silences[:5]) + (" …" if len(silences) > 5 else "")
             lines.append(
                 f"  info  {len(silences)} silencieux ajouté(s), à justifier en revue : {montres}"
             )
+        if retires:
+            montres = ", ".join(retires[:5]) + (" …" if len(retires) > 5 else "")
+            lines.append(f"  info  test(s) retiré(s), à justifier en revue : {montres}")
         if demarrage or d_office:
             lines.append(
                 "  info  exécuté(s) sans être appelé(s), à lire d'abord en revue : "
                 + ", ".join((demarrage + d_office)[:5])
                 + (" …" if len(demarrage + d_office) > 5 else "")
             )
-        if reglages or porteurs:
+        if reglages:
             lines.append(
                 "  info  réglage(s) des contrôles modifié(s), à lire en revue : "
-                + ", ".join((reglages + porteurs)[:5])
-                + (" …" if len(reglages + porteurs) > 5 else "")
+                + ", ".join(reglages[:5])
+                + (" …" if len(reglages) > 5 else "")
+            )
+        if porteurs:
+            lines.append(
+                f"  info  dépendance(s) modifiée(s), à lire en revue : {', '.join(porteurs)}"
             )
         faibles = [c.id for c in contract.criteria if forme_de_preuve(c) == "code"]
         if faibles:
@@ -2171,6 +2575,8 @@ def cmd_check(args: argparse.Namespace) -> int:
         # écarte ensuite a été réécrit pendant l'exécution (voir `suivis_modifies`).
         git(copy, "apply", "--check", "--index", "--binary", "--whitespace=nowarn", str(patch_file))
         git(copy, "apply", "--index", "--binary", "--whitespace=nowarn", str(patch_file))
+        if runtime.kind != "local":
+            preparer_pour_le_conteneur(runtime, copy, contract.setup is not None)
         # Ce qui a été jugé, fichier par fichier : le manifeste de livraison s'en sert pour
         # refuser de livrer autre chose : la preuve est liée au contenu.
         report["files_sha256"] = {
@@ -2409,6 +2815,7 @@ def cmd_rouge(args: argparse.Namespace) -> int:
         if not refus:
             if runtime.kind != "local":
                 ensure_image(runtime, logs / "pull.log")
+                preparer_pour_le_conteneur(runtime, copy, contract.setup is not None)
             print("contrôle rouge : chaque critère doit ÉCHOUER sur le code commité")
             criteres, verts, refus = lancer_en_rouge(
                 Banc(
@@ -2681,20 +3088,30 @@ def cmd_garde(args: argparse.Namespace) -> int:
     touchees = [chemin for chemin in chemins if is_protected(chemin)]
     patch = git(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", base, "HEAD")
     silences = silencieux_ajoutes(patch)
-    reglages, _ = reglages_des_controles(chemins)
+
+    def base_et_tete(chemin: str) -> tuple[bytes | None, bytes | None]:
+        return blob_a(repo, base, chemin), blob_a(repo, "HEAD", chemin)
+
+    reglages, _ = reglages_des_controles(chemins, base_et_tete)
+    retires = tests_retires(chemins, base_et_tete)
     for chemin in touchees:
         print(f"zone de contrôle modifiée : {chemin}")
     for silence in silences:
         print(f"silencieux ajouté : {silence}")
     for chemin in reglages:
         print(f"réglage des contrôles modifié : {chemin}")
+    for test in retires:
+        print(f"test retiré : {test}")
     if touchees:
         print("revue humaine obligatoire : la branche touche l'infrastructure de vérification")
-    if silences or reglages:
-        print("justification requise dans la merge request pour chaque silencieux ou réglage")
-    if not touchees and not silences and not reglages:
+    if silences or reglages or retires:
+        print(
+            "justification requise dans la merge request pour chaque silencieux, réglage"
+            " ou test retiré"
+        )
+    if not (touchees or silences or reglages or retires):
         print(f"garde : {len(chemins)} fichier(s), aucune zone de contrôle, aucun silencieux")
-    return 3 if touchees or silences or reglages else 0
+    return 3 if touchees or silences or reglages or retires else 0
 
 
 def main(argv: list[str] | None = None) -> int:

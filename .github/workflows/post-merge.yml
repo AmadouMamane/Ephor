@@ -102,5 +102,11 @@ jobs:
         continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        # Sans jeton, l'étape sortait en succès sans rien scanner, toutes les nuits : ce qui ne
+        # peut pas tourner le dit, par un avertissement sur la page du passage.
         run: |
-          if [ -n "$SNYK_TOKEN" ]; then uvx snyk-agent-scan==0.6.4 --ci; fi
+          if [ -n "$SNYK_TOKEN" ]; then
+            uvx snyk-agent-scan==0.6.4 --ci
+          else
+            echo "::warning title=scan des agents non lancé::pas de SNYK_TOKEN dans les secrets : la configuration des agents (MCP, skills, réglages) n'a pas été scannée"
+          fi

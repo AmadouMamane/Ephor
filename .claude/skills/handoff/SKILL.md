@@ -1,7 +1,7 @@
 ---
 name: handoff
 description: Prépare un passage de relais propre avant /clear, avant une pause longue, ou avant de passer la main à une autre session. À utiliser dès que le contexte dépasse 60 %.
-allowed-tools: Bash(git *) Bash(make *) Read Edit Write
+allowed-tools: Bash(git status *) Bash(git log *) Bash(git diff *) Bash(git add *) Bash(git commit *) Bash(make *) Read Edit Write
 ---
 
 # Passage de relais

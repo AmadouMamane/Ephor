@@ -1,5 +1,5 @@
 {
   "name": "ephor",
-  "version": "1.1.7",
+  "version": "1.2.0",
   "description": "Relais des garde-fous du dépôt ouvert : bouton d'arrêt, anti-secret, périmètre du contrat, dépôts de référence, zones de contrôle."
 }

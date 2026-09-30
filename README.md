@@ -32,7 +32,8 @@ pas cette recette, allez droit à [`.ephor/docs/10-installation.md`](.ephor/docs
 mkdir -p ~/dev && cp -R ephor ~/dev/mon-projet && cd ~/dev/mon-projet   # hors dossier synchronisé
 rm -rf .git .venv .verify                # sans ça : historique d'Ephor hérité, venv périmé, git init ignoré
 git init -b main && git add -A && git commit -m "chore: base Ephor"
-brew install jq ripgrep fd uv            # confort ; sans jq les garde-fous lisent le JSON avec python3
+brew install uv                          # obligatoire : l'environnement du projet
+brew install jq ripgrep fd               # confort ; sans jq les garde-fous lisent le JSON avec python3
 make doctor                              # nomme chaque problème et donne la commande exacte
 make setup && make verify                # doit afficher VERDICT: GREEN
 bash .ephor/scripts/demo_judge.sh       # le juge face à un agent honnête, tricheur, maladroit
@@ -99,13 +100,13 @@ relancer opencode ou Claude Code.
 | La branche principale, écrite par l'opérateur seul | Qu'un agent s'approuve lui-même en commitant un contrat sur la branche principale, où le juge lit l'approbation | Garde du terminal : un filet. En CI, la protection de la branche fait foi |
 | `read-guard.sh` et les refus `Read(...)` | Que l'agent lise un secret ou un identifiant | Règles d'outil : sous Claude Code, une lecture par le terminal demande l'opérateur |
 | `block-secrets.sh` + gitleaks | Qu'un secret évident entre dans le dépôt | Détection par motifs : filet, pas certitude |
-| Contrôle des données personnelles | Qu'un IBAN, un courriel ou un numéro de carte parte dans un journal ou une erreur | Lit la structure du code, pas le flux : une donnée qui traverse deux fonctions lui échappe |
+| Contrôle des données personnelles | Qu'un IBAN, un courriel, un numéro de carte ou l'objet client entier parte dans un journal ou une erreur | Lit la structure du code Python, pas le flux : une donnée qui traverse deux fonctions lui échappe. Les autres langages ne sont pas lus : il le dit (SKIP) |
 | `refs-guard.sh` | Qu'un agent écrive dans un dépôt voisin déclaré en lecture, que le juge ne verrait jamais | Voit les outils de fichier, pas une redirection shell |
 | Journal des jugements + `make score` | De juger Ephor sur une impression | Ne mesure que ce qui a été jugé : sans lot de tâches, il n'y a rien à comparer |
 | Mesure des tokens et plafond par tâche | Qu'une tâche coûte sans qu'on le sache — sous-agents de Claude Code compris | Sous Copilot, un minimum tant que la session n'est pas fermée ; opencode, par dépôt seulement |
 | `AGENT_STOP` + `STEER.md` | De devoir tuer un process pour reprendre la main | `AGENT_STOP` arrête les trois outils ; `STEER.md` n'est injecté automatiquement que sous Claude Code et opencode |
 | Sortie compacte + `.verify/` | Qu'un log de dix mille lignes mange le contexte | Le code de retour et le résumé restent exacts |
-| Points de reprise hors historique | De perdre du travail, sans remplir la branche de commits « wip » | `make checkpoints` les liste |
+| Points de reprise hors historique | De perdre du travail, sans remplir la branche de commits « wip » | `make checkpoints` les liste ; gardés 30 jours, sans les fichiers de plus de 5 Mo |
 | CI GitLab en trois étages, variante GitHub | Qu'un test lent ou instable bloque l'équipe ; qu'un échec après fusion passe sans bruit | GitHub tourne et lance les tests d'Ephor ; GitLab n'a pas encore tourné sur une instance réelle |
 
 ## Adapter à la taille du projet

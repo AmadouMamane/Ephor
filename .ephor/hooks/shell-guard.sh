@@ -52,6 +52,8 @@ EXCEPTIONS="$(_entrees_zones exceptions)"
 BRANCHE="$(git -C "$ROOT" branch --show-current 2>/dev/null || true)"
 DISTANTE="$(git -C "$ROOT" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
 PRINCIPALES="main master ${DISTANTE#*/}"
+# Ce que les réglages refusent à la LECTURE (`Read(...)`) : secrets, clés, identifiants.
+LECTURES="$(refus "$REGLAGES" Read 2>/dev/null || true)"
 
 # Sans python3, pas d'analyse de la commande. Une commande qui ne nomme aucune zone de
 # contrôle passe ; une qui en nomme une est refusée, faute de pouvoir dire si elle y écrit.
@@ -87,6 +89,56 @@ PRINCIPALES = set(os.environ.get("EPHOR_PRINCIPALES", "").split())
 # Ce qui écrit l'histoire de la branche courante.
 HISTOIRE = {"commit", "merge", "cherry-pick", "revert", "am", "rebase", "pull"}
 PRINCIPALE = "::branche principale::"
+# Les gestes de l'opérateur. Les règles de permissions ne les refusaient que dans un ordre de
+# mots : `make ID=X task-check` passait par la règle générale `make *` (audit du 29/09/2026).
+OPERATEUR = "::geste de l'opérateur::"
+CIBLES_OPERATEUR = {
+    "task-new",
+    "task-check",
+    "adapters",
+    "fetch-docs",
+    "copilot-install",
+    "checkpoints-purge",
+}
+SCRIPTS_OPERATEUR = {
+    "judge.py": {"new", "rouge"},
+    "adapters.py": {"write"},
+    "fetch_docs.py": None,  # toute invocation
+    "install_copilot_plugin.sh": None,
+    "bootstrap_existing_repo.sh": None,
+}
+# Ce qui lit un fichier et en montre le contenu : un secret lu entre dans le prompt.
+SECRET = "::lecture d'un secret::"
+LECTEURS = {
+    "cat", "less", "more", "head", "tail", "bat", "batcat", "nl", "tac", "rev", "strings",
+    "xxd", "od", "hexdump", "base64", "rg", "grep", "egrep", "fgrep", "ag", "ack", "jq", "yq",
+    "awk", "gawk", "sed", "cut", "sort", "uniq", "paste", "column", "diff", "source", ".",
+}
+# Les refus `Read(...)` des réglages, chacun rendu comparable à un chemin absolu.
+LECTURES = [m.strip() for m in os.environ.get("EPHOR_LECTURES", "").splitlines() if m.strip()]
+
+
+def lecture_refusee(absolu):
+    """Le motif `Read(...)` des réglages que vise ce chemin absolu, ou None."""
+    relatif = os.path.relpath(absolu, racine) if absolu.startswith(racine + os.sep) else None
+    for motif in LECTURES:
+        if motif.startswith("~/"):
+            vise, forme = absolu, os.path.join(maison, motif[2:])
+        elif motif.startswith("//"):
+            vise, forme = absolu, motif[1:]
+        elif relatif is None:
+            continue
+        else:
+            vise, forme = relatif, motif[2:] if motif.startswith("./") else motif
+        vise, forme = vise.lower(), forme.lower()
+        # `**/x` vaut aussi à la racine ; `*` traverse les dossiers, comme chez fnmatch.
+        if fnmatch.fnmatchcase(vise, forme) or (
+            forme.startswith("**/") and fnmatch.fnmatchcase(vise, forme[3:])
+        ):
+            return motif
+        if forme.endswith("/**") and vise == forme[:-3]:
+            return motif
+    return None
 # Les zones, déjà en motifs (voir motifs_zones dans _lib.sh) : relatifs au dépôt, ou absolus
 # pour le poste et le dossier git. Les exceptions (la mémoire de l'agent) passent.
 motifs = [m.strip() for m in os.environ["EPHOR_MOTIFS"].splitlines() if m.strip()]
@@ -342,6 +394,123 @@ def branche_apres(sous, args):
     return positionnels[0]
 
 
+def principale_visee(nom):
+    """La branche principale que nomme ce texte (`main`, `refs/heads/main`), ou None."""
+    nom = nom.lstrip("+")
+    nom = nom[len("refs/heads/") :] if nom.startswith("refs/heads/") else nom
+    return nom if nom in PRINCIPALES else None
+
+
+def principale_deplacee(sous, args):
+    """La branche principale qu'une commande git crée, déplace, renomme ou supprime, sans
+    être un commit : `switch -C main x`, `checkout -B main`, `branch -f main x`,
+    `branch -M main`, `update-ref refs/heads/main x`, `push . x:main`, `fetch . x:main`,
+    `reset <commit>` sur main, `rebase <amont> main`, `worktree add -B main`. Le commit d'un
+    contrat sur cette branche EST l'approbation, et `git switch` passe sans question."""
+    # La valeur d'une option n'est pas un nom de branche : `update-ref -m <raison>`,
+    # `rebase --onto <x>`, `branch -u <amont>`. (`branch -m` renomme : pas de valeur.)
+    avec_valeur = {
+        "update-ref": {"-m"},
+        "rebase": {"--onto", "-x", "--exec", "-s", "--strategy", "-X", "--strategy-option"},
+        "branch": {"-u", "--set-upstream-to"},
+    }.get(sous, set())
+    positionnels, j = [], 0
+    while j < len(args):
+        if args[j] in avec_valeur:
+            j += 2
+            continue
+        if not args[j].startswith("-"):
+            positionnels.append(args[j])
+        j += 1
+    if sous == "switch":
+        for valeur in valeurs(args, "cC", {"--create", "--force-create"}):
+            if principale_visee(valeur):
+                return principale_visee(valeur)
+    elif sous == "checkout":
+        for valeur in valeurs(args, "bB", set()):
+            if principale_visee(valeur):
+                return principale_visee(valeur)
+    elif sous == "worktree" and positionnels[:1] == ["add"]:
+        for valeur in valeurs(args, "bB", set()):
+            if principale_visee(valeur):
+                return principale_visee(valeur)
+    elif sous == "branch":
+        liste = {"-l", "--list", "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose",
+                 "--contains", "--no-contains", "--merged", "--no-merged", "--points-at",
+                 "--show-current", "--sort", "--format", "--column"}
+        if not any(a.split("=", 1)[0] in liste for a in args):
+            for a in positionnels:
+                if principale_visee(a):
+                    return principale_visee(a)
+    elif sous == "update-ref":
+        if "--stdin" in args:
+            return "main"
+        cible = positionnels[0] if positionnels else ""
+        if principale_visee(cible) or (cible == "HEAD" and BRANCHE["courante"] in PRINCIPALES):
+            return principale_visee(cible) or BRANCHE["courante"]
+    elif sous in {"push", "fetch"} and positionnels:
+        distant, refspecs = positionnels[0], positionnels[1:]
+        if sous == "fetch" or distant in {".", "./", racine}:
+            for refspec in refspecs:
+                if ":" in refspec and principale_visee(refspec.split(":", 1)[1]):
+                    return principale_visee(refspec.split(":", 1)[1])
+    elif sous == "reset" and BRANCHE["courante"] in PRINCIPALES:
+        avant_chemins = args[: args.index("--")] if "--" in args else args
+        modes = {"--soft", "--mixed", "--hard", "--keep", "--merge"}
+        if modes & set(avant_chemins):
+            return BRANCHE["courante"]
+        for a in avant_chemins:
+            # Un nom qui n'est pas un fichier du dossier désigne un commit : `reset x` déplace.
+            if not a.startswith("-") and not os.path.exists(os.path.join(racine, a)):
+                return BRANCHE["courante"]
+    elif sous == "rebase" and len(positionnels) >= 2 and principale_visee(positionnels[1]):
+        return principale_visee(positionnels[1])
+    return None
+
+
+def cibles_de_make(args):
+    """(les cibles d'une commande `make`, dans n'importe quel ordre ; imprime-t-elle
+    l'environnement ?). `make -p` affiche toutes les variables, jetons compris."""
+    avec_valeur = {"-C", "-f", "-I", "-o", "-W", "-E", "--directory", "--file", "--makefile",
+                   "--include-dir", "--old-file", "--assume-old", "--what-if", "--new-file",
+                   "--assume-new", "--eval"}
+    cibles, imprime, j = [], False, 0
+    while j < len(args):
+        a = args[j]
+        if a in avec_valeur:
+            j += 2
+            continue
+        if a.startswith("--"):
+            imprime = imprime or a == "--print-data-base"
+        elif a.startswith("-") and len(a) > 1:
+            for lettre in a[1:]:
+                if lettre in "CfIoWEjl":
+                    break  # la suite du mot est la valeur de l'option
+                imprime = imprime or lettre == "p"
+        elif "=" not in a:
+            cibles.append(a)
+        j += 1
+    return cibles, imprime
+
+
+def script_lance(nom, args):
+    """(nom de fichier du script qu'un interprète lance, ses arguments), ou (None, [])."""
+    if nom.rstrip("0123456789.") not in INTERPRETES | COQUILLES:
+        return None, []
+    j = 0
+    while j < len(args):
+        a = args[j]
+        if a in {"-c", "-m", "-e"}:
+            return None, []
+        if a in {"-X", "-W", "-O"} and nom.startswith("python"):
+            j += 2
+            continue
+        if not a.startswith("-"):
+            return os.path.basename(a), args[j + 1 :]
+        j += 1
+    return None, []
+
+
 def programme(mots):
     """(nom du programme, ses arguments), après affectations, préfixes et lanceurs."""
     while mots:
@@ -382,6 +551,82 @@ def formateur(nom, args):
     if nom in {"gofmt", "shfmt"}:
         return positionnels if "-w" in options else []
     return []
+
+
+# Le premier argument de ces programmes est un motif ou un programme, pas un fichier.
+MOTIF_D_ABORD = {"rg", "grep", "egrep", "fgrep", "ag", "ack", "awk", "gawk", "sed", "jq", "yq"}
+AVEC_VALEUR_LECTURE = {
+    "-e", "--regexp", "-g", "--glob", "-t", "--type", "-m", "--max-count",
+    "-A", "-B", "-C", "--include", "--exclude", "--exclude-dir",
+}
+
+
+def chemins_lus(nom, args):
+    """Les fichiers dont la commande montre le contenu : `cat .env`, `rg x api/.env`,
+    `grep -f .env`, `source .env`, ou un script en ligne qui les ouvre."""
+    if nom.rstrip("0123456789.") in INTERPRETES:
+        for script in scripts_en_ligne(args):
+            yield from re.findall(r"""['"]([^'"\s]+)['"]""", script)
+        return
+    if nom not in LECTEURS:
+        return
+    motif_d_abord = nom in MOTIF_D_ABORD and not (
+        {"-e", "--regexp", "-f", "--file"} & set(args)
+        or any(a.startswith(("--regexp=", "--file=")) for a in args)
+    )
+    j = 0
+    while j < len(args):
+        a = args[j]
+        if a in {"-f", "--file"} and j + 1 < len(args):
+            yield args[j + 1]  # le motif est LU dans ce fichier
+            j += 2
+            continue
+        if a.startswith("--file="):
+            yield a.split("=", 1)[1]
+        elif a in AVEC_VALEUR_LECTURE:
+            j += 2
+            continue
+        elif not a.startswith("-"):
+            if motif_d_abord:
+                motif_d_abord = False
+            else:
+                yield a
+        j += 1
+
+
+def gestes_et_lectures(nom, args, ici):
+    """Les gestes de l'opérateur, dans n'importe quel ordre de mots, et ce qui montre un
+    secret : un fichier refusé à la lecture, ou tout l'environnement (jetons compris)."""
+    if nom in {"make", "gmake"}:
+        cibles_m, imprime = cibles_de_make(args)
+        gestes = [c for c in cibles_m if c in CIBLES_OPERATEUR]
+        if gestes:
+            yield OPERATEUR + "make " + gestes[0], "make"
+        if imprime:
+            yield SECRET + "tout l'environnement", "make -p"
+    script, args_script = script_lance(nom, args)
+    if script is None and nom in SCRIPTS_OPERATEUR:
+        script, args_script = nom, args
+    if script in SCRIPTS_OPERATEUR:
+        attendus = SCRIPTS_OPERATEUR[script]
+        sous = next((a for a in args_script if not a.startswith("-")), "")
+        if attendus is None or sous in attendus:
+            yield OPERATEUR + script + (" " + sous if attendus else ""), script
+    if nom == "printenv" and any(
+        re.search(r"TOKEN|SECRET|PASSW|KEY|CREDENTIAL|AUTH", a, re.I) for a in args
+    ):
+        yield SECRET + "une variable secrète de l'environnement", "printenv"
+    if (
+        (nom == "export" and "-p" in args)
+        or (nom == "declare" and {"-x", "-p"} & set(args))
+        or (nom == "set" and not args)
+    ):
+        yield SECRET + "tout l'environnement", nom
+    for chemin in chemins_lus(nom, args):
+        if chemin.startswith("-") or "://" in chemin:
+            continue
+        if lecture_refusee(resolu(ici(chemin))):
+            yield SECRET + chemin, nom
 
 
 def heredocs(texte):
@@ -462,10 +707,16 @@ def cibles(texte, profondeur=0, base=None):
                 continue
             reste.append(mots[i])
             i += 1
+        # `env` seul (ou suivi de seules affectations) affiche tout l'environnement ; plus bas,
+        # le lanceur `env x` est enlevé avant de regarder `x`, et ce cas-là passerait.
+        tete = os.path.basename(reste[0]) if reste else ""
+        if tete in {"env", "printenv"} and all(re.match(r"^\w+=", m) or m.startswith("-") for m in reste[1:]):
+            yield SECRET + "tout l'environnement", tete
         nom, args = programme(reste)
         if not nom:
             continue
         options = [a for a in args if a.startswith("-")]
+        yield from gestes_et_lectures(nom, args, ici)
         positionnels = [a for a in args if not a.startswith("-")]
         if nom in {"cd", "pushd"}:
             cible = positionnels[0] if positionnels else maison
@@ -534,6 +785,9 @@ def cibles(texte, profondeur=0, base=None):
                     yield ici(a), "find qui écrit"
         elif nom == "git" and args:
             sous_g, reste_g = git_sous_commande(args)
+            deplacee = principale_deplacee(sous_g, reste_g)
+            if deplacee:
+                yield PRINCIPALE + deplacee, "git " + sous_g
             nouvelle = branche_apres(sous_g, reste_g)
             if nouvelle is not None:
                 BRANCHE["courante"] = nouvelle
@@ -580,8 +834,9 @@ def cibles(texte, profondeur=0, base=None):
 
 try:
     for cible, pourquoi in cibles(commande):
-        if cible.startswith(PRINCIPALE):
-            print(f"{cible[len(PRINCIPALE):]}\t{PRINCIPALE}\t{pourquoi}")
+        speciale = next((m for m in (PRINCIPALE, OPERATEUR, SECRET) if cible.startswith(m)), None)
+        if speciale:
+            print(f"{cible[len(speciale):]}\t{speciale}\t{pourquoi}")
             break
         motif = zone(cible)
         if motif:
@@ -594,14 +849,20 @@ except Exception:  # un défaut de cette analyse ne doit pas tout laisser passer
             break
 PY
 VERDICT="$(EPHOR_COMMANDE="$COMMANDE" EPHOR_MOTIFS="$MOTIFS" EPHOR_EXCEPTIONS="$EXCEPTIONS" \
-  EPHOR_BRANCHE="$BRANCHE" EPHOR_PRINCIPALES="$PRINCIPALES" python3 -c "$ANALYSE" "$ROOT" "$HOME")"
+  EPHOR_BRANCHE="$BRANCHE" EPHOR_PRINCIPALES="$PRINCIPALES" EPHOR_LECTURES="$LECTURES" \
+  python3 -c "$ANALYSE" "$ROOT" "$HOME")"
 if [ -n "$VERDICT" ]; then
   IFS="$(printf '\t')" read -r CIBLE MOTIF POURQUOI <<EOF
 $VERDICT
 EOF
-  if [ "$MOTIF" = "::branche principale::" ]; then
-    deny "REFUSÉ : $POURQUOI sur $CIBLE, la branche principale. Un commit sur cette branche, c'est l'approbation de l'opérateur (le juge la lit là) : l'agent n'y écrit pas l'histoire. Travaille sur ta branche de tâche (git switch task/<ID>). Si ce commit est vraiment voulu, c'est l'opérateur qui le fait, dans son terminal."
-  fi
+  case "$MOTIF" in
+    "::branche principale::")
+      deny "REFUSÉ : $POURQUOI écrit ou déplace $CIBLE, la branche principale. Un commit sur cette branche, c'est l'approbation de l'opérateur (le juge la lit là) : l'agent n'y écrit pas l'histoire et ne la déplace pas. Travaille sur ta branche de tâche (git switch task/<ID>). Si c'est vraiment voulu, c'est l'opérateur qui le fait, dans son terminal." ;;
+    "::geste de l'opérateur::")
+      deny "REFUSÉ : $CIBLE est un geste de l'opérateur (approuver une tâche, régénérer les réglages, faire entrer une page du web, installer le greffon, effacer les points de reprise) : l'agent ne le lance pas, dans aucun ordre de mots. Demande-le à l'opérateur." ;;
+    "::lecture d'un secret::")
+      deny "REFUSÉ : cette commande ($POURQUOI) montrerait $CIBLE, refusé à la lecture par les réglages du dépôt : un secret lu entre dans le prompt, donc chez le fournisseur du modèle. Utilise une variable d'environnement sans l'afficher, ou demande à l'opérateur." ;;
+  esac
   deny "REFUSÉ : cette commande écrit dans $CIBLE ($POURQUOI), zone de contrôle « $MOTIF ». Écrire par le terminal ce que l'édition refuse, c'est contourner le garde-fou — et le juge refuserait de toute façon le correctif. Si le changement est vraiment nécessaire, c'est l'opérateur qui le fait, à la main."
 fi
 exit 0

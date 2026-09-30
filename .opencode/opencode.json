@@ -48,6 +48,7 @@
       "make task-check *": "deny",
       "make adapters *": "deny",
       "make fetch-docs *": "deny",
+      "make checkpoints-purge *": "deny",
       "python3 .ephor/fetch_docs.py *": "deny",
       "python3 .ephor/judge.py new *": "deny",
       "python3 .ephor/judge.py rouge *": "deny"
@@ -77,8 +78,8 @@
       "CLAUDE.local.md": "deny"
     },
     "read": {
-      ".env": "deny",
-      ".env.*": "deny",
+      "*.env": "deny",
+      "*.env.*": "deny",
       "*.pem": "deny",
       "*.key": "deny",
       "*id_rsa*": "deny"

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -198,3 +201,87 @@ def test_un_depot_range_sous_un_dossier_saute_reste_controle(tmp_path: Path) -> 
     (depot / "src").mkdir(parents=True)
     (depot / "src" / "paiement.py").write_text(FUITES, encoding="utf-8")
     assert len(personal_data.scan_repo(depot)) == 3
+
+
+JAVA = 'class Virement {\n  void f(Client c) { LOG.info("vers " + c.getIban()); }\n}\n'
+
+
+def test_un_depot_sans_python_n_est_pas_dit_propre(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Sur un service Java ou TypeScript, il ne lisait rien et disait « aucune donnée
+    personnelle », code 0 : `make verify` affichait « ok fuites » (audit du 29/09/2026)."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "Virement.java").write_text(JAVA, encoding="utf-8")
+    (tmp_path / "src" / "app.ts").write_text("console.log(`client ${user.email}`);\n")
+    assert personal_data.main(["--repo", str(tmp_path)]) == 0, "l'ancien appel ne rougit pas"
+    sortie = capsys.readouterr().out
+    assert "PARTIEL" in sortie and "Java 1" in sortie and "TypeScript 1" in sortie
+    assert "aucun fichier Python" in sortie
+    assert "aucune donnée personnelle dans les journaux" not in sortie
+    assert personal_data.main(["--repo", str(tmp_path), "--code-si-partiel", "3"]) == 3
+
+
+def test_ce_qui_est_lu_est_dit(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text(PROPRE, encoding="utf-8")
+    (tmp_path / "src" / "b.py").write_text("X = 1\n", encoding="utf-8")
+    # Réglages d'outils, dépendances, sorties de construction : pas du code du projet.
+    for chemin in (".opencode/plugins/x.js", "node_modules/p/i.js", "dist/app.js", "target/A.java"):
+        (tmp_path / chemin).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / chemin).write_text(JAVA, encoding="utf-8")
+    assert personal_data.main(["--repo", str(tmp_path), "--code-si-partiel", "3"]) == 0
+    sortie = capsys.readouterr().out
+    assert "aucune donnée personnelle dans les journaux (2 fichier(s) Python lu(s))" in sortie
+    assert "PARTIEL" not in sortie
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "app.tsx").write_text("export const A = 1;\n")
+    assert personal_data.main(["--repo", str(tmp_path), "--code-si-partiel", "3"]) == 3
+    assert "TypeScript 1" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("nom_complet", "nom complet"),
+        ("prenom", "prenom"),
+        ("prénom", "prenom"),
+        ("téléphone", "telephone"),
+    ],
+)
+def test_le_vocabulaire_couvre_le_nom_et_les_accents(name: str, expected: str) -> None:
+    assert personal_data.sensitive(name) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "attendu"),
+    [
+        ('logger.info("client %r", client)\n', 1),
+        ('logger.info(f"virement de {beneficiaire!r}")\n', 1),
+        ('logger.info("client %s", str(titulaire))\n', 1),
+        ('logger.info("client %s", client.id)\n', 0),
+        ('logger.info("client %s", client_id)\n', 0),
+        ('logger.info("%d clients", len(clients))\n', 0),
+    ],
+)
+def test_l_objet_client_entier_est_vu(source: str, attendu: int) -> None:
+    """Un objet client passé tout entier (`%r`, `str(client)`) sort tous ses champs."""
+    assert len(personal_data.scan_source(source)) == attendu
+
+
+def test_verify_dit_skip_quand_les_fuites_ne_sont_pas_lues(tmp_path: Path) -> None:
+    (tmp_path / ".ephor" / "projet").mkdir(parents=True)
+    shutil.copy(EPHOR / "projet" / "verify.sh", tmp_path / ".ephor" / "projet")
+    shutil.copy(EPHOR / "personal_data.py", tmp_path / ".ephor")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "Virement.java").write_text(JAVA, encoding="utf-8")
+    souple = {cle: valeur for cle, valeur in os.environ.items() if cle != "VERIFY_STRICT"}
+    verify = subprocess.run(
+        ["bash", ".ephor/projet/verify.sh"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=souple,
+        check=False,
+    )
+    assert "SKIP fuites" in verify.stdout and "ok   fuites" not in verify.stdout, verify.stdout

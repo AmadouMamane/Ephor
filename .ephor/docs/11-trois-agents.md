@@ -44,7 +44,7 @@ seule série de tests.
 | Écriture dans une zone de contrôle | règles `Edit(...)`, et `write-guard.sh` | permissions dérivées, et `write-guard.sh` via le greffon | `write-guard.sh` |
 | Écriture dans un dépôt voisin | `refs-guard.sh` | le même, via le greffon | le même |
 | Écriture d'une zone de contrôle **par le terminal**, forme simple (redirection, `sed -i`, `cp`, `mv`, `rm`, `git restore`, `cd` puis écriture, script en ligne ou en document en ligne, `find -delete`, `git apply`, formateur en place) | `shell-guard.sh` | le même, via le greffon | le même |
-| Écriture d'une zone de contrôle par le terminal, **détour compris** (script écrit ailleurs, variable) | le bac à sable : refus du système (ADR 0008) | rien ; la sentinelle ne tourne pas non plus | rien ; la sentinelle le signale en fin de tour |
+| Écriture d'une zone de contrôle par le terminal, **détour compris** (script écrit ailleurs, variable) | le bac à sable : refus du système (ADR 0008) | rien ; la sentinelle le signale en fin de tour | rien ; la sentinelle le signale en fin de tour |
 
 Les zones de contrôle viennent d'une seule liste, dans le moteur : `.ephor/zones.txt`. Les
 gardes, la sentinelle, le juge et la garde de la CI la lisent tous ; les refus `Edit(...)` des
@@ -108,8 +108,10 @@ des skills à entretenir.
   dès que la conversation dépasse 200 000) et le dit ; `EPHOR_CONTEXTE_TOKENS` la déclare.
   Copilot ne donne ses tokens qu'à la fermeture de la session : pas d'alerte.
 - **La sentinelle** regarde le résultat, pas le moyen : au début du tour, elle photographie
-  les zones de contrôle ; à la fin, une zone changée pendant le tour, par quelque chemin
-  que ce soit, pose `AGENT_STOP` avec la liste des fichiers. Sous les trois outils : Claude
+  les zones de contrôle et les branches ; à la fin, une zone changée pendant le tour, par
+  quelque chemin que ce soit — sur le disque, dans un commit du tour, ou en déplaçant la
+  branche principale —, pose `AGENT_STOP` avec la liste des fichiers. Changer de branche ou
+  rebaser, sans rien toucher aux zones, ne la fait pas crier. Sous les trois outils : Claude
   Code, Copilot (vue « agents » et greffon), et opencode depuis 1.1.5, par son greffon (le
   message de l'opérateur ouvre le tour, la session redevenue inactive le ferme). Avant, un
   script qui écrivait dans `tasks/` n'y était vu par personne (constaté le 29/09/2026).
@@ -199,8 +201,11 @@ traînent dans ce dossier ne tournent plus.
   les hooks du dépôt ; ailleurs, seuls le juge et la CI refusent encore. `make doctor` dit
   si le greffon manque, s'il est périmé, ou si ce dépôt n'y est pas déclaré. D'où la règle :
   **installer le greffon avant d'ouvrir Copilot sur un dépôt, puis une fenêtre neuve.**
-- **Un hook qui dépasse son délai laisse passer l'appel.** C'est le comportement du moteur
-  de Copilot, pas un choix d'Ephor.
+- **Un hook qui dépasse son délai laisse passer l'appel**, sous Copilot comme sous Claude
+  Code (« A timed-out command hook doesn't block the tool call », doc des hooks de Claude
+  Code). C'est le comportement des moteurs, pas un choix d'Ephor ; sous opencode, le
+  greffon refuse au contraire. Mesuré : une commande de 2 Mo est jugée en 0,5 s, loin des
+  délais (10 à 30 s) ; le risque est faible, et le juge reste la barrière.
 - **Copilot refuse souvent de lui-même**, avant d'appeler le moindre outil. C'est
   appréciable et ce n'est pas une garantie ; surtout, ça brouille les essais : pour éprouver
   un garde-fou, il faut une demande que l'agent n'a aucune raison de refuser seul.

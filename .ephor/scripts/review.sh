@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Commande de revue proportionnée au risque du contrat.
 #   Usage : bash .ephor/scripts/review.sh <TASK_ID>
-set -euo pipefail
+# Chaque étape tourne, même après un échec, et la revue finit par son bilan. En `set -e`, un
+# `verify` rouge arrêtait tout : le juge ne tournait pas, et rien ne résumait la revue.
+set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
 TASK="${1:-}"
@@ -52,38 +54,49 @@ echo " Revue de la tâche : $TASK"
 echo " Niveau de risque   : $RISK"
 echo "============================================================"
 
+VERTES=0
+TOTAL=0
+ECHECS=""
+etape() { # etape <nom> <commande...> : lancée quoi qu'il soit arrivé avant, et comptée
+  local nom="$1"
+  shift
+  TOTAL=$((TOTAL + 1))
+  echo "-> $nom"
+  if "$@"; then VERTES=$((VERTES + 1)); else ECHECS="${ECHECS:+$ECHECS, }$nom"; fi
+}
+
+CONSEIL=""
 case "$RISK" in
   faible)
     echo "-> Risque faible : vérification locale puis jugement."
-    bash .ephor/projet/verify.sh
-    echo "-> Exécution du juge..."
-    make judge TASK="$TASK"
+    etape "vérification" bash .ephor/projet/verify.sh
+    etape "juge" make judge TASK="$TASK"
     ;;
   modere)
     echo "-> Risque modéré : vérification complète + échantillon de régression."
-    bash .ephor/projet/verify.sh
-    echo "-> Exécution de l'échantillon de régression (test-fast)..."
-    make test-fast
-    echo "-> Exécution du juge..."
-    make judge TASK="$TASK"
-    echo ""
-    echo "CONSEIL : sur un risque modéré, faites relire le patch par le sous-agent evaluator."
+    etape "vérification" bash .ephor/projet/verify.sh
+    etape "échantillon de régression (test-fast)" make test-fast
+    etape "juge" make judge TASK="$TASK"
+    CONSEIL="CONSEIL : sur un risque modéré, faites relire le patch par le sous-agent evaluator."
     ;;
   eleve)
     echo "-> Risque élevé : vérification stricte + sécurité + mutations."
-    VERIFY_STRICT=1 bash .ephor/projet/verify.sh
-    echo "-> Vérification des secrets et fuites de données (make sec)..."
-    make sec
-    echo "-> Score de mutation sur les fichiers changés (make mutants)..."
-    make mutants
-    echo "-> Exécution du juge..."
-    make judge TASK="$TASK"
-    echo ""
-    echo "CONSEIL : sur un risque élevé, la revue humaine est obligatoire avant la fusion."
+    etape "vérification stricte" env VERIFY_STRICT=1 bash .ephor/projet/verify.sh
+    etape "secrets et fuites de données (make sec)" make sec
+    etape "score de mutation (make mutants)" make mutants
+    etape "juge" make judge TASK="$TASK"
+    CONSEIL="CONSEIL : sur un risque élevé, la revue humaine est obligatoire avant la fusion."
     ;;
   *)
     echo "Niveau de risque inconnu : $RISK. Exécution standard."
-    bash .ephor/projet/verify.sh
-    make judge TASK="$TASK"
+    etape "vérification" bash .ephor/projet/verify.sh
+    etape "juge" make judge TASK="$TASK"
     ;;
 esac
+
+echo ""
+echo "============================================================"
+echo " revue : $VERTES étape(s) sur $TOTAL vertes${ECHECS:+ — en échec : $ECHECS}"
+echo "============================================================"
+[ -z "$CONSEIL" ] || echo "$CONSEIL"
+[ -z "$ECHECS" ]

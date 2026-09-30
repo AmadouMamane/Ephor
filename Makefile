@@ -20,7 +20,7 @@ export EPHOR_SAST
 help: ## Liste les cibles
 	@# `.*?` est du PCRE : ni grep -E ni awk (ERE) ne le garantissent. Forme portable
 	@# pour le grep/awk de BSD livré avec macOS.
-	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "}{printf "  %-14s %s\n",$$1,$$2}'
+	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "}{printf "  %-18s %s\n",$$1,$$2}'
 
 doctor: ## Diagnostic de l'environnement — à lancer AVANT setup, et quand verify échoue bizarrement
 	@bash .ephor/scripts/doctor.sh
@@ -59,22 +59,25 @@ mutants: | $(V) ## Score de mutation sur les fichiers CHANGÉS (jamais tout le d
 	@bash .ephor/scripts/mutants.sh
 
 sec: | $(V) ## Secrets, données personnelles, et le scanner de l'entreprise s'il est branché
-	@s=0; manque=""; \
+	@s=0; manque=""; hors_python=""; \
 	 if command -v gitleaks >/dev/null 2>&1; then \
 	   gitleaks detect --no-banner --redact -v > $(V)/sec.txt 2>&1 || s=1; \
 	 else echo "gitleaks ABSENT : aucun secret n'a été cherché" > $(V)/sec.txt; manque="gitleaks"; fi; \
 	 echo "--- données personnelles" >> $(V)/sec.txt; \
-	 $(EPHOR_PY) .ephor/personal_data.py >> $(V)/sec.txt 2>&1 || s=1; \
+	 $(EPHOR_PY) .ephor/personal_data.py --code-si-partiel 3 >> $(V)/sec.txt 2>&1; rc=$$?; \
+	 if [ $$rc -eq 3 ]; then hors_python=1; elif [ $$rc -ne 0 ]; then s=1; fi; \
 	 if [ -f .ephor/projet/sast.sh ]; then \
 	   echo "--- scanner maison : .ephor/projet/sast.sh" >> $(V)/sec.txt; \
 	   bash .ephor/projet/sast.sh >> $(V)/sec.txt 2>&1 || s=1; \
 	 elif [ -n "$${EPHOR_SAST}" ]; then \
 	   echo "--- scanner maison : $${EPHOR_SAST}" >> $(V)/sec.txt; \
 	   sh -c "$${EPHOR_SAST}" >> $(V)/sec.txt 2>&1 || s=1; \
-	 else echo "--- scanner maison : ni .ephor/projet/sast.sh ni EPHOR_SAST (voir .ephor/docs/06-exploitation.md)" >> $(V)/sec.txt; fi; \
+	 else echo "--- scanner maison : ni .ephor/projet/sast.sh ni EPHOR_SAST (voir .ephor/docs/06-exploitation.md)" >> $(V)/sec.txt; \
+	   if [ -n "$$hors_python" ]; then manque="$${manque:+$$manque et }les données personnelles hors Python (aucun scanner maison)"; fi; \
+	 fi; \
 	 echo "sec -> $(V)/sec.txt"; \
 	 if [ -n "$$manque" ]; then \
-	   echo "  PARTIEL — $$manque n'a pas tourné : ce vert ne dit PAS « aucun secret »."; \
+	   echo "  PARTIEL — pas contrôlé : $$manque. Ce vert n'est pas complet."; \
 	   if [ "$${VERIFY_STRICT:-0}" = "1" ]; then s=1; fi; \
 	 fi; \
 	 exit $$s
@@ -141,8 +144,12 @@ ephor-test: | $(V) ## Teste Ephor lui-même : juge, garde-fous, scripts
 gitlab-check: ## Les réglages GitLab qui font foi sont-ils en place ? (OPÉRATEUR, GITLAB_TOKEN en lecture)
 	@$(EPHOR_PY) .ephor/gitlab_check.py
 
-checkpoints: ## Liste les points de reprise automatiques (hors historique de branche)
+checkpoints: ## Liste les points de reprise automatiques (hors historique de branche, gardés 30 jours)
 	@git for-each-ref --sort=-committerdate --format='  %(committerdate:relative)  %(refname:short)' refs/ephor/checkpoints | head -20
+
+checkpoints-purge: ## Supprime TOUS les points de reprise, sans attendre leurs 30 jours (OPÉRATEUR)
+	@git for-each-ref --format='delete %(refname)' refs/ephor/checkpoints | git update-ref --stdin
+	@echo "points de reprise supprimés ; leur place se libère au prochain git gc (tout de suite : git gc --prune=now)"
 
 map: ## Carte structurelle du dépôt, ou d'un dépôt de référence : make map [REPO=<nom>]
 	@if [ -n "$(REPO)" ]; then $(EPHOR_PY) .ephor/refs.py carte --nom "$(REPO)"; else bash .ephor/scripts/repo_map.sh; fi
@@ -163,4 +170,4 @@ clean: ## Efface les sorties, SAUF la mesure de tokens et le journal des jugemen
 $(V):
 	@mkdir -p $(V)
 
-.PHONY: help doctor setup ci-image gitlab-check review delivery-manifest delivery-check fmt lint types arch test test-fast sec mutants verify judge task-new task-check adapters copilot-install usage ephor-test checkpoints map refs stop resume score fetch-docs clean
+.PHONY: help doctor setup ci-image gitlab-check review delivery-manifest delivery-check fmt lint types arch test test-fast sec mutants verify judge task-new task-check adapters copilot-install usage ephor-test checkpoints checkpoints-purge map refs stop resume score fetch-docs clean

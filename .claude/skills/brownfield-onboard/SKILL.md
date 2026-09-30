@@ -2,7 +2,7 @@
 name: brownfield-onboard
 description: Installe Ephor sur un dépôt existant qui n'en a pas. À utiliser une seule fois par dépôt, avant toute autre tâche sur ce dépôt.
 argument-hint: [chemin du dépôt, ou . pour le dépôt courant]
-allowed-tools: Read Grep Glob Bash Edit Write Task
+allowed-tools: Read Grep Glob Bash(make *) Bash(bash .ephor/scripts/*) Bash(git status *) Bash(git log *) Bash(git diff *) Bash(git show *) Bash(rg *) Bash(fd *) Bash(jq *) Edit Write Task
 ---
 
 # Installation d'Ephor sur un dépôt existant

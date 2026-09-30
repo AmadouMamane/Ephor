@@ -297,3 +297,70 @@ def test_couper_le_bac_a_sable_pendant_le_tour_est_vu(tmp_path: Path) -> None:
     (repo / ".claude" / "settings.local.json").write_text('{"sandbox": {"enabled": false}}')
     assert son_hook(repo, "checkpoint.sh").returncode == 1
     assert "sandbox.enabled=false" in (repo / "AGENT_STOP").read_text(encoding="utf-8")
+
+
+def test_changer_de_branche_ou_rebaser_ne_la_declenche_pas(tmp_path: Path) -> None:
+    """Pendant que l'agent travaille, l'opérateur approuve une autre tâche sur main. L'agent
+    finit son tour sur main, ou reprend sa branche par-dessus : les zones changent, mais
+    personne ne les a écrites. Chacun de ces gestes arrêtait l'agent (vu à l'audit du
+    29/09/2026), et apprenait à l'opérateur à taper `make resume` sans lire."""
+    repo = depot_surveille(tmp_path)
+    git(repo, "switch", "-qc", "task/T-1")
+    (repo / "src" / "a.py").write_text("A = 2\n")
+    git(repo, "commit", "-qam", "travail")
+    git(repo, "switch", "-q", "main")
+    (repo / "tasks" / "AUTRE-001").mkdir(parents=True)
+    (repo / "tasks" / "AUTRE-001" / "contract.json").write_text("{}\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "approbation d'AUTRE-001 par l'opérateur")
+    git(repo, "switch", "-q", "task/T-1")
+
+    assert debut(repo).returncode == 0
+    git(repo, "switch", "-q", "main")
+    assert fin(repo).returncode == 0, "finir son tour sur main n'est pas écrire une zone"
+    assert debut(repo).returncode == 0
+    git(repo, "switch", "-q", "task/T-1")
+    git(repo, "rebase", "-q", "main")
+    assert fin(repo).returncode == 0, "reprendre sa branche sur main non plus"
+    assert not (repo / "AGENT_STOP").exists()
+
+
+def test_deplacer_la_branche_principale_arrete_l_agent(tmp_path: Path) -> None:
+    """`git switch -C main <branche>` : l'agent y porte un contrat qu'il s'est écrit et
+    commité ailleurs, et le juge local le croit approuvé. La sentinelle disait seulement
+    « fichier ajouté » et conseillait `git restore`, qui ne défaisait rien (audit du
+    29/09/2026) : elle nomme maintenant le commit du tour et la branche déplacée."""
+    repo = depot_surveille(tmp_path)
+    git(repo, "switch", "-qc", "task/T-1")
+    ancien = git(repo, "rev-parse", "main").strip()
+    assert debut(repo).returncode == 0
+    git(repo, "switch", "-qc", "approbation")
+    (repo / "tasks" / "NEW-001").mkdir(parents=True)
+    (repo / "tasks" / "NEW-001" / "contract.json").write_text("{}\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "approbation")
+    git(repo, "switch", "-qC", "main", "approbation")
+    git(repo, "switch", "-q", "task/T-1")
+    assert fin(repo).returncode == 1
+    arret = (repo / "AGENT_STOP").read_text(encoding="utf-8")
+    assert "tasks/NEW-001/contract.json (ajouté)" in arret, "le commit du tour est lu"
+    assert "branche principale déplacée : main" in arret
+    assert f"git update-ref refs/heads/main {ancien}" in arret
+
+
+def test_une_photo_de_la_version_d_avant_ne_fait_pas_crier(tmp_path: Path) -> None:
+    """Juste après une mise à jour d'Ephor, la photo du tour a été prise par l'ancienne
+    sentinelle, sans la liste de ce qui existait : toute l'histoire passerait pour faite
+    pendant le tour."""
+    repo = depot_surveille(tmp_path)
+    (repo / "tasks").mkdir()
+    (repo / "tasks" / "ancien.json").write_text("{}\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "une vieille approbation")
+    assert debut(repo).returncode == 0
+    photo = next((repo / ".git" / "ephor-sentinelle").iterdir())
+    lignes = photo.read_text(encoding="utf-8").splitlines()
+    garde = [ligne for ligne in lignes if not ligne.startswith(("ref ", "head ", "principale "))]
+    photo.write_text("\n".join(garde) + "\n", encoding="utf-8")
+    assert fin(repo).returncode == 0
+    assert not (repo / "AGENT_STOP").exists()

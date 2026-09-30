@@ -57,15 +57,23 @@ step fmt    ruff         ruff format --check .
 step lint   ruff         ruff check --output-format=concise .
 step types  mypy         mypy src tests
 step arch   lint-imports lint-imports
-# Données personnelles dans les journaux : bibliothèque standard seule, donc jamais SKIP.
-# La règle « aucune donnée client dans un log » était écrite sans être appliquée.
+# Données personnelles dans les journaux : bibliothèque standard seule. La règle « aucune
+# donnée client dans un log » était écrite sans être appliquée. Il ne lit que le Python :
+# du code d'un autre langage, non lu, donne SKIP (code 3), jamais un faux « ok ».
 if [ ! -f .ephor/personal_data.py ]; then
   skip fuites .ephor/personal_data.py
-elif python3 .ephor/personal_data.py > "$V/fuites.txt" 2>&1; then
-  printf '  ok   %-8s\n' fuites
 else
-  printf '  FAIL %-8s  -> %s\n' fuites "$V/fuites.txt"
-  FAIL=1
+  python3 .ephor/personal_data.py --code-si-partiel 3 > "$V/fuites.txt" 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    printf '  ok   %-8s\n' fuites
+  elif [ "$rc" -eq 3 ]; then
+    printf '  SKIP %-8s  (code non Python non lu -> %s)\n' fuites "$V/fuites.txt"
+    SKIP=$((SKIP+1)); [ "$STRICT" = "1" ] && FAIL=1
+  else
+    printf '  FAIL %-8s  -> %s\n' fuites "$V/fuites.txt"
+    FAIL=1
+  fi
 fi
 # Tests : PYTEST_MARK filtre par marqueur (la CI pré-fusion exclut les lents), et le
 # code 5 de pytest (« aucun test sélectionné ») n'est pas un échec.

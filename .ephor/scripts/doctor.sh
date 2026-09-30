@@ -91,7 +91,9 @@ elif [ ! -f pyproject.toml ]; then
   warn "pas d'environnement Python, et ce dépôt n'est pas un projet Python" \
        "normal : le juge et les garde-fous marchent sans. Adaptez .ephor/projet/verify.sh aux commandes du projet (.ephor/docs/10)"
 else
-  bad "environnement absent — c'est l'étape la plus souvent sautée" "make setup"
+  # Un avertissement, pas un échec : ce diagnostic se lance AVANT `make setup`. En échec, le
+  # premier geste de la recette « nouveau projet » finissait sur `make: *** [doctor] Error 1`.
+  warn "environnement pas encore installé (.venv absent) — l'étape la plus souvent sautée" "make setup"
 fi
 
 echo
@@ -110,6 +112,16 @@ if [ -n "$IDX" ]; then
 else
   printf '  [ -- ] aucun dépôt interne configuré — PyPI public sera tenté\n'
   printf '         si le réseau est filtré : export UV_DEFAULT_INDEX=<votre dépôt PyPI JFrog>\n'
+fi
+# Un jeton écrit DANS l'adresse (`https://moi:jeton@…`) : le juge l'ôte hors installation,
+# mais il reste en clair partout où l'adresse s'affiche. La valeur n'est jamais imprimée ici.
+AVEC_ID=""
+for v in UV_INDEX_URL UV_DEFAULT_INDEX UV_EXTRA_INDEX_URL UV_INDEX PIP_INDEX_URL; do
+  case "${!v:-}" in *://*@*) AVEC_ID="${AVEC_ID:+$AVEC_ID }$v" ;; esac
+done
+if [ -n "$AVEC_ID" ]; then
+  warn "identifiant écrit dans l'adresse de l'index ($AVEC_ID) : le juge l'ôte hors installation, mais il reste en clair partout où l'adresse s'affiche" \
+       "index nommé ([[tool.uv.index]] name = \"jfrog\") avec UV_INDEX_JFROG_USERNAME et UV_INDEX_JFROG_PASSWORD, ou ~/.netrc"
 fi
 if command -v uv >/dev/null 2>&1; then
   # Pièges évités ici :
@@ -308,6 +320,38 @@ if [ -f .opencode/plugins/ephor.js ] && [ -f .ephor/empreintes.txt ]; then
 fi
 
 echo
+echo "== opencode sur ce poste =="
+# Un sous-agent sans modèle prend celui de l'agent qui l'appelle (doc d'opencode) : sans
+# réglage sur le poste, scout comme planner tournent sur le modèle de la session, à son
+# niveau d'effort. Les adaptateurs ne recopient aucun modèle, exprès (audit du 29/09/2026).
+if ! command -v opencode >/dev/null 2>&1; then
+  printf '  [ -- ] opencode absent : rien à régler\n'
+else
+  CONF_OC="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+  # Lu d'abord, cherché ensuite, sans tuyau : sous pipefail, un des trois fichiers absent
+  # faisait échouer le `cat`, donc la recherche, même trouvée.
+  TEXTE_OC="$(cat "$CONF_OC/opencode.json" "$CONF_OC/opencode.jsonc" "$CONF_OC/config.json" 2>/dev/null | tr -d '\n')"
+  SANS_MODELE=""
+  for role in scout planner evaluator; do
+    if grep -qE "\"$role\"[[:space:]]*:[[:space:]]*[{][^{}]*\"model\"[[:space:]]*:" <<< "$TEXTE_OC"; then
+      continue
+    fi
+    grep -qE '^model:' "$CONF_OC/agents/$role.md" "$CONF_OC/agent/$role.md" 2>/dev/null && continue
+    SANS_MODELE="${SANS_MODELE:+$SANS_MODELE, }$role"
+  done
+  if [ -z "$SANS_MODELE" ]; then
+    ok "opencode : un modèle réglé pour scout, planner et evaluator"
+  else
+    warn "opencode : aucun modèle réglé sur ce poste pour $SANS_MODELE — ils tournent sur le modèle de la session" \
+         "dans $CONF_OC/opencode.json : \"agent\": {\"scout\": {\"model\": \"<rapide>\"}, \"planner\": {\"model\": \"<fort>\"}, …} (.ephor/docs/07-token-budget.md, 2.6)"
+  fi
+  if [ -n "${OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX:-}" ]; then
+    warn "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=$OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX sur ce poste : le greffon garde ce plafond de réponse" \
+         "au plus haut effort, la réflexion du planner peut le remplir et la réponse sortir vide ; si ce n'est pas voulu : unset OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX (.ephor/docs/11)"
+  fi
+fi
+
+echo
 echo "== Dépôts de référence =="
 # Une déclaration cassée (le plus souvent : une variable d'environnement pas exportée sur
 # ce poste) fait refuser toute écriture hors du dépôt, et `make refs` échoue. Vu le
@@ -337,6 +381,12 @@ elif ! cmp -s .ephor/greffon-copilot/hooks/relais.sh "$GREFFON/hooks/relais.sh";
   # laisse passer au lieu de refuser — l'avertissement ci-dessous mentait alors.
   bad "le greffon installé sur ce poste ne correspond plus à celui du dépôt" \
       "make copilot-install, puis une FENÊTRE VS Code neuve (le relais a changé depuis la dernière installation)"
+elif ! sed "s|__RACINE_DU_GREFFON__|$GREFFON|g" .ephor/greffon-copilot/hooks/hooks.json 2>/dev/null \
+     | cmp -s - "$GREFFON/hooks/hooks.json"; then
+  # Le relais peut être à jour et la liste des gardes qu'il enchaîne, non : une garde
+  # ajoutée depuis l'installation ne tournait pas sous Copilot, et rien ne le disait.
+  bad "le greffon installé n'enchaîne pas la liste de garde-fous du dépôt (hooks.json)" \
+      "make copilot-install, puis une FENÊTRE VS Code neuve"
 elif ! grep -qxF "$PWD_REAL" "$GREFFON/depots.txt" 2>/dev/null; then
   # Un avertissement, pas un blocage : le relais REFUSE tout appel d'outil dans un dépôt
   # non déclaré qui porte des garde-fous, au lieu de se taire. Rien ne passe en silence.

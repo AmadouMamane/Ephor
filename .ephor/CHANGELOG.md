@@ -3,6 +3,86 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.2.0 — 30 septembre 2026
+
+Les défauts de l'audit du 29 septembre : des contrôles qu'on croyait tenir, et qui ne
+tenaient pas. Chacun a été reproduit, puis fermé par un test qui échoue sur la 1.1.7.
+
+**Le juge**
+
+- **Un test retiré se voit.** Un fichier de test supprimé, un `test_…` disparu d'un
+  fichier : nommé au verdict, refusé sur un risque élevé, signalé par la garde de la CI. Un
+  test qui change de fichier n'est pas retiré. Avant, supprimer `tests/test_architecture.py`
+  donnait VÉRIFIÉ sans un mot.
+- **Éteindre le lint dans `pyproject.toml` compte.** Le juge lit quelles sections changent.
+  Les dépendances et la fiche du paquet restent un simple signal ; `[tool.ruff…]`,
+  `[tool.pytest…]`, un greffon pytest, `"scripts"` ou `"jest"` d'un `package.json` sont des
+  réglages des contrôles : refusés sur un risque élevé, signalés par la garde de la CI.
+- **Le verdict dit quand le travail n'est pas commité.** Le juge juge le disque ; la merge
+  request part de la branche. Les fichiers pas encore commités sont nommés, et le verdict
+  finit par « sur du travail pas encore commité ».
+- **Une base choisie à la main n'approuve plus rien.** `make judge BASE=<branche de
+  l'agent>` faisait passer un contrat que personne n'avait approuvé. Seule la branche
+  principale, ou une branche du serveur (`origin/…`), sert de base.
+- **En conteneur, git marche dans la copie jugée.** Elle empruntait les objets du dépôt par
+  un chemin que le conteneur ne voit pas : un projet versionné par git (hatch-vcs,
+  setuptools-scm) s'installait en silence avec une fausse version, ou échouait sans dire
+  pourquoi. Avec une image sans git, le juge refuse maintenant avant de rien lancer, et dit
+  quelle image prendre.
+- **Un identifiant écrit dans l'adresse de l'index de paquets** (`https://moi:jeton@…`)
+  n'est plus transmis hors de l'installation. `make doctor` le signale.
+
+**Les garde-fous**
+
+- **L'agent ne déplace plus la branche principale** par le terminal (`git switch -C main`,
+  `git branch -f main`, `git update-ref`, `git reset` sur main, `git push . x:main`…). La
+  sentinelle voit en plus les commits du tour qui touchent une zone de contrôle et une
+  branche principale déplacée, et donne la commande pour la remettre.
+- **La sentinelle ne crie plus pour rien** quand l'agent change de branche ou rebase sans
+  toucher aux zones.
+- **Les gestes de l'opérateur sont refusés dans n'importe quel ordre de mots** :
+  `make ID=X task-check` passait par la règle générale `make *`.
+- **Un secret ne se lit plus d'un geste.** Un `.env` de sous-dossier est refusé à la
+  lecture ; le terminal refuse d'afficher un fichier que les réglages refusent à la lecture,
+  et `env` ou `printenv` sans nom de variable.
+- **Plus de plafond de réflexion caché.** `MAX_THINKING_TOKENS=16000` ne touchait plus que
+  d'anciens modèles ; c'est le niveau d'effort qui règle la réflexion (`.ephor/docs/07`).
+
+**Le reste**
+
+- **Points de reprise** : repartis de l'index réel, deux fois plus rapides sur 20 000
+  fichiers, et leur coût ne grandit plus avec le volume du dépôt ; sans les fichiers de
+  plus de 5 Mo (le message du point les nomme) ; gardés 30 jours. `make checkpoints-purge`
+  les supprime tous (geste de l'opérateur).
+- **Données personnelles** : le contrôle dit combien de fichiers Python il a lus. Du code
+  d'un autre langage n'est pas lu : il le dit (`SKIP fuites` dans `make verify`, PARTIEL dans
+  `make sec` sans scanner de la maison), au lieu de « rien trouvé ». Il voit aussi le prénom,
+  le nom complet et l'objet client passé tout entier (`%r`, `str(client)`).
+- **`make doctor`** se lance avant `make setup` sans échouer ; il dit si les rôles ont leur
+  modèle sous opencode, si `OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX` bride les réponses, et si
+  le greffon Copilot enchaîne la liste de garde-fous du dépôt.
+- **`make review`** va au bout, juge compris, et finit par son bilan.
+- **Les skills** n'ouvrent plus que les commandes des réglages : `/feature` ouvrait tout git,
+  `/brownfield-onboard` tout le terminal.
+- **Le scan des agents** dit qu'il n'a pas tourné quand `SNYK_TOKEN` manque, au lieu de
+  sortir vert.
+- **Doc** : la vraie recette des modèles par rôle sous opencode (`.ephor/docs/07`, 2.6),
+  le délai des garde-fous sous Claude Code aussi, la ligne `info` attendue de l'exemple dans
+  un projet neuf, `pre-commit-hooks` épinglé par empreinte.
+
+Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
+Trois choses à reprendre à la main, car elles appartiennent au projet :
+
+- `.ephor/projet/verify.sh` n'est jamais remplacé : reprenez le bloc `fuites` du modèle
+  livré avec cette version. Sans lui, un dépôt Java ou TypeScript reste « ok fuites » sans
+  rien lire.
+- La CI (`.gitlab-ci.yml`, `.github/workflows/`) arrive en `.ephor-new` si vous l'avez
+  retouchée : `diff`, puis reprenez le scan des agents.
+- Sous opencode : réglez une fois le modèle de chaque rôle sur le poste
+  (`.ephor/docs/07-token-budget.md`, 2.6) ; `make doctor` dit ce qui manque.
+
+Puis relancez Claude Code (ses réglages ont changé). Rien à réinstaller pour Copilot.
+
 ## 1.1.7 — 29 septembre 2026
 
 Le contrôle anti-secret refusait des textes ordinaires, et laissait passer les secrets des

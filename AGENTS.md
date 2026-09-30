@@ -23,7 +23,7 @@ make judge TASK=<ID>     # juge final d'une tâche, dans une copie propre du dé
 ```
 
 Sorties courtes, détail dans `.verify/`. **Ne jamais afficher un log complet dans la
-conversation.** Pour un détail : `cat .verify/<étape>.txt` ou `rg <motif> .verify/`.
+conversation.** Pour un détail : `rg <motif> .verify/<étape>.txt`, ou sa fin (`tail -n 40`).
 Le juge résume en quelques lignes dans `.verify/judge/<ID>/latest/summary.txt`.
 
 ## 3. Architecture — direction des dépendances
@@ -75,9 +75,11 @@ dans `PROGRESS.md`, et rends la main. Ne boucle pas.
 
 - Aucun secret en clair. Aucune donnée client, bancaire ou personnelle dans un prompt,
   un test, un log ou un commit. Jeux de données synthétiques uniquement. **Cette règle est
-  appliquée** : `make verify` refuse un journal ou un message d'erreur qui cite un IBAN,
-  un numéro de carte, un courriel. Journalise un identifiant technique à la place. Faux
-  positif : dis-le à l'opérateur, la liste d'exceptions est hors de ta portée.
+  appliquée au code Python** : `make verify` refuse un journal ou un message d'erreur qui
+  cite un IBAN, un numéro de carte, un courriel, ou l'objet client entier. Journalise un
+  identifiant technique à la place. Dans un autre langage, rien ne te rattrape (le contrôle
+  y dit SKIP) : la règle vaut quand même. Faux positif : dis-le à l'opérateur, la liste
+  d'exceptions est hors de ta portée.
 - Pas de modification des seuils de qualité, de la CI ou des tests pour faire passer.
   Si un test gêne, remonte-le à l'opérateur. Pas de `# noqa`, `# type: ignore`, `skip`
   ni `xfail` non plus : le juge les nomme au verdict, et les refuse sur un risque élevé.
