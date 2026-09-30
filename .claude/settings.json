@@ -108,55 +108,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/kill-switch.sh\"",
-            "statusMessage": "bouton d'arrêt",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/block-secrets.sh\"",
-            "statusMessage": "contrôle anti-secret",
-            "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/write-guard.sh\"",
-            "statusMessage": "zones de contrôle",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/scope-guard.sh\"",
-            "statusMessage": "périmètre du contrat",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/refs-guard.sh\"",
-            "statusMessage": "dépôts de référence",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/shell-guard.sh\"",
-            "statusMessage": "écriture par le terminal",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/filter-output.sh\"",
-            "statusMessage": "sortie de test compacte",
-            "timeout": 15
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/avant-outil.sh\"",
+            "timeout": 30
           }
         ]
       }
@@ -165,7 +118,11 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/consigne.sh\"", "timeout": 10 }
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/apres-outil.sh\"",
+            "timeout": 10
+          }
         ]
       }
     ],
@@ -174,8 +131,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/steer.sh\"",
-            "timeout": 10
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/debut-tour.sh\"",
+            "timeout": 15
           }
         ]
       }
@@ -185,19 +142,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/budget.sh\"",
-            "statusMessage": "budget de la tâche",
-            "timeout": 30
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/checkpoint.sh\"",
-            "timeout": 30
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/contexte.sh\"",
-            "timeout": 10
+            "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/fin-tour.sh\"",
+            "timeout": 40
           }
         ]
       }

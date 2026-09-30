@@ -421,7 +421,7 @@ M0
   vôtre — gardez vos règles, ajoutez les siennes. Vérifiez que les gardes sont DÉCLARÉES,
   et attendez-vous à un nombre non nul (0 : aucun outil ne les lancera) :
 
-      grep -c '.ephor/hooks/write-guard.sh' .claude/settings.json
+      grep -c '.ephor/hooks/avant-outil.sh' .claude/settings.json
 
   Puis régénérez ce qui en dérive : les réglages d'opencode, de Copilot et de VS Code ont
   été écrits d'après VOS réglages, donc sans les garde-fous d'Ephor.
@@ -540,6 +540,10 @@ if [ "$MAJ" = "1" ]; then
           MANQUANTS="$(hooks_manquants)"
           if [ -n "$MANQUANTS" ]; then
             echo "        hooks d'Ephor que vos réglages ne déclarent pas : $MANQUANTS"
+            case "$MANQUANTS" in *avant-outil.sh*)
+              echo "        depuis la 1.4, ces points d'entrée REMPLACENT la liste des gardes : remplacez vos"
+              echo "        lignes .ephor/hooks/… par celles du .ephor-new, gardez vos hooks à vous (ADR 0011)." ;;
+            esac
           fi
           echo "        puis make adapters : les réglages d'opencode, de VS Code et de Copilot en dérivent." ;;
       esac

@@ -347,6 +347,32 @@ def test_ce_qu_ephor_pose_hors_du_moteur_est_remplace_s_il_n_a_jamais_ete_retouc
     assert ".ephor-new d'un passage précédent retiré(s)" in bilan
 
 
+def test_des_reglages_d_avant_les_points_d_entree_disent_quoi_remplacer(
+    tmp_path: Path, version_suivante: Path
+) -> None:
+    """Des réglages retouchés avant la 1.4 nomment chaque garde. La 1.4 les remplace par
+    quatre points d'entrée : les ajouter à côté ferait tourner chaque garde deux fois. Le
+    bilan dit de remplacer, pas d'ajouter (ADR 0011)."""
+    cible = projet_equipe(tmp_path / "noderepo")
+    reglages = cible / ".claude" / "settings.json"
+    propres = json.loads(reglages.read_text(encoding="utf-8"))
+    garde = '"${CLAUDE_PROJECT_DIR}/.ephor/hooks/%s"'
+    propres["hooks"] = {
+        "PreToolUse": [
+            {"matcher": "*", "hooks": [{"type": "command", "command": garde % "kill-switch.sh"}]}
+        ],
+        "Stop": [{"hooks": [{"type": "command", "command": garde % "checkpoint.sh"}]}],
+    }
+    reglages.write_text(json.dumps(propres, indent=2) + "\n", encoding="utf-8")
+    git(cible, "commit", "-qam", "nos réglages d'avant")
+
+    sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
+
+    bilan = sortie[sortie.index("MISE À JOUR :") :]
+    assert "PreToolUse : avant-outil.sh" in bilan and "Stop : fin-tour.sh" in bilan
+    assert "REMPLACENT la liste des gardes" in bilan
+
+
 def test_une_retouche_du_projet_hors_du_moteur_reste_et_se_donne_a_reprendre(
     tmp_path: Path, version_suivante: Path
 ) -> None:

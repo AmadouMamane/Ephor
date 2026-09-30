@@ -173,14 +173,24 @@ fi
 
 [ "$#" -gt 0 ] || exit 0
 DEMANDEES=("$@")
+# Un dépôt d'avant la 1.4 n'a pas les points d'entrée (ADR 0011) : ses gardes d'alors, une à
+# une. Sans ce repli, un poste réinstallé laisserait un vieux dépôt sans aucun garde-fou.
+if [ "$#" -eq 1 ] && [ ! -f "$GARDES/$1" ]; then
+  case "$1" in
+    avant-outil.sh) DEMANDEES=(kill-switch.sh block-secrets.sh write-guard.sh scope-guard.sh refs-guard.sh shell-guard.sh read-guard.sh) ;;
+    debut-tour.sh) DEMANDEES=(steer.sh) ;;
+    fin-tour.sh) DEMANDEES=(budget.sh checkpoint.sh) ;;
+  esac
+fi
 juger() { # juger <charge> [ensemble] : la passe aux gardes, dans l'ordre ; sort au premier refus
   local GARDE SCRIPT SORTIE CODE
   # Un appel d'outil, dans un dépôt qui sait le faire (Ephor 1.3 et après) : les gardes
   # tournent en même temps, avec le verdict qu'elles rendraient l'une après l'autre (voir
   # .ephor/hooks/ensemble.sh). Deux fois moins d'attente à chaque appel d'outil.
   # EPHOR_GARDES_EN_SERIE=1, dans l'environnement de l'éditeur, remet la série.
-  if [ "${2:-}" = "ensemble" ] && [ -f "$GARDES/ensemble.sh" ]; then
-    SORTIE="$(printf '%s' "$1" | CLAUDE_PROJECT_DIR="$DEPOT" bash "$GARDES/ensemble.sh" "${DEMANDEES[@]}")"
+  # Un point d'entrée seul (Ephor 1.4 et après) lance lui-même ses gardes ensemble.
+  if [ "${2:-}" = "ensemble" ] && [ "${#DEMANDEES[@]}" -gt 1 ] && [ -f "$GARDES/ensemble.sh" ]; then
+    SORTIE="$(printf '%s' "$1" | CLAUDE_PROJECT_DIR="$DEPOT" EPHOR_OUTIL=copilot bash "$GARDES/ensemble.sh" "${DEMANDEES[@]}")"
     CODE=$?
     [ "$CODE" = "0" ] || exit "$CODE"
     [ -n "$SORTIE" ] && printf '%s\n' "$SORTIE"
@@ -191,7 +201,7 @@ juger() { # juger <charge> [ensemble] : la passe aux gardes, dans l'ordre ; sort
     [ -f "$SCRIPT" ] || continue
     # La sortie d'erreur passe telle quelle : c'est le message de refus que l'agent doit lire.
     # La sortie standard est reprise à notre compte (consigne opérateur de `steer.sh`).
-    SORTIE="$(printf '%s' "$1" | CLAUDE_PROJECT_DIR="$DEPOT" bash "$SCRIPT")"
+    SORTIE="$(printf '%s' "$1" | CLAUDE_PROJECT_DIR="$DEPOT" EPHOR_OUTIL=copilot bash "$SCRIPT")"
     CODE=$?
     [ "$CODE" = "0" ] || exit "$CODE"
     [ -n "$SORTIE" ] && printf '%s\n' "$SORTIE"
@@ -204,7 +214,7 @@ juger() { # juger <charge> [ensemble] : la passe aux gardes, dans l'ordre ; sort
 APPEL_D_OUTIL=0
 for GARDE in "${DEMANDEES[@]}"; do
   case "$GARDE" in
-    write-guard.sh|read-guard.sh|scope-guard.sh|block-secrets.sh|refs-guard.sh|shell-guard.sh) APPEL_D_OUTIL=1 ;;
+    avant-outil.sh|write-guard.sh|read-guard.sh|scope-guard.sh|block-secrets.sh|refs-guard.sh|shell-guard.sh) APPEL_D_OUTIL=1 ;;
   esac
 done
 if [ "$APPEL_D_OUTIL" != "1" ]; then

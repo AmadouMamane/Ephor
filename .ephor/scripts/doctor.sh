@@ -219,6 +219,21 @@ if [ "${NX:-0}" -eq 0 ]; then
 else
   bad "$NX script(s) sans bit d'exécution — perdu à la décompression" "find .ephor -name '*.sh' -exec chmod +x {} +"
 fi
+# Les hooks que déclarent les réglages de Claude Code. Un script introuvable est une erreur
+# que Claude Code montre, puis il laisse passer l'appel : ce n'est pas un refus. Arrive quand
+# les réglages sont plus récents que le moteur (ADR 0011 : ils appellent ses points d'entrée).
+ABSENTS="$(python3 -c 'import json, os, re
+try:
+    with open(".claude/settings.json", encoding="utf-8") as fichier:
+        hooks = json.load(fichier).get("hooks") or {}
+except (OSError, ValueError, AttributeError):
+    hooks = {}
+noms = sorted(set(re.findall(r"\.ephor/hooks/([\w.-]+\.sh)", json.dumps(hooks))))
+print(" ".join(n for n in noms if not os.access(os.path.join(".ephor", "hooks", n), os.X_OK)))' 2>/dev/null)"
+if [ -n "$ABSENTS" ]; then
+  bad "hooks déclarés par .claude/settings.json introuvables : $ABSENTS (Claude Code le signale, puis laisse passer l'appel)" \
+      "mettez le moteur à jour : bootstrap_existing_repo.sh --mettre-a-jour, depuis le dépôt d'Ephor"
+fi
 
 echo
 echo "== Zones de contrôle =="

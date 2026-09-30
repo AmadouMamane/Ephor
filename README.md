@@ -156,7 +156,8 @@ Dans .ephor/ : le moteur, le même dans chaque projet (carte : .ephor/README.md)
 .ephor/scripts/          doctor, review, mutants, repo_map, bootstrap, demo_judge…
 .ephor/deploy/           livraison vers Kubernetes ou GCP : manifeste, image de CI, principes
 .ephor/greffon-copilot/  greffon Copilot : deux fichiers générés, un relais écrit à la main
-.ephor/docs/             la doc d'Ephor (06 à 12) et ses décisions (ADR 0002 à 0010)
+.ephor/opencode/         greffon opencode ; .opencode/plugins/ephor.js ne fait que l'importer
+.ephor/docs/             la doc d'Ephor (06 à 12) et ses décisions (ADR 0002 à 0011)
 .ephor/tests/            les tests d'Ephor : make ephor-test
 .ephor/projet/           AU PROJET : étapes de vérification, exceptions, dépôts lus en référence
 ```

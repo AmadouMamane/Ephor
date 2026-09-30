@@ -3,7 +3,7 @@
 # l'outil, et c'est le premier objet de ce fichier.
 #
 #   Claude Code   {"tool_name": "...", "tool_input": {"file_path": "...", ...}}
-#   opencode      la même forme : le greffon .opencode/plugins/ephor.js la traduit
+#   opencode      la même forme : le greffon .ephor/opencode/ephor.js la traduit
 #   Copilot       {"toolName": "...", "toolArgs": <chaîne|objet>, "workingDirectory": "..."}
 #                 (c'est ce que reçoit le greffon ; les hooks du dépôt, eux, reçoivent de
 #                 la vue « agents » la forme Claude, où le correctif d'`apply_patch` arrive

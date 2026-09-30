@@ -1359,19 +1359,22 @@ def test_sans_la_liste_des_zones_la_garde_refuse(tmp_path: Path) -> None:
     assert refus.returncode == 2 and "zones de contrôle" in refus.stderr
 
 
-def test_claude_code_lance_aussi_la_garde_d_ecriture() -> None:
+def test_claude_code_lance_aussi_la_garde_d_ecriture(tmp_path: Path) -> None:
     """Claude Code n'appliquait que les refus des réglages du projet : la liste du moteur
-    ne lui parvenait pas. Il lance désormais la garde, comme opencode et Copilot."""
+    ne lui parvenait pas. Il lance désormais la garde, comme opencode et Copilot, par le
+    point d'entrée de ses réglages (ADR 0011)."""
     reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    ecritures = [
-        hook["command"]
-        for groupe in reglages["hooks"]["PreToolUse"]
-        if "Write" in groupe["matcher"]
-        for hook in groupe["hooks"]
+    avant = [
+        hook["command"] for groupe in reglages["hooks"]["PreToolUse"] for hook in groupe["hooks"]
     ]
-    assert any("write-guard.sh" in commande for commande in ecritures)
-    greffon = (ROOT / ".opencode" / "plugins" / "ephor.js").read_text(encoding="utf-8")
-    assert '"write-guard.sh"' in greffon
+    assert avant == ['"${CLAUDE_PROJECT_DIR}/.ephor/hooks/avant-outil.sh"']
+    # .git/refs : une zone de la liste du moteur (.git/), qu'aucun refus des réglages ne nomme.
+    assert not any(regle.startswith("Edit(.git/refs") for regle in reglages["permissions"]["deny"])
+    projet = projet_avec_reglages(tmp_path)
+    cible = str(projet / ".git" / "refs" / "heads" / "main")
+    ecriture = {"tool_name": "Write", "tool_input": {"file_path": cible, "content": "0" * 40}}
+    refus = hook("avant-outil.sh", ecriture, project=projet)
+    assert refus.returncode == 2 and "zone de contrôle" in refus.stderr, refus.stderr
 
 
 def test_l_agent_n_ecrit_pas_l_histoire_de_la_branche_principale(tmp_path: Path) -> None:
@@ -1812,7 +1815,8 @@ def test_la_consigne_arrive_une_fois_par_changement_et_en_cours_de_tour(tmp_path
     steer.write_text("# STEER\n\nArrête-toi après ce test\n")
     for chemin in (None, sans_jq(tmp_path)):
         (repo / ".git" / "ephor-consigne-s1").unlink()
-        en_cours = json.loads(hook("consigne.sh", outil, project=repo, path=chemin).stdout)
+        # Par le point d'entrée que Claude Code appelle après chaque outil (ADR 0011).
+        en_cours = json.loads(hook("apres-outil.sh", outil, project=repo, path=chemin).stdout)
         sortie = en_cours["hookSpecificOutput"]
         assert sortie["hookEventName"] == "PostToolUse"
         assert "CONSIGNE OPÉRATEUR" in sortie["additionalContext"]
@@ -1846,7 +1850,7 @@ def test_steer_md_est_refuse_a_l_agent(tmp_path: Path) -> None:
     reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert "Edit(STEER.md)" in reglages["permissions"]["deny"]
     apres = [i["command"] for g in reglages["hooks"]["PostToolUse"] for i in g["hooks"]]
-    assert any(commande.endswith('/consigne.sh"') for commande in apres)
+    assert apres == ['"${CLAUDE_PROJECT_DIR}/.ephor/hooks/apres-outil.sh"'], "consigne.sh"
     repo = tmp_path / "repo"
     (repo / ".claude").mkdir(parents=True)
     shutil.copy(ROOT / ".claude" / "settings.json", repo / ".claude" / "settings.json")

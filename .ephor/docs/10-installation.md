@@ -276,7 +276,9 @@ garde-fous qui leur manquent ; pour le `Makefile`, les cibles d'Ephor qui lui ma
 `make doctor` signale tout `.ephor-new` qui traîne. Les réglages du projet
 (`.ephor/projet/`), `PROGRESS.md` et `STEER.md` ne bougent pas. Un fichier que la nouvelle
 version n'a plus est nommé, avec la commande pour le retirer. Si le greffon Copilot a
-changé, `make copilot-install` sur chaque poste. Décisions : ADR 0007 et 0010.
+changé, `make copilot-install` sur chaque poste. Depuis la 1.4, les outils n'appellent que
+quatre points d'entrée du moteur : ajouter une garde ne change plus ni les réglages du projet
+ni le greffon des postes. Décisions : ADR 0007, 0010 et 0011.
 
 Ce que chaque version demande de reprendre à la main, s'il y a lieu, est écrit dans
 `.ephor/CHANGELOG.md`. Sans `--mettre-a-jour`, relancer la commande ne remplace rien :

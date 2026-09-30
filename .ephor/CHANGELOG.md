@@ -54,8 +54,9 @@ Chacune rejouée, puis fermée par un test qui échoue sur la 1.3.0.
   pouvait l'écrire, et son contenu lui revenait comme « consigne opérateur » à chaque tour :
   un texte glissé par une page web devenait une consigne permanente. C'est maintenant une
   zone de contrôle, refusée à l'agent (gardes, bac à sable de Claude Code, juge, CI) ; la
-  sentinelle, seule, laisse l'opérateur l'écrire pendant le tour. La consigne arrive une fois par changement, et plus
-  à chaque tour. Sous Claude Code, dès l'appel d'outil suivant, et plus seulement au
+  sentinelle, seule, laisse l'opérateur l'écrire pendant le tour. La consigne arrive une
+  fois par changement, et plus à chaque tour. Sous Claude Code, dès l'appel d'outil suivant,
+  et plus seulement au
   prochain message de l'opérateur : mesuré dans une vraie session, une consigne écrite
   pendant une commande de l'agent a été suivie dès la fin de la commande.
 - **Un geste de l'opérateur refuse de tourner sous un agent.** Les refus des réglages
@@ -108,13 +109,28 @@ Chacune rejouée, puis fermée par un test qui échoue sur la 1.3.0.
   script écrit puis lancé par opencode, qui visait `tasks/`, reçoit « Operation not
   permitted » ; le code, les commits et les dépendances du greffon s'écrivent. Réseau fermé
   sauf `EPHOR_SRT_DOMAINES`. L'essai derrière le proxy de l'entreprise est le ticket #26.
+- **Quatre points d'entrée pour les garde-fous, qui ne changeront plus.** Ajouter une garde
+  touchait trois listes : les réglages de Claude Code, le greffon d'opencode, et celui de
+  Copilot, installé sur chaque poste. La mise à jour ne remplaçait les deux premiers que
+  s'ils n'avaient jamais été retouchés, et un poste oublié gardait l'ancien greffon. Les
+  trois outils n'appellent plus que quatre scripts du moteur, un par moment du tour (avant
+  un outil, après, au message de l'opérateur, en fin de tour) : c'est là que se décide
+  quelles gardes tournent. Le greffon d'opencode vit maintenant dans le moteur ; le fichier
+  que lit opencode ne fait que l'importer. Au passage, sous opencode, un outil qu'il ne
+  connaît pas (celui d'un serveur MCP) passe les gardes au lieu de passer sans rien ; sous
+  Copilot, une lecture lance deux gardes au lieu de sept. Décision : ADR 0011.
 
 Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
+Une dernière fois, les réglages de Claude Code et les deux greffons changent (ADR 0011) :
+`make copilot-install` sur chaque poste qui travaille sous Copilot, puis une fenêtre VS Code
+neuve ; relancez Claude Code et opencode. Des réglages de Claude Code retouchés dans le
+projet reçoivent leur `.ephor-new` : remplacez-y les lignes `.ephor/hooks/…` par les quatre
+du `.ephor-new`, sans les ajouter à côté (chaque garde tournerait deux fois), et gardez vos
+hooks à vous. Un poste réinstallé sert aussi les projets pas encore mis à jour.
 La CI n'est pas mise à jour par Ephor : pour la passe de nuit, remplacez la ligne
 `uv run mutmut run …` par `bash .ephor/scripts/mutants.sh --tout`, et joignez
 `.verify/mutants-run.log` à la place de `mutants-full.log` (GitHub : ajoutez
-`include-hidden-files: true` à l'envoi). Pour opencode : relancez-le (son greffon, le
-planner et la commande `feature` ont changé). Le `AGENTS.md` du projet n'est pas touché :
+`include-hidden-files: true` à l'envoi). Le `AGENTS.md` du projet n'est pas touché :
 sa ligne sur `STEER.md` (« injecté à chaque tour ») peut être reprise de celui d'Ephor.
 
 ## 1.3.0 — 30 septembre 2026

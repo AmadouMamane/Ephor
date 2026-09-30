@@ -54,8 +54,7 @@ fi
 essai() { # essai <ligne ajoutée> -> code de sortie du relais
   printf '{"toolName":"apply_patch","toolArgs":"*** Begin Patch\\n*** Update File: %s/PROGRESS.md\\n+%s\\n*** End Patch","workingDirectory":"%s"}' \
     "$RACINE" "$1" "$RACINE" \
-    | bash "$CIBLE/hooks/relais.sh" kill-switch.sh block-secrets.sh scope-guard.sh \
-        refs-guard.sh read-guard.sh write-guard.sh >/dev/null 2>&1 || echo $?
+    | bash "$CIBLE/hooks/relais.sh" avant-outil.sh >/dev/null 2>&1 || echo $?
 }
 REFUS="$(essai 'CLE = \"AKIAIOSFODNN7EXAMPLE\"')"
 PASSE="$(essai 'avancement du jour')"

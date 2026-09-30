@@ -55,13 +55,10 @@ COULEURS = {
 REGLE = re.compile(r"^([A-Za-z]+)(?:\((.*)\))?$")
 VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
 BLOC_SHELL = re.compile(r"```!\n(.+?)\n```", re.S)
-# Hooks que Copilot ne sait pas exploiter : il ignore `matcher` et ne réécrit pas l'appel ;
-# il n'écrit ses tokens qu'à la fermeture de la session, donc pas de remplissage à mesurer.
-HOOKS_HORS_COPILOT = ("filter-output.sh", "contexte.sh")
-# Garde-fous que seul Copilot a besoin qu'on lui branche : Claude Code et opencode
-# appliquent déjà ces refus par leurs permissions. (write-guard.sh n'en est plus : depuis que
-# les zones vivent dans le moteur, les trois outils le lancent, et il est dans les réglages.)
-HOOKS_COPILOT_EN_PLUS = (("PreToolUse", "read-guard.sh", 10),)
+# Les points d'entrée que Copilot reçoit (ADR 0011). Ce qui ne vaut pas pour lui (le filtre de
+# sortie, l'alerte de contexte) ou ne vaut que pour lui (la garde de lecture) se décide dans
+# ces scripts, qui lisent EPHOR_OUTIL, posé par le relais : plus aucune liste ici.
+EVENEMENTS_COPILOT = ("PreToolUse", "UserPromptSubmit", "Stop")
 # Le greffon Copilot s'installe par machine : son chemin n'existe pas au moment où on
 # écrit le dépôt. `.ephor/scripts/install_copilot_plugin.sh` remplace ce jeton à
 # l'installation.
@@ -275,21 +272,19 @@ def expression(motif: str) -> str:
 
 
 def gardes_copilot(reglages: dict[str, object]) -> dict[str, list[tuple[str, int]]]:
-    """Événement -> [(nom du garde-fou, délai)], dans l'ordre de `.claude/settings.json`."""
+    """Événement -> [(point d'entrée, délai)], lus dans `.claude/settings.json` : les mêmes
+    que Claude Code (ADR 0011). Copilot n'a pas d'après-outil qu'on sache exploiter."""
     hooks = reglages.get("hooks", {})
     assert isinstance(hooks, dict)
     sortie: dict[str, list[tuple[str, int]]] = {}
-    for evenement in ("PreToolUse", "UserPromptSubmit", "Stop"):
+    for evenement in EVENEMENTS_COPILOT:
         groupes = hooks.get(evenement, [])
         assert isinstance(groupes, list)
         for groupe in groupes:
             for hook in groupe.get("hooks", []):
                 script = str(hook.get("command", "")).strip('"').rsplit("/", 1)[-1]
-                if not script or script in HOOKS_HORS_COPILOT:
-                    continue
-                sortie.setdefault(evenement, []).append((script, int(hook.get("timeout", 10))))
-    for evenement, script, delai in HOOKS_COPILOT_EN_PLUS:
-        sortie.setdefault(evenement, []).append((script, delai))
+                if script:
+                    sortie.setdefault(evenement, []).append((script, int(hook.get("timeout", 10))))
     return sortie
 
 
@@ -303,7 +298,12 @@ def hooks_copilot(reglages: dict[str, object]) -> str:
     for evenement, gardes in gardes_copilot(reglages).items():
         for script, delai in gardes:
             sortie.setdefault(evenement, []).append(
-                {"type": "command", "command": "bash .ephor/hooks/" + script, "timeout": delai}
+                {
+                    "type": "command",
+                    # `env` : une commande lancée sans shell l'accepte aussi.
+                    "command": "env EPHOR_OUTIL=copilot bash .ephor/hooks/" + script,
+                    "timeout": delai,
+                }
             )
     return json.dumps({"version": 1, "hooks": sortie}, indent=2, ensure_ascii=False) + "\n"
 

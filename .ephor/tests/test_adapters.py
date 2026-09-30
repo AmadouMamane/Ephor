@@ -30,6 +30,13 @@ REGLAGES: dict[str, Any] = {
     }
 }
 MOTEUR = shutil.which("bun") or shutil.which("node")
+# Les quatre points d'entrée des garde-fous (ADR 0011), un par événement.
+POINTS_D_ENTREE = {
+    "PreToolUse": "avant-outil.sh",
+    "PostToolUse": "apres-outil.sh",
+    "UserPromptSubmit": "debut-tour.sh",
+    "Stop": "fin-tour.sh",
+}
 PILOTE = """
 import { writeFileSync, appendFileSync } from "node:fs"
 import { join } from "node:path"
@@ -62,6 +69,11 @@ await essaie("terminal_propre", () =>
 await essaie("zone_moteur", () =>
   hooks["tool.execute.before"]({ tool: "write" },
     { args: { filePath: join(racine, "GNUmakefile"), content: "judge:" } }))
+await essaie("outil_mcp", () =>
+  hooks["tool.execute.before"]({ tool: "fichiers_write_file" },
+    { args: { path: join(racine, "tasks", "T-9", "contract.json"), content: "{}" } }))
+await essaie("lecture", () =>
+  hooks["tool.execute.before"]({ tool: "read" }, { args: { filePath: join(racine, ".env") } }))
 writeFileSync(join(racine, "AGENT_STOP"), "")
 await essaie("arret", () => hooks["tool.execute.before"]({ tool: "read" }, { args: {} }))
 await essaie("arret_progres", () =>
@@ -150,14 +162,39 @@ def test_les_expressions_de_vs_code_sont_valides_et_echappees() -> None:
 
 
 def test_les_gardes_de_copilot_pointent_sur_des_scripts_qui_existent() -> None:
+    """La vue « agents » de VS Code lance les points d'entrée du dépôt, en disant que c'est
+    Copilot : la garde de lecture tourne pour lui, le filtre de sortie non (ADR 0011)."""
     fichier = json.loads((ROOT / ".github" / "hooks" / "ephor.json").read_text(encoding="utf-8"))
-    commandes = [hook["command"] for groupe in fichier["hooks"].values() for hook in groupe]
-    assert commandes, "aucun garde-fou branché"
-    for commande in commandes:
-        assert os.access(ROOT / commande.split(" ", 1)[1], os.X_OK), commande
-    assert not any("filter-output" in commande for commande in commandes), (
-        "Copilot ne réécrit pas l'appel d'outil : ce hook n'a rien à y faire"
-    )
+    appels = {
+        evenement: [hook["command"] for hook in groupe]
+        for evenement, groupe in fichier["hooks"].items()
+    }
+    assert appels == {
+        evenement: [f"env EPHOR_OUTIL=copilot bash .ephor/hooks/{script}"]
+        for evenement, script in POINTS_D_ENTREE.items()
+        if evenement != "PostToolUse"
+    }
+    for (commande,) in appels.values():
+        assert os.access(ROOT / commande.rsplit(" ", 1)[1], os.X_OK), commande
+
+
+def test_claude_code_n_appelle_que_les_points_d_entree() -> None:
+    """Ajouter une garde touchait les réglages du projet, que la mise à jour ne remplace pas
+    s'ils ont été retouchés : quatre points d'entrée, et plus rien à changer ici (ADR 0011)."""
+    reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    appels = {
+        evenement: [
+            hook["command"].strip('"').rsplit("/", 1)[-1]
+            for groupe in groupes
+            for hook in groupe["hooks"]
+        ]
+        for evenement, groupes in reglages["hooks"].items()
+    }
+    assert appels == {evenement: [script] for evenement, script in POINTS_D_ENTREE.items()}
+    for groupes in reglages["hooks"].values():
+        assert all(groupe.get("matcher", "*") == "*" for groupe in groupes), (
+            "le tri par outil se fait dans le point d'entrée, pas ici"
+        )
 
 
 def test_le_lecteur_d_entetes_refuse_ce_qu_il_ne_sait_pas_lire(tmp_path: Path) -> None:
@@ -236,6 +273,10 @@ def test_le_greffon_opencode_applique_les_memes_gardes(tmp_path: Path) -> None:
     # et refusait donc aussi PROGRESS.md, contrairement à ce que dit AGENTS.md.
     assert resultat["arret_progres"] == "ok"
     assert "zone de contrôle" in resultat["zone_moteur"], "la liste du moteur vaut sous opencode"
+    # Un outil qu'opencode ne connaît pas (un serveur MCP) passait sans garde : il écrit, il
+    # est jugé comme une écriture. Une lecture, elle, ne lance rien (ses réglages la jugent).
+    assert "zone de contrôle" in resultat["outil_mcp"], resultat["outil_mcp"]
+    assert resultat["lecture"] == "ok"
     assert "service.py" in resultat["consigne"]
     assert "zone de contrôle" in resultat["terminal_zone"], "le terminal ne contourne pas l'édition"
     assert resultat["terminal_propre"] == "ok"
@@ -469,7 +510,7 @@ def test_le_greffon_copilot_appelle_les_gardes_du_depot() -> None:
         commande = entrees[0]["command"]
         assert adapters.JETON_GREFFON in commande, "le chemin n'existe qu'à l'installation"
         gardes = commande.split('relais.sh" ', 1)[1].split()
-        assert gardes, evenement
+        assert gardes == [POINTS_D_ENTREE[evenement]], "le greffon ne change plus : ADR 0011"
         for garde in gardes:
             assert os.access(ROOT / ".ephor" / "hooks" / garde, os.X_OK), garde
     assert "filter-output.sh" not in json.dumps(fichier), (
@@ -921,8 +962,8 @@ def depot_aux_gardes_factices(tmp_path: Path, factices: dict[str, str]) -> Path:
     depot = tmp_path / "depot"
     gardes = depot / ".ephor" / "hooks"
     gardes.mkdir(parents=True)
-    (gardes / "_lib.sh").write_text("", encoding="utf-8")
-    shutil.copy(ROOT / ".ephor" / "hooks" / "ensemble.sh", gardes / "ensemble.sh")
+    for vrai in ("_lib.sh", "ensemble.sh", "avant-outil.sh", "fin-tour.sh"):
+        shutil.copy(ROOT / ".ephor" / "hooks" / vrai, gardes / vrai)
     for nom, corps in factices.items():
         (gardes / nom).write_text(corps, encoding="utf-8")
         (gardes / nom).chmod(0o755)
@@ -996,6 +1037,184 @@ def test_le_greffon_opencode_lance_les_gardes_ensemble(tmp_path: Path) -> None:
         [MOTEUR, str(pilote)], capture_output=True, text=True, timeout=120, check=True
     )
     assert sortie.stdout.strip() == "ok", sortie.stdout
+
+
+# ------------------------------------------------ points d'entrée (ADR 0011)
+
+
+def journalise(journal: Path, nom: str, suite: str = "exit 0") -> str:
+    """Une garde factice qui note son nom, puis fait `suite`."""
+    return f'#!/usr/bin/env bash\ncat >/dev/null\necho {nom} >> "{journal}"\n{suite}\n'
+
+
+GARDES_D_APPEL = (
+    "kill-switch.sh",
+    "block-secrets.sh",
+    "write-guard.sh",
+    "scope-guard.sh",
+    "refs-guard.sh",
+    "shell-guard.sh",
+    "filter-output.sh",
+    "read-guard.sh",
+)
+ECRIT = {"kill-switch.sh", "block-secrets.sh", "write-guard.sh", "scope-guard.sh", "refs-guard.sh"}
+CORRECTIF = "*** Begin Patch\n*** Add File: a.py\n+x\n*** End Patch"
+
+
+@pytest.mark.parametrize(
+    ("outil", "charge", "attendues"),
+    [
+        ("", {"tool_name": "Read", "tool_input": {"file_path": "a.py"}}, {"kill-switch.sh"}),
+        (
+            "",
+            {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+            {"kill-switch.sh", "shell-guard.sh", "filter-output.sh"},
+        ),
+        (
+            "claude",
+            {"tool_name": "Write", "tool_input": {"file_path": "a.py", "content": "x"}},
+            ECRIT,
+        ),
+        (
+            "claude",
+            {"tool_name": "mcp__x__y", "tool_input": {"query": "q"}},
+            ECRIT | {"shell-guard.sh", "filter-output.sh"},
+        ),
+        (
+            "copilot",
+            {"toolName": "read_file", "toolArgs": {"filePath": "/d/a.py"}},
+            {"kill-switch.sh", "read-guard.sh"},
+        ),
+        (
+            "copilot",
+            {"toolName": "run_in_terminal", "toolArgs": {"command": "ls"}},
+            {"kill-switch.sh", "shell-guard.sh"},
+        ),
+        ("copilot", {"toolName": "apply_patch", "toolArgs": CORRECTIF}, ECRIT | {"read-guard.sh"}),
+        (
+            "opencode",
+            {"tool_name": "bash", "tool_input": {"command": "ls"}},
+            {"kill-switch.sh", "shell-guard.sh"},
+        ),
+    ],
+)
+def test_le_point_d_entree_choisit_les_gardes_de_l_appel(
+    tmp_path: Path, outil: str, charge: dict[str, object], attendues: set[str]
+) -> None:
+    """Quelles gardes pour quel appel, et pour quel outil : décidé dans le moteur, que la
+    mise à jour remplace, et plus dans trois listes à tenir d'accord (ADR 0011)."""
+    journal = tmp_path / "journal"
+    depot = depot_aux_gardes_factices(
+        tmp_path, {nom: journalise(journal, nom) for nom in GARDES_D_APPEL}
+    )
+    env = {k: v for k, v in os.environ.items() if k != "EPHOR_OUTIL"}
+    if outil:
+        env["EPHOR_OUTIL"] = outil
+    resultat = subprocess.run(
+        ["bash", str(depot / ".ephor" / "hooks" / "avant-outil.sh")],
+        input=json.dumps(charge),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env=env,
+    )
+    assert resultat.returncode == 0, resultat.stderr
+    assert set(journal.read_text(encoding="utf-8").split()) == attendues
+
+
+@pytest.mark.parametrize(
+    ("outil", "alerte", "lances"),
+    [
+        ("", False, {"budget.sh", "checkpoint.sh", "contexte.sh"}),
+        ("claude", True, {"budget.sh", "checkpoint.sh", "contexte.sh"}),
+        ("opencode", False, {"checkpoint.sh", "contexte.sh"}),
+        ("copilot", True, {"budget.sh", "checkpoint.sh"}),
+    ],
+)
+def test_la_fin_de_tour_dit_tout_ce_qu_elle_a_a_dire(
+    tmp_path: Path, outil: str, alerte: bool, lances: set[str]
+) -> None:
+    """Budget, sentinelle et point de reprise, alerte de contexte : lancés ensemble. L'alerte
+    de la sentinelle (code 1, pour que l'outil la montre) n'étouffe pas celle du contexte."""
+    journal = tmp_path / "journal"
+    sentinelle = "echo 'sentinelle : tasks/T-9 a changé pendant le tour' >&2; exit 1"
+    depot = depot_aux_gardes_factices(
+        tmp_path,
+        {
+            "budget.sh": journalise(journal, "budget.sh"),
+            "checkpoint.sh": journalise(
+                journal, "checkpoint.sh", sentinelle if alerte else "exit 0"
+            ),
+            "contexte.sh": journalise(
+                journal, "contexte.sh", """echo '{"systemMessage": "61 % de la mémoire"}'"""
+            ),
+        },
+    )
+    env = {k: v for k, v in os.environ.items() if k != "EPHOR_OUTIL"}
+    if outil:
+        env["EPHOR_OUTIL"] = outil
+    resultat = subprocess.run(
+        ["bash", str(depot / ".ephor" / "hooks" / "fin-tour.sh")],
+        input='{"session_id": "s"}',
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env=env,
+    )
+    assert set(journal.read_text(encoding="utf-8").split()) == lances
+    avec_contexte = "contexte.sh" in lances
+    if alerte:
+        assert resultat.returncode == 1
+        assert "sentinelle" in resultat.stderr
+        assert ("61 % de la mémoire" in resultat.stderr) == avec_contexte, "redite en clair"
+        assert resultat.stdout == "", "un code non nul fait ignorer la sortie par l'outil"
+    else:
+        assert resultat.returncode == 0, resultat.stderr
+        sortie = [json.loads(ligne) for ligne in resultat.stdout.splitlines() if ligne]
+        assert sortie == ([{"systemMessage": "61 % de la mémoire"}] if avec_contexte else [])
+
+
+def test_le_relais_sert_un_depot_d_avant_les_points_d_entree(tmp_path: Path) -> None:
+    """Un poste réinstallé en 1.4 sert aussi un dépôt resté en 1.3 : sans les points d'entrée,
+    le relais lance les gardes d'alors, et ne laisse pas ce dépôt sans garde-fou."""
+    journal = tmp_path / "journal"
+    appel = (*GARDES_D_APPEL[:6], "read-guard.sh")
+    depot = depot_aux_gardes_factices(
+        tmp_path, {nom: journalise(journal, nom) for nom in (*appel, "steer.sh")}
+    )
+    for entree in ("avant-outil.sh", "fin-tour.sh"):
+        (depot / ".ephor" / "hooks" / entree).unlink()
+    relais = relais_pose(tmp_path, [str(depot)])
+    charge = {
+        "toolName": "read_file",
+        "toolArgs": {"filePath": str(depot / "a.py")},
+        "workingDirectory": str(depot),
+    }
+    for point, attendues in (("avant-outil.sh", set(appel)), ("debut-tour.sh", {"steer.sh"})):
+        journal.write_text("", encoding="utf-8")
+        resultat = subprocess.run(
+            ["bash", str(relais), point],
+            input=json.dumps(charge),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        assert resultat.returncode == 0, resultat.stderr
+        assert set(journal.read_text(encoding="utf-8").split()) == attendues, point
+
+
+def test_le_greffon_d_opencode_vit_dans_le_moteur() -> None:
+    """Le fichier que lit opencode ne fait qu'importer le greffon du moteur : il ne change
+    plus d'une version à l'autre, et la mise à jour du moteur suffit (ADR 0011)."""
+    projet = (ROOT / ".opencode" / "plugins" / "ephor.js").read_text(encoding="utf-8")
+    code = [ligne for ligne in projet.splitlines() if ligne and not ligne.startswith("//")]
+    assert code == ['export { ephor } from "../../.ephor/opencode/ephor.js"']
+    moteur = (ROOT / ".ephor" / "opencode" / "ephor.js").read_text(encoding="utf-8")
+    appeles = set(re.findall(r'garde\(racine, "([^"]+)"', moteur))
+    assert appeles == {"avant-outil.sh", "debut-tour.sh", "fin-tour.sh"}, appeles
 
 
 def test_les_roles_recoivent_leurs_modeles_sous_opencode(

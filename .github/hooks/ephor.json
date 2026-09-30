@@ -4,57 +4,22 @@
     "PreToolUse": [
       {
         "type": "command",
-        "command": "bash .ephor/hooks/kill-switch.sh",
-        "timeout": 10
-      },
-      {
-        "type": "command",
-        "command": "bash .ephor/hooks/block-secrets.sh",
-        "timeout": 15
-      },
-      {
-        "type": "command",
-        "command": "bash .ephor/hooks/write-guard.sh",
-        "timeout": 10
-      },
-      {
-        "type": "command",
-        "command": "bash .ephor/hooks/scope-guard.sh",
-        "timeout": 10
-      },
-      {
-        "type": "command",
-        "command": "bash .ephor/hooks/refs-guard.sh",
-        "timeout": 10
-      },
-      {
-        "type": "command",
-        "command": "bash .ephor/hooks/shell-guard.sh",
-        "timeout": 10
-      },
-      {
-        "type": "command",
-        "command": "bash .ephor/hooks/read-guard.sh",
-        "timeout": 10
+        "command": "env EPHOR_OUTIL=copilot bash .ephor/hooks/avant-outil.sh",
+        "timeout": 30
       }
     ],
     "UserPromptSubmit": [
       {
         "type": "command",
-        "command": "bash .ephor/hooks/steer.sh",
-        "timeout": 10
+        "command": "env EPHOR_OUTIL=copilot bash .ephor/hooks/debut-tour.sh",
+        "timeout": 15
       }
     ],
     "Stop": [
       {
         "type": "command",
-        "command": "bash .ephor/hooks/budget.sh",
-        "timeout": 30
-      },
-      {
-        "type": "command",
-        "command": "bash .ephor/hooks/checkpoint.sh",
-        "timeout": 30
+        "command": "env EPHOR_OUTIL=copilot bash .ephor/hooks/fin-tour.sh",
+        "timeout": 40
       }
     ]
   }

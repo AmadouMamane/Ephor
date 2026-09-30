@@ -11,7 +11,8 @@
 | `.ephor/projet/` | ce que **ce** projet règle : ses étapes de vérification (`verify.sh`), les exceptions du contrôle des données personnelles, les dépôts qu'on a le droit de lire ; plus tard sa politique de livraison et le scanner de sécurité de l'entreprise | **au projet** — une mise à jour d'Ephor n'y touche jamais |
 | `.ephor/*.py`, `.ephor/contract.schema.json` | le juge (`judge.py`) et la forme d'un contrat ; ses outils : compteur de tokens (`usage.py`), contrôle des réglages GitLab (`gitlab_check.py`), tableau de bord (`score.py`), carte du code (`repo_map.py`), dépôts de référence (`refs.py`), aspirateur de docs (`fetch_docs.py`), contrôle des données personnelles (`personal_data.py`), adaptateurs opencode et Copilot (`adapters.py`) | Ephor |
 | `.ephor/zones.txt` | la liste des zones de contrôle, la seule : juge, gardes, sentinelle et CI la lisent ; les réglages du projet peuvent l'allonger, jamais la raccourcir | Ephor |
-| `.ephor/hooks/` | les garde-fous, communs aux trois agents | Ephor |
+| `.ephor/hooks/` | les garde-fous, communs aux trois agents ; les outils n'en appellent que les quatre points d'entrée (`avant-outil.sh`, `apres-outil.sh`, `debut-tour.sh`, `fin-tour.sh`), qui choisissent les gardes (ADR 0011) | Ephor |
+| `.ephor/opencode/` | le greffon d'opencode ; `.opencode/plugins/ephor.js`, dans le projet, ne fait que l'importer | Ephor |
 | `.ephor/scripts/` | diagnostic, revue, mutation, installation sur un dépôt existant… | Ephor |
 | `.ephor/deploy/` | manifeste de livraison, image de CI, principes de livraison | Ephor |
 | `.ephor/greffon-copilot/` | le relais que `make copilot-install` pose sur le poste | Ephor (deux fichiers régénérés par `make adapters`) |

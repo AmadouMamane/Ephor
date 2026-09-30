@@ -190,8 +190,9 @@ def test_le_doctor_nomme_le_greffon_copilot_manquant(tmp_path: Path) -> None:
     (greffon / "depots.txt").write_text(str(ROOT) + "\n", encoding="utf-8")
     assert "greffon Copilot installé et ce dépôt déclaré" in doctor(tmp_path / "pose")
 
-    # Le relais à jour, mais une liste de gardes d'avant : une garde ne tournait pas.
-    ancienne = liste.replace("budget.sh checkpoint.sh", "checkpoint.sh")
+    # Le relais à jour, mais la liste de gardes d'avant la 1.4 : les points d'entrée ne
+    # tournent pas, ni ce qu'ils lancent de plus (ADR 0011).
+    ancienne = liste.replace(" fin-tour.sh", " budget.sh checkpoint.sh")
     assert ancienne != liste
     (greffon / "hooks" / "hooks.json").write_text(ancienne, encoding="utf-8")
     assert "n'enchaîne pas la liste de garde-fous du dépôt" in doctor(tmp_path / "pose")
@@ -245,6 +246,26 @@ def test_le_doctor_se_lance_avant_setup(tmp_path: Path) -> None:
     ).stdout
     assert "environnement pas encore installé" in sortie
     assert "[FAIL] environnement" not in sortie
+
+
+def test_le_doctor_dit_quand_un_point_d_entree_manque(tmp_path: Path) -> None:
+    """Sous Claude Code, un hook introuvable est une erreur montrée à l'écran, puis l'appel
+    passe : des réglages plus récents que le moteur tourneraient sans garde (ADR 0011)."""
+    projet = tmp_path / "projet"
+    (projet / ".ephor" / "scripts").mkdir(parents=True)
+    shutil.copy(ROOT / ".ephor" / "scripts" / "doctor.sh", projet / ".ephor" / "scripts")
+    shutil.copytree(ROOT / ".ephor" / "hooks", projet / ".ephor" / "hooks")
+    (projet / ".claude").mkdir()
+    shutil.copy(ROOT / ".claude" / "settings.json", projet / ".claude" / "settings.json")
+
+    def doctor() -> str:
+        return subprocess.run(
+            ["bash", ".ephor/scripts/doctor.sh"], cwd=projet, capture_output=True, text=True
+        ).stdout
+
+    assert "introuvables" not in doctor()
+    (projet / ".ephor" / "hooks" / "fin-tour.sh").unlink()
+    assert "[FAIL] hooks déclarés par .claude/settings.json introuvables : fin-tour.sh" in doctor()
 
 
 def test_doctor_refuses_a_python_that_is_too_old(tmp_path: Path) -> None:
@@ -312,10 +333,10 @@ def test_bootstrap_names_the_two_files_that_make_it_work(tmp_path: Path) -> None
     # La sonde proposée doit discriminer pour de vrai : les gardes déclarées ou non. Lancer
     # la garde à la main ne le dit plus : elle lit ses zones dans le moteur, fusion ou pas.
     reglages = cible / ".claude" / "settings.json"
-    assert "grep -c '.ephor/hooks/write-guard.sh' .claude/settings.json" in sortie
-    assert ".ephor/hooks/write-guard.sh" not in reglages.read_text(encoding="utf-8")
+    assert "grep -c '.ephor/hooks/avant-outil.sh' .claude/settings.json" in sortie
+    assert ".ephor/hooks/avant-outil.sh" not in reglages.read_text(encoding="utf-8")
     shutil.copy(cible / ".claude" / "settings.json.ephor-new", reglages)
-    assert ".ephor/hooks/write-guard.sh" in reglages.read_text(encoding="utf-8")
+    assert ".ephor/hooks/avant-outil.sh" in reglages.read_text(encoding="utf-8")
     charge = '{"tool_name":"Edit","tool_input":{"path":".ephor/judge.py"}}'
     garde = subprocess.run(
         [str(cible / ".ephor" / "hooks" / "write-guard.sh")],

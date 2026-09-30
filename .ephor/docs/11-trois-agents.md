@@ -26,10 +26,16 @@ projet équipé, les tests d'Ephor ne sont pas copiés : `make ephor-test` y dir
 | `.claude/skills/*/SKILL.md` | `.opencode/commands/*.md` |
 
 Trois fichiers ne sont pas générés, parce que ce sont du code : `.ephor/hooks/*.sh`, les
-garde-fous ; `.opencode/plugins/ephor.js` et `.ephor/greffon-copilot/hooks/relais.sh`, qui se
-contentent de les appeler. Ces deux relais n'analysent rien : ils traduisent la forme de
-leur outil vers celle de Claude Code, et transmettent. Une seule logique, donc, et une
-seule série de tests.
+garde-fous ; `.ephor/opencode/ephor.js` (que `.opencode/plugins/ephor.js` importe) et
+`.ephor/greffon-copilot/hooks/relais.sh`, qui se contentent de les appeler. Ces deux relais
+n'analysent rien : ils traduisent la forme de leur outil vers celle de Claude Code, et
+transmettent. Une seule logique, donc, et une seule série de tests.
+
+Les trois outils n'appellent que **quatre points d'entrée**, un par moment du tour :
+`avant-outil.sh`, `apres-outil.sh` (Claude Code seul), `debut-tour.sh`, `fin-tour.sh`.
+Quelles gardes tournent, et pour quel outil (la variable `EPHOR_OUTIL`, posée par les
+greffons), se décide dans ces scripts. Ajouter une garde ne touche ni les réglages du projet
+ni le greffon installé sur les postes : la mise à jour du moteur suffit (ADR 0011).
 
 ## Ce que chaque outil lit tout seul
 
@@ -39,7 +45,7 @@ seule série de tests.
 | Skills | `.claude/skills/` | `.claude/skills/`, nativement | `.claude/skills/`, nativement |
 | Sous-agents | `.claude/agents/` | `.opencode/agents/`, générés | `.claude/agents/`, nativement |
 | Commandes `/nom` | les skills | `.opencode/commands/`, générées | les skills |
-| Garde-fous | `.claude/settings.json` | greffon `.opencode/plugins/ephor.js` | greffon installé (`make copilot-install`), et hooks du dépôt dans la vue « agents » |
+| Garde-fous | `.claude/settings.json` | greffon `.ephor/opencode/ephor.js`, importé par `.opencode/plugins/ephor.js` | greffon installé (`make copilot-install`), et hooks du dépôt dans la vue « agents » |
 | Lecture des secrets | règles `Read(...)` | permissions dérivées | `read-guard.sh`, qui relit ces mêmes règles |
 | Écriture dans une zone de contrôle | règles `Edit(...)`, et `write-guard.sh` | permissions dérivées, et `write-guard.sh` via le greffon | `write-guard.sh` |
 | Écriture dans un dépôt voisin | `refs-guard.sh` | le même, via le greffon | le même |
@@ -159,7 +165,7 @@ l'entreprise, ni avec le vrai fournisseur : c'est le ticket #26.
 **Un geste de plus, sur le poste et non dans le dépôt :**
 
 ```bash
-make copilot-install   # une fois par machine, puis après chaque make adapters
+make copilot-install   # une fois par machine, puis quand le journal des versions le dit
 ```
 
 puis une **fenêtre VS Code neuve** — pas un rechargement : une session ouverte avant
@@ -221,8 +227,10 @@ traînent dans ce dossier ne tournent plus.
 - **Une forme d'appel inconnue est refusée** par le relais du greffon. Un lot d'appels
   (`toolCalls` ou `tool_calls`) est éclaté, et chaque appel passe toutes les gardes. Quand
   l'éditeur changera de protocole, le filet se verra tomber au lieu de disparaître.
-- **Les sept gardes d'un appel tournent en même temps** (`.ephor/hooks/ensemble.sh`), avec
-  le verdict et les messages qu'elles rendraient l'une après l'autre. Mesuré le 30/09/2026,
+- **Les gardes d'un appel tournent en même temps** (`.ephor/hooks/ensemble.sh`), avec
+  le verdict et les messages qu'elles rendraient l'une après l'autre ; depuis la 1.4, le
+  point d'entrée ne lance que celles qui regardent l'appel (une lecture : le bouton d'arrêt
+  et la garde de lecture ; une écriture : les cinq de l'écriture). Mesuré le 30/09/2026,
   poste rapide : un appel passe de 0,48 à 0,69 s à 0,25 à 0,33 s ; sous opencode, une
   écriture de 0,45 à 0,22 s. Une garde qui n'a pas rendu son verdict en 20 s
   (`EPHOR_GARDES_DELAI`) est arrêtée, et compte pour un refus. `EPHOR_GARDES_EN_SERIE=1`
@@ -230,7 +238,7 @@ traînent dans ce dossier ne tournent plus.
   problème : dans l'environnement de VS Code pour Copilot (`launchctl setenv
   EPHOR_GARDES_EN_SERIE 1`, puis relancer VS Code), dans le terminal qui lance opencode.
   Claude Code lance déjà ses hooks ensemble : rien ne change pour lui. Les hooks du dépôt
-  (vue « agents ») restent une entrée par garde.
+  (vue « agents ») passent par le même point d'entrée.
 
 ### Limites connues
 
