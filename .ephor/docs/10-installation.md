@@ -136,10 +136,11 @@ make mutants      # score autour de 50 % alors que TOUS les tests passent
 git checkout src/app/service.py
 ```
 
-**Pour tester `STEER.md`** : écrivez-le depuis un **autre terminal**, jamais depuis la
-session à réorienter. Le hook se déclenche à l'envoi du message, avant tout
-appel d'outil — une écriture faite dans la même session arrive trop tard et le premier
-essai échoue toujours.
+**Pour tester `STEER.md`** : écrivez-le depuis votre éditeur ou un **autre terminal**
+pendant que l'agent travaille (la session elle-même ne peut pas l'écrire : il lui est
+refusé). Sous Claude Code, l'agent le reçoit après son prochain appel d'outil : mesuré le
+30/09/2026, une consigne écrite pendant un `sleep 20` de l'agent a été suivie dès la fin de
+la commande. Sous opencode, à sa prochaine requête ; sous Copilot, à votre prochain message.
 
 Le dernier essai est le plus instructif : `make verify` est vert, `ruff` et `mypy` sont
 contents, tous les tests passent — et pourtant près d'une mutation sur deux traverse la

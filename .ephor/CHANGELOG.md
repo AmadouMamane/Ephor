@@ -50,13 +50,22 @@ Chacune rejouée, puis fermée par un test qui échoue sur la 1.3.0.
   une autre session d'agent encore vivante travaille dans le même dossier ; sous opencode,
   par un message à l'écran. Rien après un `/clear`. Limite : sous Copilot, deux
   conversations d'une même fenêtre VS Code ne se voient pas.
+- **`STEER.md` n'est plus à la portée de l'agent, et arrive en cours de tour.** L'agent
+  pouvait l'écrire, et son contenu lui revenait comme « consigne opérateur » à chaque tour :
+  un texte glissé par une page web devenait une consigne permanente. C'est maintenant une
+  zone de contrôle, refusée à l'agent (gardes, bac à sable de Claude Code, juge, CI) ; la
+  sentinelle, seule, laisse l'opérateur l'écrire pendant le tour. La consigne arrive une fois par changement, et plus
+  à chaque tour. Sous Claude Code, dès l'appel d'outil suivant, et plus seulement au
+  prochain message de l'opérateur : mesuré dans une vraie session, une consigne écrite
+  pendant une commande de l'agent a été suivie dès la fin de la commande.
 
 Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
 La CI n'est pas mise à jour par Ephor : pour la passe de nuit, remplacez la ligne
 `uv run mutmut run …` par `bash .ephor/scripts/mutants.sh --tout`, et joignez
 `.verify/mutants-run.log` à la place de `mutants-full.log` (GitHub : ajoutez
 `include-hidden-files: true` à l'envoi). Pour opencode : relancez-le (son greffon, le
-planner et la commande `feature` ont changé).
+planner et la commande `feature` ont changé). Le `AGENTS.md` du projet n'est pas touché :
+sa ligne sur `STEER.md` (« injecté à chaque tour ») peut être reprise de celui d'Ephor.
 
 ## 1.3.0 — 30 septembre 2026
 

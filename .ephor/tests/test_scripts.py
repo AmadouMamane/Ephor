@@ -842,12 +842,20 @@ def test_une_tache_s_ouvre_dans_son_propre_dossier(tmp_path: Path) -> None:
     git(cible, "config", "user.email", "test@example.invalid")
     git(cible, "config", "user.name", "Ephor test")
     bootstrap(cible)
+    ignores = (cible / ".gitignore").read_text(encoding="utf-8")
+    assert ".claude/settings.local.json" in ignores.splitlines(), "propres au poste"
+    # Un projet dont le .gitignore ne les ignore pas (pas encore mis à jour, ou retouché) : le
+    # worktree doit rester propre quand même. Vu en CI, où Claude Code n'a pas posé son
+    # ignore global comme sur le poste de développement.
+    (cible / ".gitignore").write_text(ignores.replace(".claude/settings.local.json\n", ""))
     (cible / "tasks" / "FEAT-001").mkdir(parents=True)
     (cible / "tasks" / "FEAT-001" / "contract.json").write_text('{"risk": "faible"}\n')
     git(cible, "add", "-A")
     git(cible, "commit", "-qm", "FEAT-001 approuvé")
     journal = tmp_path / "uv.txt"
     env = _uv_factice(tmp_path / "bin", f'echo "uv $*" >> "{journal}"\nexit 0\n')
+    # Sans la configuration git du poste, qui peut ignorer ces réglages à la place du projet.
+    env |= {"GIT_CONFIG_GLOBAL": os.devnull, "XDG_CONFIG_HOME": str(tmp_path / "xdg")}
 
     def ouvre(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -871,7 +879,14 @@ def test_une_tache_s_ouvre_dans_son_propre_dossier(tmp_path: Path) -> None:
     systeme = local["sandbox"]["filesystem"]
     assert local["sandbox"]["enabled"] is True and f"{commun}/info" in systeme["denyWrite"]
     assert "~/.cache/uv" in systeme["allowWrite"], "le reste du bac à sable est repris"
-    assert git(dossier, "status", "--porcelain") == "", "les réglages locaux restent hors de git"
+    etat = subprocess.run(
+        ["git", "-C", str(dossier), "status", "--porcelain"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert etat == "", "les réglages locaux restent hors de git"
 
     deux_fois = ouvre("FEAT-001")
     assert deux_fois.returncode == 2 and "existe déjà" in deux_fois.stdout

@@ -60,6 +60,12 @@ if isinstance(bac, dict) and bac.get("enabled"):
         json.dump({"sandbox": {**bac, "filesystem": systeme}}, fichier, indent=2)
         fichier.write("\n")
 PY
+  # Propres à ce poste : jamais commités. Sans quoi un `git add -A` de l'agent les emportait,
+  # et le juge refusait la tâche (.claude/ est une zone).
+  if [ -f "$DIR/.claude/settings.local.json" ] \
+    && ! git -C "$DIR" check-ignore -q .claude/settings.local.json 2>/dev/null; then
+    printf '%s\n' "/.claude/settings.local.json" >> "$COMMUN/info/exclude"
+  fi
 fi
 
 echo "Tâche $ID ouverte dans $DIR, sur task/$ID."

@@ -77,7 +77,8 @@
       "GNUmakefile": "deny",
       "makefile": "deny",
       ".mcp.json": "deny",
-      "CLAUDE.local.md": "deny"
+      "CLAUDE.local.md": "deny",
+      "STEER.md": "deny"
     },
     "read": {
       "*.env": "deny",

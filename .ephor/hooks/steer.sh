@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# UserPromptSubmit — injecte une consigne opérateur en cours de route, sans redémarrer.
-# Écris dans STEER.md, l'agent la reçoit au tour suivant. Vide-le une fois appliquée.
+# UserPromptSubmit — le début du tour : photo de la sentinelle, autre session dans le même
+# dossier (sessions.sh), consigne de l'opérateur (STEER.md, voir consigne.sh).
 set -uo pipefail
 INPUT="$(cat)"
 # La sentinelle du dernier commit, pas celle du disque : réécrite pendant le tour, elle ne
@@ -39,12 +39,10 @@ if [ "${1:-}" != consigne ]; then
   printf '%s' "$INPUT" | bash "$(dirname "$0")/sessions.sh" 2>/dev/null
   # `steer.sh photo` (greffon d'opencode) s'arrête là : il lit la consigne par `consigne`.
   [ "${1:-}" = photo ] && exit 0
+  # La consigne de l'opérateur, si elle a changé depuis ce que cette session a reçu.
+  printf '%s' "$INPUT" 2>/dev/null | bash "$(dirname "$0")/consigne.sh"
+  exit 0
 fi
-ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-F="$ROOT/STEER.md"
-[ -f "$F" ] || exit 0
-BODY=$(grep -v '^[[:space:]]*>' "$F" | grep -v '^# STEER' | sed '/^[[:space:]]*$/d')
-[ -z "$BODY" ] && exit 0
-echo "CONSIGNE OPÉRATEUR EN COURS (STEER.md) — applique-la avant toute autre chose :"
-echo "$BODY"
+# `steer.sh consigne` (greffon d'opencode, à chaque requête) : la consigne tant qu'elle existe.
+bash "$(dirname "$0")/consigne.sh" toujours </dev/null
 exit 0

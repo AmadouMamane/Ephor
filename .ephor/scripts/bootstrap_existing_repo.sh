@@ -258,7 +258,10 @@ done
 touch .gitignore
 # Le cache compilé de Python, sous .ephor/ seulement : non ignoré, le juge le prenait pour
 # une retouche de ses propres fichiers et refusait toute tâche (dépôt Node, typiquement).
-for line in ".verify/" "AGENT_STOP" "mutants/" ".ephor/**/__pycache__/"; do
+# Les réglages locaux de Claude Code sont propres au poste : non ignorés, un `git add -A` de
+# l'agent les commitait, et le juge refusait la tâche (zone). Claude Code les ignore pour
+# qui l'a installé ; pas sur un poste qui n'a qu'opencode ou Copilot (vu en CI, 30/09/2026).
+for line in ".verify/" "AGENT_STOP" "mutants/" ".ephor/**/__pycache__/" ".claude/settings.local.json"; do
   grep -qxF "$line" .gitignore || { printf '%s\n' "$line" >> .gitignore; echo "  + .gitignore : $line"; }
 done
 

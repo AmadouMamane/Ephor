@@ -35,6 +35,9 @@ CLAUDE.md
 CLAUDE.local.md
 .pre-commit-config.yaml
 .gitleaks.toml
+# La consigne de l'opérateur : l'agent ne l'écrit pas (une page web y glisserait une consigne
+# permanente). La sentinelle, seule, le laisse passer : l'opérateur l'écrit pendant le tour.
+STEER.md
 
 # --- sur le poste : là où vivent les réglages et les greffons des agents
 ~/.claude/

@@ -146,6 +146,9 @@ if op == "journal":
 if op == "session":
     print(texte("session_id", "sessionId"))
     sys.exit(0)
+if op == "evenement":
+    print(texte("hook_event_name", "hookEventName"))
+    sys.exit(0)
 
 args = [a for a in (charge.get("tool_input"), charge.get("toolArgs")) if isinstance(a, dict)]
 brut = [charge[c] for c in ("toolArgs", "tool_input") if isinstance(charge.get(c), str)]
@@ -197,6 +200,7 @@ _prog() { # le programme jq d'une opération nommée
     depot)     printf '%s' '.workingDirectory // .cwd // empty' ;;
     journal)   printf '%s' '.transcript_path // .transcriptPath // empty' ;;
     session)   printf '%s' '.session_id // .sessionId // empty' ;;
+    evenement) printf '%s' '.hook_event_name // .hookEventName // empty' ;;
     corps)     printf '%s' "[$_ARGS | ($_ECRIT, .input)] + [$_BRUT] | $_CHAINES | join(\"\n\")" ;;
     correctif) printf '%s' "[$_ARGS | ($_CORRECTIF)] + [$_BRUT] | $_CHAINES | join(\"\n\")" ;;
     cibles)    printf '%s' "[$_ARGS | ($_VISE)] | $_CHAINES | .[]" ;;

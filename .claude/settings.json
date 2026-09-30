@@ -67,6 +67,7 @@
       "Edit(makefile)",
       "Edit(.mcp.json)",
       "Edit(CLAUDE.local.md)",
+      "Edit(STEER.md)",
       "Bash(rm *)",
       "Bash(git push --force *)",
       "Bash(git reset --hard *)",
@@ -154,6 +155,14 @@
             "statusMessage": "sortie de test compacte",
             "timeout": 15
           }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PROJECT_DIR}/.ephor/hooks/consigne.sh\"", "timeout": 10 }
         ]
       }
     ],

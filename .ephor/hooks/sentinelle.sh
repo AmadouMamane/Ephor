@@ -105,6 +105,9 @@ EXCLUS=(
   ":(exclude).opencode/bun.lock"
   ":(exclude).claude/settings.local.json"
   ":(exclude,glob).claude/worktrees/**"
+  # Zone de contrôle, mais l'opérateur l'écrit PENDANT le tour : c'est sa raison d'être. La
+  # garde d'écriture, celle du terminal et le bac à sable de Claude Code en tiennent l'agent.
+  ":(exclude)STEER.md"
 )
 
 arbre() { # arbre <pathspec>... : HEAD, plus les zones telles qu'elles sont sur le disque

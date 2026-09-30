@@ -364,3 +364,17 @@ def test_une_photo_de_la_version_d_avant_ne_fait_pas_crier(tmp_path: Path) -> No
     photo.write_text("\n".join(garde) + "\n", encoding="utf-8")
     assert fin(repo).returncode == 0
     assert not (repo / "AGENT_STOP").exists()
+
+
+def test_la_consigne_ecrite_pendant_le_tour_ne_la_declenche_pas(tmp_path: Path) -> None:
+    """STEER.md est refusé à l'agent, mais c'est PENDANT le tour que l'opérateur l'écrit :
+    la sentinelle ne doit pas arrêter l'agent pour ça."""
+    repo = depot_surveille(tmp_path)
+    (repo / "STEER.md").write_text("# STEER\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "consigne vide")
+    debut(repo)
+    (repo / "STEER.md").write_text("# STEER\n\nChange de cap : garde l'API telle quelle.\n")
+    resultat = fin(repo)
+    assert resultat.returncode == 0, resultat.stderr
+    assert not (repo / "AGENT_STOP").exists()

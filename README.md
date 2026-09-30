@@ -105,7 +105,7 @@ relancer opencode ou Claude Code.
 | `refs-guard.sh` | Qu'un agent écrive dans un dépôt voisin déclaré en lecture, que le juge ne verrait jamais | Voit les outils de fichier, pas une redirection shell |
 | Journal des jugements + `make score` | De juger Ephor sur une impression | Ne mesure que ce qui a été jugé : sans lot de tâches, il n'y a rien à comparer |
 | Mesure des tokens et plafond par tâche | Qu'une tâche coûte sans qu'on le sache — sous-agents de Claude Code compris | Sous Copilot, un minimum tant que la session n'est pas fermée ; opencode, par dépôt seulement |
-| `AGENT_STOP` + `STEER.md` | De devoir tuer un process pour reprendre la main | `AGENT_STOP` arrête les trois outils ; `STEER.md` n'est injecté automatiquement que sous Claude Code et opencode |
+| `AGENT_STOP` + `STEER.md` | De devoir tuer un process pour reprendre la main | `AGENT_STOP` arrête les trois outils. `STEER.md`, refusé à l'agent, lui arrive une fois par changement : en cours de tour sous Claude Code, à la requête suivante sous opencode, au message suivant sous Copilot |
 | Sortie compacte + `.verify/` | Qu'un log de dix mille lignes mange le contexte | Le code de retour et le résumé restent exacts |
 | Points de reprise hors historique | De perdre du travail, sans remplir la branche de commits « wip » | `make checkpoints` les liste ; gardés 30 jours, sans les fichiers de plus de 5 Mo |
 | CI GitLab en trois étages, variante GitHub | Qu'un test lent ou instable bloque l'équipe ; qu'un échec après fusion passe sans bruit | GitHub tourne et lance les tests d'Ephor ; GitLab n'a pas encore tourné sur une instance réelle |

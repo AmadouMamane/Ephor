@@ -133,8 +133,10 @@ dans `PROGRESS.md`, et rends la main. Ne boucle pas.
 - Sous Claude Code, le terminal tourne dans un bac à sable : une écriture refusée par le
   système (`Operation not permitted`) vise une zone de contrôle. Ne cherche pas d'autre
   chemin : dis-le à l'opérateur.
-- `STEER.md` non vide : son contenu t'est injecté à chaque tour. Si ton outil ne le fait
-  pas, lis-le au début de chaque tâche et applique-le.
+- `STEER.md` : la consigne de l'opérateur, qui t'est donnée quand elle change, en cours de
+  tour sous Claude Code. Applique-la avant toute autre chose. Tu ne l'écris jamais, et tu
+  ne la commites pas (ajoute tes fichiers par leur nom). Si ton outil ne te la donne pas,
+  lis-la au début de chaque tâche.
 - **Sous Copilot, les garde-fous ne tournent partout que si l'opérateur a lancé
   `make copilot-install` sur ce poste, et dans une fenêtre ouverte APRÈS.** Sans le
   greffon, seule la vue « agents » lance les hooks du dépôt. En clair : tiens le contrat
