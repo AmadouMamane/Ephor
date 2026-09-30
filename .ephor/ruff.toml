@@ -50,4 +50,7 @@ ignore = ["S101"]  # assert autorisé dans les tests
 "deploy/manifest.py" = ["S603", "S607", "T20", "UP017"]
 # Le calcul des empreintes lit l'histoire d'Ephor avec git et rend compte sur la console.
 "scripts/empreintes.py" = ["S603", "S607", "T20"]
+# Les réglages du bac à sable d'opencode sortent sur la console : c'est leur métier.
+# S108 : /tmp y est un dossier que le bac à sable laisse écrire, pas un fichier temporaire.
+"scripts/srt_reglages.py" = ["T20", "S108"]
 "tests/**" = ["S", "T20"]

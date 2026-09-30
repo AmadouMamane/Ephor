@@ -101,6 +101,13 @@ Chacune rejouée, puis fermée par un test qui échoue sur la 1.3.0.
   niveau) ; sous le niveau fort, l'`evaluator` relit même une tâche à risque faible ; le juge
   note le niveau, et `make score` donne, par niveau, les tâches vérifiées et le coût par
   critère. Facultatif : à mesurer sur de vraies tâches avant d'en faire le défaut.
+- **opencode dans le bac à sable du système (à essayer sur le poste).**
+  `bash .ephor/scripts/opencode_bac_a_sable.sh` lance opencode dans `srt`, le moteur du bac à
+  sable de Claude Code, avec des réglages tirés de la liste des zones : tout ce qu'opencode
+  lance ne peut plus écrire une zone ni lire un `.env`. Mesuré en local, de bout en bout : un
+  script écrit puis lancé par opencode, qui visait `tasks/`, reçoit « Operation not
+  permitted » ; le code, les commits et les dépendances du greffon s'écrivent. Réseau fermé
+  sauf `EPHOR_SRT_DOMAINES`. L'essai derrière le proxy de l'entreprise est le ticket #26.
 
 Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
 La CI n'est pas mise à jour par Ephor : pour la passe de nuit, remplacez la ligne

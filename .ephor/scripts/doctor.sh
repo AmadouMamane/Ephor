@@ -288,7 +288,7 @@ esac
 printf '  [ -- ] terminal : la garde attrape l'"'"'écriture franche et les formes simples (cd, heredoc, find,\n'
 printf '         git apply, formateurs, curl, tar), pas un détour (script écrit ailleurs, variable). La sentinelle\n'
 printf '         le signale en fin de tour, le juge refuse le correctif — ce n'"'"'est pas une frontière.\n'
-printf '         La frontière, sous Claude Code seulement, c'"'"'est le bac à sable ; opencode et Copilot n'"'"'en ont pas.\n'
+printf '         La frontière, sous Claude Code, c'"'"'est le bac à sable ; opencode peut l'"'"'avoir par srt (.ephor/docs/11), Copilot non.\n'
 
 echo
 echo "== Mise à jour d'Ephor =="
@@ -344,6 +344,12 @@ else
   else
     warn "opencode : aucun modèle réglé sur ce poste pour $SANS_MODELE — ils tournent sur le modèle de la session" \
          "make opencode-modeles FORT=<fournisseur/modèle> RAPIDE=<…> [STANDARD=<…>], une fois par poste (.ephor/docs/07-token-budget.md, 2.6)"
+  fi
+  # La frontière du terminal que Claude Code a déjà : srt, le moteur de son bac à sable.
+  if command -v srt >/dev/null 2>&1; then
+    ok "opencode peut tourner dans le bac à sable du système : bash .ephor/scripts/opencode_bac_a_sable.sh"
+  else
+    printf '  [ -- ] srt absent : sous opencode, rien ne tient un détour par le terminal (npm install -g @anthropic-ai/sandbox-runtime, puis bash .ephor/scripts/opencode_bac_a_sable.sh ; .ephor/docs/11)\n'
   fi
   if [ "${EPHOR_GARDES_EN_SERIE:-0}" = "1" ]; then
     printf '  [ -- ] gardes lancées l'"'"'une après l'"'"'autre (EPHOR_GARDES_EN_SERIE=1) : même verdict, deux fois plus lent\n'

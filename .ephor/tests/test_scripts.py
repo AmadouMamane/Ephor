@@ -1019,3 +1019,55 @@ def test_la_tache_s_ouvre_avec_la_ligne_de_lancement_de_son_niveau(tmp_path: Pat
     assert "Le contrat demande le niveau fort, effort max" in sortie.stdout
     assert "claude --model opus --effort max" in sortie.stdout
     assert "opencode --model passerelle/fort" in sortie.stdout
+
+
+def test_le_bac_a_sable_d_opencode_suit_la_liste_des_zones(tmp_path: Path) -> None:
+    """F3 : opencode n'avait pas la frontière du bac à sable. Les réglages de `srt` viennent
+    de la liste des zones du moteur : une zone ajoutée y entre d'elle-même. Mesuré avec les
+    vrais outils le 30/09/2026 (voir srt_reglages.py)."""
+    script = ROOT / ".ephor" / "scripts" / "srt_reglages.py"
+    env = {**os.environ, "HOME": str(tmp_path), "TMPDIR": str(tmp_path)}
+    for cle in ("XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "EPHOR_SRT_LOCAL"):
+        env.pop(cle, None)
+
+    def reglages(**ajout: str) -> dict[str, object]:
+        fait = subprocess.run(
+            [sys.executable, str(script)], env={**env, **ajout}, capture_output=True, check=True
+        )
+        lu: dict[str, object] = json.loads(fait.stdout)
+        return lu
+
+    lu = reglages(EPHOR_SRT_DOMAINES="modeles.example depots.example")
+    systeme = lu["filesystem"]
+    assert isinstance(systeme, dict)
+    refus = systeme["denyWrite"]
+    for zone in ("./tasks", "./.ephor", "./STEER.md", "./.claude", "./Makefile", "./.git/info"):
+        assert zone in refus, zone
+    assert "./.opencode/plugins" in refus and "./.opencode" not in refus, "ses dépendances"
+    assert "./.git" not in refus, "les commits écrivent .git"
+    zones = [
+        ligne
+        for ligne in (ROOT / ".ephor" / "zones.txt").read_text(encoding="utf-8").splitlines()
+        if ligne and not ligne.startswith(("#", "~", "!")) and ligne not in (".git/", ".opencode/")
+    ]
+    assert all("./" + zone.rstrip("/") in refus for zone in zones), "toute la liste"
+    assert "." in systeme["allowWrite"] and systeme["denyRead"] == ["**/.env"]
+    assert f"{tmp_path}/.local/share/opencode" in systeme["allowWrite"]
+    reseau = lu["network"]
+    assert isinstance(reseau, dict)
+    assert reseau["allowedDomains"] == ["modeles.example", "depots.example"]
+    assert reseau["allowLocalBinding"] is False
+    local = reglages(EPHOR_SRT_LOCAL="1")["network"]
+    assert isinstance(local, dict) and local["allowLocalBinding"] is True
+    sans_srt = subprocess.run(
+        ["bash", str(ROOT / ".ephor" / "scripts" / "opencode_bac_a_sable.sh")],
+        env={**env, "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert (
+        sans_srt.returncode == 2
+        and "npm install -g @anthropic-ai/sandbox-runtime" in sans_srt.stdout
+    )

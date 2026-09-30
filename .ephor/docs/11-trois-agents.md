@@ -44,7 +44,7 @@ seule série de tests.
 | Écriture dans une zone de contrôle | règles `Edit(...)`, et `write-guard.sh` | permissions dérivées, et `write-guard.sh` via le greffon | `write-guard.sh` |
 | Écriture dans un dépôt voisin | `refs-guard.sh` | le même, via le greffon | le même |
 | Écriture d'une zone de contrôle **par le terminal**, forme simple (redirection, `sed -i`, `cp`, `mv`, `rm`, `git restore`, `cd` puis écriture, script en ligne ou en document en ligne, `find -delete`, `git apply`, formateur en place) | `shell-guard.sh` | le même, via le greffon | le même |
-| Écriture d'une zone de contrôle par le terminal, **détour compris** (script écrit ailleurs, variable) | le bac à sable : refus du système (ADR 0008) | rien ; la sentinelle le signale en fin de tour | rien ; la sentinelle le signale en fin de tour |
+| Écriture d'une zone de contrôle par le terminal, **détour compris** (script écrit ailleurs, variable) | le bac à sable : refus du système (ADR 0008) | rien, sauf lancé dans `srt` (`opencode_bac_a_sable.sh`, à essayer) ; la sentinelle le signale en fin de tour | rien ; la sentinelle le signale en fin de tour |
 
 Les zones de contrôle viennent d'une seule liste, dans le moteur : `.ephor/zones.txt`. Les
 gardes, la sentinelle, le juge et la garde de la CI la lisent tous ; les refus `Edit(...)` des
@@ -131,6 +131,28 @@ des skills à entretenir.
 - **opencode installe ses dépendances de greffon dans le dépôt** (`.opencode/node_modules`,
   une soixantaine de mégaoctets). Il les ignore lui-même dans Git ; `.gitignore` le refait,
   par sécurité, pour que le juge ne les voie jamais.
+
+## opencode dans le bac à sable du système (à essayer sur le poste)
+
+Sous Claude Code, le bac à sable du système refuse d'écrire une zone de contrôle, détour
+compris. opencode n'en a pas, mais le moteur de ce bac à sable existe seul : `srt`
+(`npm install -g @anthropic-ai/sandbox-runtime`). Lancez opencode par
+`bash .ephor/scripts/opencode_bac_a_sable.sh` (arguments d'opencode en plus) : ses réglages
+viennent de la liste des zones du moteur, et tout ce qu'opencode lance ne peut plus écrire
+une zone ni lire un `.env`.
+
+Mesuré le 30/09/2026 (opencode 1.18.33, srt 0.0.78, faux modèle local, greffon d'Ephor
+chargé) : le modèle fait écrire `src/porte.py` à opencode (accepté), puis le lui fait lancer ;
+le script tente d'écrire dans `tasks/` et reçoit `PermissionError: Operation not permitted`.
+La garde du terminal laissait passer ce détour ; le système, non. Les commits, le code du
+projet, les dépendances du greffon s'écrivent.
+
+Réseau : fermé, sauf les domaines de `EPHOR_SRT_DOMAINES` (par défaut ceux de Copilot, du
+catalogue d'opencode, de npm et de PyPI) ; derrière un proxy, srt passe par celui de
+`HTTPS_PROXY`. Une passerelle sur le poste (127.0.0.1) : `EPHOR_SRT_LOCAL=1`, qui ouvre tous
+les ports locaux. Limite vue : opencode ne suit plus les changements de fichiers (« Error
+starting FSEvents stream »), sans effet sur le travail. Pas encore essayé derrière le proxy de
+l'entreprise, ni avec le vrai fournisseur : c'est le ticket #26.
 
 ## Copilot : comment les garde-fous tournent
 
