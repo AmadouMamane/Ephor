@@ -59,7 +59,7 @@ _ARGS='((if (.tool_input | type) == "object" then .tool_input else {} end), (if 
 # Champs qui portent un contenu écrit, tous outils confondus. `file_text` et `new_str` sont
 # ceux du moteur de la fenêtre d'agents de VS Code (`create`, `edit`, `str_replace_editor`) :
 # sans eux, un secret écrit par ces outils passait devant le contrôle sans être lu.
-_ECRIT='.content, .new_string, .newString, .new_str, .file_text, .new_source, .patch, .patchText, .diff, .text, (.edits[]?.new_string), (.edits[]?.newString)'
+_ECRIT='.content, .new_string, .newString, .new_str, .file_text, .new_source, .patch, .patchText, .diff, .text, .code, (.edits[]?.new_string), (.edits[]?.newString), (.replacements[]? | objects | .newString, .new_string)'
 # Champs qui portent un CORRECTIF, et eux seuls : un correctif nomme des fichiers, un
 # contenu ordinaire n'en nomme pas. Confondre les deux faisait refuser l'écriture d'un
 # PROGRESS.md qui citait un diff — l'agent ne pouvait plus résumer son état avant l'arrêt.
@@ -71,7 +71,9 @@ _CORRECTIF='.patch, .patchText, .diff, .input'
 _BRUT='(.toolArgs, .tool_input) | strings'
 # Champs qui portent un chemin. `paths` est une liste, ou une simple chaîne chez `rg` et
 # `glob` de la fenêtre d'agents — lue comme une liste, la chaîne ne donnait rien.
-_VISE='.file_path, .notebook_path, .path, .filePath, .target_file, .targetFile, (.paths[]?), (.paths | strings), (.edits[]?.file_path), (.edits[]?.filePath)'
+# `replacements` et `files` : le panneau de discussion de VS Code (`multi_replace_string_in_file`,
+# `editFiles`), dont les fichiers visés n'étaient pas lus (trouvé le 30/09/2026).
+_VISE='.file_path, .notebook_path, .path, .filePath, .target_file, .targetFile, (.paths[]?), (.paths | strings), (.edits[]?.file_path), (.edits[]?.filePath), (.replacements[]? | objects | .filePath, .file_path), (.files[]? | strings)'
 _CHAINES='map(select(type == "string" and . != ""))'
 
 # Le même travail, en python3, quand jq n'est pas là. Une opération NOMMÉE de chaque côté :
@@ -81,7 +83,7 @@ _PY='
 import json
 import sys
 
-ECRIT = ("content", "new_string", "newString", "new_str", "file_text", "new_source", "patch", "patchText", "diff", "text")
+ECRIT = ("content", "new_string", "newString", "new_str", "file_text", "new_source", "patch", "patchText", "diff", "text", "code")
 CORRECTIF = ("patch", "patchText", "diff", "input")
 VISE = ("file_path", "notebook_path", "path", "filePath", "target_file", "targetFile")
 
@@ -149,37 +151,41 @@ args = [a for a in (charge.get("tool_input"), charge.get("toolArgs")) if isinsta
 brut = [charge[c] for c in ("toolArgs", "tool_input") if isinstance(charge.get(c), str)]
 
 
-def cueillir(cles, cles_edits):
+def cueillir(cles, cles_edits, cles_remplacements=()):
     trouve = []
     for a in args:
         for cle in cles:
             valeur = a.get(cle)
             if isinstance(valeur, str) and valeur:
                 trouve.append(valeur)
-        for edit in a.get("edits") or []:
-            if isinstance(edit, dict):
-                for cle in cles_edits:
-                    valeur = edit.get(cle)
-                    if isinstance(valeur, str) and valeur:
-                        trouve.append(valeur)
+        for liste, sous_cles in (("edits", cles_edits), ("replacements", cles_remplacements)):
+            elements = a.get(liste)
+            for element in elements if isinstance(elements, list) else []:
+                if isinstance(element, dict):
+                    for cle in sous_cles:
+                        valeur = element.get(cle)
+                        if isinstance(valeur, str) and valeur:
+                            trouve.append(valeur)
     return trouve
 
 
 if op == "corps":
-    print("\n".join(cueillir(ECRIT + ("input",), ("new_string", "newString")) + brut))
+    edits = ("new_string", "newString")
+    print("\n".join(cueillir(ECRIT + ("input",), edits, edits) + brut))
 elif op == "correctif":
     print("\n".join(cueillir(CORRECTIF, ()) + brut))
 elif op == "commande":
     print(next((a["command"] for a in args if isinstance(a.get("command"), str)), ""))
 elif op == "cibles":
-    vus = cueillir(VISE, ("file_path", "filePath"))
+    vus = cueillir(VISE, ("file_path", "filePath"), ("filePath", "file_path"))
     for a in args:
-        chemins = a.get("paths")
-        if isinstance(chemins, str):
-            chemins = [chemins]
-        for chemin in chemins or []:
-            if isinstance(chemin, str) and chemin:
-                vus.append(chemin)
+        for cle in ("paths", "files"):
+            chemins = a.get(cle)
+            if isinstance(chemins, str) and cle == "paths":
+                chemins = [chemins]
+            for chemin in chemins if isinstance(chemins, list) else []:
+                if isinstance(chemin, str) and chemin:
+                    vus.append(chemin)
     print("\n".join(vus))
 else:
     sys.exit(1)
@@ -309,6 +315,24 @@ EXCEPTIONS_LISTE
 
 outil() { # le nom de l'outil appelé, vide si l'outil ne le donne pas
   _charge outil
+}
+
+# Les outils qui écrivent un fichier, sous les trois outils et les vues de Copilot. Un nom
+# qui manquait laissait passer l'écriture : le panneau de discussion de VS Code écrit avec
+# `create_file` et `replace_string_in_file` (sa doc), que ni la garde d'écriture ni celle du
+# périmètre ne connaissaient (trouvé le 30/09/2026). Et un nom inconnu qui porte un correctif,
+# ou un fichier visé AVEC un contenu écrit, écrit quand même : le nom d'un outil change d'un
+# moteur à l'autre, la forme d'une écriture, non. Une lecture vise un fichier sans contenu.
+ecriture() { # l'appel écrit-il un fichier ? (code de retour)
+  case "$(outil)" in
+    "" | Write | Edit | MultiEdit | NotebookEdit | write | edit | patch | apply_patch | multiedit) return 0 ;;
+    createFile | editFiles | str_replace* | */editFiles | */createFile | create) return 0 ;;
+    create_file | replace_string_in_file | multi_replace_string_in_file | insert_edit_into_file) return 0 ;;
+    edit_notebook_file | create_new_jupyter_notebook) return 0 ;;
+  esac
+  [ -n "$(corps)" ] || return 1
+  [ -n "$(correctif)" ] && return 0
+  [ -n "$(_charge cibles)" ]
 }
 
 commande() { # la commande passée au terminal, vide si l'appel n'en porte pas

@@ -3,6 +3,36 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.3.0 — 30 septembre 2026
+
+Des garde-fous deux fois plus rapides sous Copilot et opencode, et un trou fermé dans le
+panneau de discussion de Copilot.
+
+- **Les gardes d'un appel tournent en même temps.** Sous Copilot, les sept gardes de chaque
+  appel d'outil tournaient l'une après l'autre, lectures comprises ; sous opencode, les
+  quatre d'une écriture. Mesuré sur un poste rapide : un appel sous Copilot passe de 0,48 à
+  0,69 s à 0,25 à 0,33 s ; une écriture sous opencode, de 0,45 à 0,22 s. Même verdict, mêmes
+  messages : un test compare les deux modes appel par appel. Claude Code lançait déjà ses
+  hooks ensemble : rien ne change pour lui.
+- **Une garde muette refuse.** Une garde qui n'a pas rendu son verdict en 20 s est arrêtée,
+  et l'appel est refusé. Avant, elle tenait l'appel jusqu'au délai de l'outil, qui laisse
+  passer.
+- **Revenir à la série** : `EPHOR_GARDES_EN_SERIE=1`, même verdict, pour un poste où lancer
+  plusieurs processus à la fois pose problème (un antivirus qui les inspecte un par un).
+  `.ephor/docs/11-trois-agents.md` dit où le poser pour chaque outil.
+- **Le panneau de discussion de Copilot n'écrit plus une zone de contrôle en direct.** Il
+  écrit avec `create_file`, `replace_string_in_file`, `multi_replace_string_in_file` et
+  `insert_edit_into_file` : aucun de ces noms n'était connu des gardes d'écriture et de
+  périmètre, qui laissaient passer. La sentinelle et le juge le rattrapaient après coup ; la
+  garde, non. Un outil au nom inconnu qui vise un fichier avec un contenu écrit est
+  maintenant jugé comme une écriture, et un secret écrit par ces outils est vu. Trouvé en
+  lisant la doc de VS Code : pas encore observé en session.
+
+Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
+Pour Copilot : `make copilot-install` sur chaque poste, puis une fenêtre VS Code neuve (le
+relais du greffon a changé ; `make doctor` le signale tant que ce n'est pas fait). Pour
+opencode : relancez-le.
+
 ## 1.2.0 — 30 septembre 2026
 
 Les défauts de l'audit du 29 septembre : des contrôles qu'on croyait tenir, et qui ne

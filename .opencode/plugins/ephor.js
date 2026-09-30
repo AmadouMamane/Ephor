@@ -152,6 +152,15 @@ export const ephor = async ({ worktree, directory, client }) => {
         return
       }
       if (!ECRITURE.has(input.tool)) return
+      // Les quatre gardes d'une écriture, lancées en même temps par le moteur, avec le verdict
+      // qu'elles rendraient l'une après l'autre : deux fois moins d'attente à chaque écriture
+      // (voir .ephor/hooks/ensemble.sh ; EPHOR_GARDES_EN_SERIE=1 remet la série).
+      const gardes = ["block-secrets.sh", "write-guard.sh", "refs-guard.sh", "scope-guard.sh"]
+      if (existsSync(join(racine, ".ephor", "hooks", "ensemble.sh"))) {
+        const verdict = garde(racine, "ensemble.sh", entree, gardes, 30000)
+        if (verdict.refuse) throw new Error(verdict.message || "REFUSÉ par un garde-fou d'Ephor.")
+        return
+      }
       const refus = {
         "block-secrets.sh": "REFUSÉ : contenu bloqué par le contrôle anti-secret.",
         // Les zones du moteur : opencode applique les refus de sa configuration, dérivés des

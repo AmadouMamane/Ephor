@@ -173,8 +173,19 @@ fi
 
 [ "$#" -gt 0 ] || exit 0
 DEMANDEES=("$@")
-juger() { # juger <charge> : la passe à chaque garde, dans l'ordre ; sort au premier refus
+juger() { # juger <charge> [ensemble] : la passe aux gardes, dans l'ordre ; sort au premier refus
   local GARDE SCRIPT SORTIE CODE
+  # Un appel d'outil, dans un dépôt qui sait le faire (Ephor 1.3 et après) : les gardes
+  # tournent en même temps, avec le verdict qu'elles rendraient l'une après l'autre (voir
+  # .ephor/hooks/ensemble.sh). Deux fois moins d'attente à chaque appel d'outil.
+  # EPHOR_GARDES_EN_SERIE=1, dans l'environnement de l'éditeur, remet la série.
+  if [ "${2:-}" = "ensemble" ] && [ -f "$GARDES/ensemble.sh" ]; then
+    SORTIE="$(printf '%s' "$1" | CLAUDE_PROJECT_DIR="$DEPOT" bash "$GARDES/ensemble.sh" "${DEMANDEES[@]}")"
+    CODE=$?
+    [ "$CODE" = "0" ] || exit "$CODE"
+    [ -n "$SORTIE" ] && printf '%s\n' "$SORTIE"
+    return 0
+  fi
   for GARDE in "${DEMANDEES[@]}"; do
     SCRIPT="$GARDES/$GARDE"
     [ -f "$SCRIPT" ] || continue
@@ -250,7 +261,7 @@ if ! APPELS="$(eclater)"; then
 fi
 while IFS= read -r APPEL; do
   [ -n "$APPEL" ] || continue
-  juger "$APPEL"
+  juger "$APPEL" ensemble
 done <<LOT
 $APPELS
 LOT

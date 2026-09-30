@@ -24,16 +24,8 @@ ROOT="$(racine)"
 REGLAGES="$ROOT/.claude/settings.json"
 
 # Copilot lance chaque hook pour chaque outil, sans filtre : on ne se prononce que sur
-# une écriture. Un nom inconnu (ou absent, cas de Claude Code qui filtre déjà) passe.
-OUTIL="$(outil)"
-case "$OUTIL" in
-  ""|Write|Edit|MultiEdit|NotebookEdit|write|edit|patch|apply_patch|multiedit) ;;
-  createFile|editFiles|str_replace*|*/editFiles|*/createFile) ;;
-  create) ;;  # la fenêtre d'agents de VS Code : créer un fichier
-  # Un nom inconnu qui porte un CORRECTIF écrit quand même : le nom d'un outil change d'un
-  # moteur à l'autre (la fenêtre d'agents traduit les siens), un correctif, non.
-  *) [ -n "$(correctif)" ] || exit 0 ;;
-esac
+# une écriture, telle que `ecriture` la reconnaît (voir _lib.sh).
+ecriture || exit 0
 
 CIBLES="$(cibles)"
 [ -z "$CIBLES" ] && exit 0

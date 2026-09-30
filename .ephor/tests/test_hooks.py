@@ -692,6 +692,83 @@ def test_le_panneau_de_copilot_ne_lit_pas_un_secret(tmp_path: Path) -> None:
     assert hook("read-guard.sh", normal, project=projet).returncode == 0
 
 
+ECRITURES_DU_PANNEAU = {
+    "create_file": {"filePath": "{vise}", "content": "x = 1"},
+    "replace_string_in_file": {"filePath": "{vise}", "oldString": "a", "newString": "b"},
+    "insert_edit_into_file": {"filePath": "{vise}", "code": "x = 1", "explanation": "e"},
+    "multi_replace_string_in_file": {
+        "explanation": "e",
+        "replacements": [
+            {"filePath": "{permis}", "oldString": "a", "newString": "b"},
+            {"filePath": "{vise}", "oldString": "a", "newString": "b"},
+        ],
+    },
+    "editFiles": {"files": ["{permis}", "{vise}"]},
+    "outil_futur": {"filePath": "{vise}", "content": "x = 1"},
+}
+
+
+def remplis(modele: Any, vise: Path, permis: Path) -> Any:
+    return json.loads(
+        json.dumps(modele).replace("{vise}", str(vise)).replace("{permis}", str(permis))
+    )
+
+
+@pytest.mark.parametrize("sans", [False, True], ids=["jq", "python3"])
+@pytest.mark.parametrize("outil", list(ECRITURES_DU_PANNEAU))
+def test_le_panneau_de_copilot_n_ecrit_pas_une_zone(tmp_path: Path, outil: str, sans: bool) -> None:
+    """Le panneau de discussion de VS Code écrit avec `create_file`, `replace_string_in_file`,
+    `insert_edit_into_file`, `multi_replace_string_in_file` : aucun de ces noms n'était connu
+    de la garde d'écriture, qui laissait passer (trouvé le 30/09/2026). Un outil au nom
+    inconnu qui vise un fichier avec un contenu écrit compte aussi."""
+    projet = projet_avec_reglages(tmp_path)
+    chemin = sans_jq(tmp_path) if sans else None
+    zone, permis = projet / ".ephor" / "judge.py", projet / "src" / "app.py"
+    modele = ECRITURES_DU_PANNEAU[outil]
+    refus = hook(
+        "write-guard.sh",
+        charge_copilot(outil, remplis(modele, zone, permis), projet),
+        project=projet,
+        path=chemin,
+    )
+    assert refus.returncode == 2 and "zone de contrôle" in refus.stderr, refus.stderr
+    ordinaire = charge_copilot(outil, remplis(modele, permis, permis), projet)
+    assert hook("write-guard.sh", ordinaire, project=projet, path=chemin).returncode == 0
+    lecture = charge_copilot("read_file", {"filePath": str(zone)}, projet)
+    assert hook("write-guard.sh", lecture, project=projet, path=chemin).returncode == 0
+
+
+@pytest.mark.parametrize("sans", [False, True], ids=["jq", "python3"])
+def test_le_panneau_de_copilot_n_ecrit_pas_un_secret(tmp_path: Path, sans: bool) -> None:
+    projet = projet_avec_reglages(tmp_path)
+    chemin = sans_jq(tmp_path) if sans else None
+    secret = 'key = "AKIAIOSFODNN7EXAMPLE"'
+    fichier = str(projet / "src" / "app.py")
+    for outil, args in (
+        ("insert_edit_into_file", {"filePath": fichier, "code": secret}),
+        (
+            "multi_replace_string_in_file",
+            {"replacements": [{"filePath": fichier, "oldString": "a", "newString": secret}]},
+        ),
+    ):
+        refus = hook(
+            "block-secrets.sh", charge_copilot(outil, args, projet), project=projet, path=chemin
+        )
+        assert refus.returncode == 2, outil
+
+
+def test_le_panneau_de_copilot_reste_dans_le_perimetre(tmp_path: Path) -> None:
+    repo = depot_de_tache(tmp_path, ["src/"])
+    hors = charge_copilot(
+        "create_file", {"filePath": str(repo / "docs" / "x.md"), "content": "x"}, repo
+    )
+    assert hook("scope-guard.sh", hors, project=repo).returncode == 2
+    dedans = charge_copilot(
+        "create_file", {"filePath": str(repo / "src" / "b.py"), "content": "x"}, repo
+    )
+    assert hook("scope-guard.sh", dedans, project=repo).returncode == 0
+
+
 def test_un_refus_dit_de_ne_pas_contourner(tmp_path: Path) -> None:
     """Le 24/09/2026, un agent refusé est passé par le terminal, « qui restait utilisable ».
     La garde du terminal n'est pas une frontière : la consigne arrive avec chaque refus."""
@@ -1512,3 +1589,124 @@ def test_un_correctif_applique_par_le_terminal_est_lu(tmp_path: Path) -> None:
     ordinaire = tmp_path / "y.diff"
     ordinaire.write_text("--- a/src/a.py\n+++ b/src/a.py\n@@ -1 +1 @@\n-a\n+b\n")
     assert au_terminal(f"git apply {ordinaire}", "claude").returncode == 0
+
+
+# --------------------------------------------------------------------------- ensemble
+#
+# Sous Copilot, les sept gardes d'un appel tournaient l'une après l'autre ; sous opencode, les
+# quatre d'une écriture : 0,4 à 0,6 s par appel d'outil (audit du 29/09/2026). `ensemble.sh`
+# les lance en même temps, et doit rendre le verdict, et les mots, de la série.
+
+GARDES_D_UN_APPEL = (
+    "kill-switch.sh",
+    "block-secrets.sh",
+    "write-guard.sh",
+    "scope-guard.sh",
+    "refs-guard.sh",
+    "shell-guard.sh",
+    "read-guard.sh",
+)
+
+
+def ensemble(
+    charge: dict[str, Any], projet: Path, *gardes: str, dossier: Path = HOOKS, **reglages: str
+) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("EPHOR_GARDES_")}
+    env.update(reglages, CLAUDE_PROJECT_DIR=str(projet))
+    return subprocess.run(
+        ["bash", str(dossier / "ensemble.sh"), *(gardes or GARDES_D_UN_APPEL)],
+        input=json.dumps(charge),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+        check=False,
+    )
+
+
+def test_ensemble_rend_le_verdict_de_la_serie(tmp_path: Path) -> None:
+    projet = depot_de_tache(tmp_path, ["src/"])
+    (projet / ".claude").mkdir()
+    shutil.copy(ROOT / ".claude" / "settings.json", projet / ".claude" / "settings.json")
+    secret = 'key = "AKIAIOSFODNN7EXAMPLE"'
+    a_py = str(projet / "src" / "a.py")
+    cas = {
+        "lecture": charge_copilot("read_file", {"filePath": a_py}, projet),
+        "secret lu": charge_copilot("read_file", {"filePath": str(projet / ".env")}, projet),
+        "écriture": charge_copilot("apply_patch", correctif_copilot(projet, "src/a.py"), projet),
+        "zone": charge_copilot("apply_patch", correctif_copilot(projet, ".ephor/x.py"), projet),
+        "hors périmètre": charge_copilot(
+            "create_file", {"filePath": str(projet / "d.md"), "content": "x"}, projet
+        ),
+        "secret écrit": {
+            "tool_name": "Write",
+            "tool_input": {"file_path": "src/a.py", "content": secret},
+        },
+        "secret en zone": {
+            "tool_name": "Write",
+            "tool_input": {"file_path": ".ephor/x.py", "content": secret},
+        },
+        "terminal": {"tool_name": "Bash", "tool_input": {"command": "ls src"}},
+        "terminal en zone": {
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo x > .ephor/judge.py"},
+        },
+    }
+    refus = set()
+    for nom, charge in cas.items():
+        serie = ensemble(charge, projet, EPHOR_GARDES_EN_SERIE="1")
+        ensemble_ = ensemble(charge, projet)
+        attendu = (serie.returncode, serie.stdout, serie.stderr)
+        assert (ensemble_.returncode, ensemble_.stdout, ensemble_.stderr) == attendu, nom
+        if ensemble_.returncode == 2:
+            refus.add(nom)
+    assert refus == set(cas) - {"lecture", "écriture", "terminal"}
+    (projet / "AGENT_STOP").write_text("")
+    arret = ensemble(cas["lecture"], projet)
+    assert arret.returncode == 2 and "AGENT_STOP" in arret.stderr
+
+
+def gardes_factices(tmp_path: Path, scripts: dict[str, str]) -> Path:
+    dossier = tmp_path / "gardes"
+    dossier.mkdir()
+    shutil.copy(HOOKS / "ensemble.sh", dossier / "ensemble.sh")
+    for nom, corps in scripts.items():
+        (dossier / nom).write_text("#!/usr/bin/env bash\ncat >/dev/null\n" + corps)
+    return dossier
+
+
+def rendez_vous(ici: Path, moi: str, autre: str) -> str:
+    """Une garde qui attend l'autre : elles ne se voient que si elles tournent ensemble."""
+    return (
+        f'touch "{ici}/{moi}"\n'
+        f'for i in $(seq 1 30); do [ -e "{ici}/{autre}" ] && exit 0; sleep 0.1; done\n'
+        f'echo "seule : {moi}" >&2\nexit 2\n'
+    )
+
+
+def test_ensemble_lance_les_gardes_en_meme_temps(tmp_path: Path) -> None:
+    rdv = tmp_path / "rdv"
+    rdv.mkdir()
+    dossier = gardes_factices(
+        tmp_path, {"a.sh": rendez_vous(rdv, "a", "b"), "b.sh": rendez_vous(rdv, "b", "a")}
+    )
+    resultat = ensemble({}, tmp_path, "a.sh", "b.sh", dossier=dossier)
+    assert resultat.returncode == 0, resultat.stderr
+    for marque in rdv.iterdir():
+        marque.unlink()
+    # L'interrupteur remet la série : la première garde attend en vain la seconde.
+    serie = ensemble({}, tmp_path, "a.sh", "b.sh", dossier=dossier, EPHOR_GARDES_EN_SERIE="1")
+    assert serie.returncode == 2 and "seule : a" in serie.stderr
+
+
+def test_une_garde_sans_verdict_est_un_refus(tmp_path: Path) -> None:
+    """Une garde bloquée tenait l'appel jusqu'au délai de l'outil, qui laisse passer
+    (Copilot, Claude Code). Elle est arrêtée, et compte pour un refus."""
+    dossier = gardes_factices(tmp_path, {"vite.sh": "exit 0\n", "lente.sh": "sleep 30\nexit 0\n"})
+    debut = time.monotonic()
+    resultat = ensemble(
+        {}, tmp_path, "vite.sh", "lente.sh", dossier=dossier, EPHOR_GARDES_DELAI="1"
+    )
+    assert resultat.returncode == 2
+    assert "lente.sh n'a pas rendu son verdict" in resultat.stderr
+    assert time.monotonic() - debut < 10

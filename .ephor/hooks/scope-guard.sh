@@ -14,17 +14,9 @@ moteur_ok || exit 0
 ROOT="$(racine)"
 
 # Copilot lance chaque hook pour chaque outil, sans filtre : on ne se prononce que sur
-# une écriture. Un nom d'outil inconnu (ou absent, cas de Claude Code qui filtre déjà)
-# laisse passer : ce hook fait gagner du temps, il ne garantit rien.
-OUTIL="$(outil)"
-case "$OUTIL" in
-  ""|Write|Edit|MultiEdit|NotebookEdit|write|edit|patch|apply_patch|multiedit) ;;
-  createFile|editFiles|str_replace*|*/editFiles|*/createFile) ;;
-  create) ;;  # la fenêtre d'agents de VS Code : créer un fichier
-  # Un nom inconnu qui porte un CORRECTIF écrit quand même : le nom d'un outil change d'un
-  # moteur à l'autre (la fenêtre d'agents traduit les siens), un correctif, non.
-  *) [ -n "$(correctif)" ] || exit 0 ;;
-esac
+# une écriture, telle que `ecriture` la reconnaît (voir _lib.sh). Ce hook fait gagner du
+# temps, il ne garantit rien : le juge tranche.
+ecriture || exit 0
 
 BRANCHE="$(git -C "$ROOT" branch --show-current 2>/dev/null || true)"
 case "$BRANCHE" in task/*) ;; *) exit 0 ;; esac

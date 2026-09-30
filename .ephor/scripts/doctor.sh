@@ -345,6 +345,9 @@ else
     warn "opencode : aucun modèle réglé sur ce poste pour $SANS_MODELE — ils tournent sur le modèle de la session" \
          "dans $CONF_OC/opencode.json : \"agent\": {\"scout\": {\"model\": \"<rapide>\"}, \"planner\": {\"model\": \"<fort>\"}, …} (.ephor/docs/07-token-budget.md, 2.6)"
   fi
+  if [ "${EPHOR_GARDES_EN_SERIE:-0}" = "1" ]; then
+    printf '  [ -- ] gardes lancées l'"'"'une après l'"'"'autre (EPHOR_GARDES_EN_SERIE=1) : même verdict, deux fois plus lent\n'
+  fi
   if [ -n "${OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX:-}" ]; then
     warn "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=$OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX sur ce poste : le greffon garde ce plafond de réponse" \
          "au plus haut effort, la réflexion du planner peut le remplir et la réponse sortir vide ; si ce n'est pas voulu : unset OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX (.ephor/docs/11)"

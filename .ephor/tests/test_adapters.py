@@ -858,3 +858,94 @@ def test_une_skill_n_ouvre_pas_plus_que_les_reglages() -> None:
             vues += 1
             assert commande in permis, f"{skill.parent.name} ouvre {commande}"
     assert vues, "les skills nomment leurs commandes"
+
+
+def rendez_vous(ici: Path, moi: str, autre: str) -> str:
+    """Une garde qui attend l'autre : elles ne se voient que si elles tournent ensemble."""
+    return (
+        "#!/usr/bin/env bash\ncat >/dev/null\n"
+        f'touch "{ici}/{moi}"\n'
+        f'for i in $(seq 1 30); do [ -e "{ici}/{autre}" ] && exit 0; sleep 0.1; done\n'
+        f'echo "seule : {moi}" >&2\nexit 2\n'
+    )
+
+
+def depot_aux_gardes_factices(tmp_path: Path, factices: dict[str, str]) -> Path:
+    depot = tmp_path / "depot"
+    gardes = depot / ".ephor" / "hooks"
+    gardes.mkdir(parents=True)
+    (gardes / "_lib.sh").write_text("", encoding="utf-8")
+    shutil.copy(ROOT / ".ephor" / "hooks" / "ensemble.sh", gardes / "ensemble.sh")
+    for nom, corps in factices.items():
+        (gardes / nom).write_text(corps, encoding="utf-8")
+        (gardes / nom).chmod(0o755)
+    return depot
+
+
+def test_le_relais_copilot_lance_les_gardes_ensemble(tmp_path: Path) -> None:
+    """Sept gardes l'une après l'autre à chaque appel d'outil, lectures comprises : 0,55 à
+    0,6 s par appel sous Copilot (audit du 29/09/2026). Elles tournent maintenant ensemble."""
+    rdv = tmp_path / "rdv"
+    rdv.mkdir()
+    depot = depot_aux_gardes_factices(
+        tmp_path,
+        {"write-guard.sh": rendez_vous(rdv, "w", "r"), "read-guard.sh": rendez_vous(rdv, "r", "w")},
+    )
+    relais = relais_pose(tmp_path, [str(depot)])
+    charge = {
+        "toolName": "read_file",
+        "toolArgs": {"filePath": str(depot / "a.py")},
+        "workingDirectory": str(depot),
+    }
+    resultat = subprocess.run(
+        ["bash", str(relais), "write-guard.sh", "read-guard.sh"],
+        input=json.dumps(charge),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert resultat.returncode == 0, resultat.stderr
+
+
+PILOTE_ENSEMBLE = """
+const module = await import("__GREFFON__")
+const hooks = await module.ephor({ worktree: "__RACINE__" })
+try {
+  await hooks["tool.execute.before"]({ tool: "write" },
+    { args: { filePath: "src/a.py", content: "x = 1" } })
+  console.log("ok")
+} catch (erreur) {
+  console.log(String(erreur.message))
+}
+"""
+
+
+@pytest.mark.skipif(MOTEUR is None, reason="greffon opencode : bun ou node est nécessaire")
+def test_le_greffon_opencode_lance_les_gardes_ensemble(tmp_path: Path) -> None:
+    """Sous opencode, les quatre gardes d'une écriture tournaient l'une après l'autre : 0,5 s
+    par écriture (audit du 29/09/2026). Elles tournent maintenant ensemble."""
+    rdv = tmp_path / "rdv"
+    rdv.mkdir()
+    passe = "#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n"
+    depot = depot_aux_gardes_factices(
+        tmp_path,
+        {
+            "block-secrets.sh": rendez_vous(rdv, "b", "w"),
+            "write-guard.sh": rendez_vous(rdv, "w", "b"),
+            "refs-guard.sh": passe,
+            "scope-guard.sh": passe,
+        },
+    )
+    pilote = tmp_path / "pilote.mjs"
+    pilote.write_text(
+        PILOTE_ENSEMBLE.replace("__RACINE__", str(depot)).replace(
+            "__GREFFON__", str(ROOT / ".opencode" / "plugins" / "ephor.js")
+        ),
+        encoding="utf-8",
+    )
+    assert MOTEUR is not None
+    sortie = subprocess.run(
+        [MOTEUR, str(pilote)], capture_output=True, text=True, timeout=120, check=True
+    )
+    assert sortie.stdout.strip() == "ok", sortie.stdout

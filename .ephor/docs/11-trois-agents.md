@@ -184,6 +184,12 @@ traînent dans ce dossier ne tournent plus.
 - **Les outils propres à la vue « agents »** sont connus : `create` (`path`, `file_text`),
   `edit` (`path`, `old_str`, `new_str`), `str_replace_editor`, `view`, `rg` et `glob`
   (`paths`, liste ou simple chaîne), `grep`, `bash`, `apply_patch`.
+- **Ceux du panneau de discussion aussi** : il lit avec `read_file`, et écrit avec
+  `create_file`, `replace_string_in_file`, `multi_replace_string_in_file` (une liste
+  `replacements`), `insert_edit_into_file` (le code dans `code`). Ces noms d'écriture
+  n'étaient pas connus avant la 1.3 : une zone de contrôle s'y écrivait sans refus en direct
+  (trouvé le 30/09/2026, d'après la doc de VS Code, pas encore vu en session). Et un outil au
+  nom inconnu qui vise un fichier **avec** un contenu écrit est jugé comme une écriture.
 - **Le terminal** : `shell-guard.sh` lit la commande, nomme ce qu'elle écrit et refuse si
   c'est une zone de contrôle, formes simples comprises (`cd` puis écriture, script en
   document en ligne, `find -delete`, `git apply`). **Ce n'est pas une frontière** : un
@@ -193,6 +199,16 @@ traînent dans ce dossier ne tournent plus.
 - **Une forme d'appel inconnue est refusée** par le relais du greffon. Un lot d'appels
   (`toolCalls` ou `tool_calls`) est éclaté, et chaque appel passe toutes les gardes. Quand
   l'éditeur changera de protocole, le filet se verra tomber au lieu de disparaître.
+- **Les sept gardes d'un appel tournent en même temps** (`.ephor/hooks/ensemble.sh`), avec
+  le verdict et les messages qu'elles rendraient l'une après l'autre. Mesuré le 30/09/2026,
+  poste rapide : un appel passe de 0,48 à 0,69 s à 0,25 à 0,33 s ; sous opencode, une
+  écriture de 0,45 à 0,22 s. Une garde qui n'a pas rendu son verdict en 20 s
+  (`EPHOR_GARDES_DELAI`) est arrêtée, et compte pour un refus. `EPHOR_GARDES_EN_SERIE=1`
+  remet la série, même verdict, pour un poste où lancer plusieurs processus à la fois pose
+  problème : dans l'environnement de VS Code pour Copilot (`launchctl setenv
+  EPHOR_GARDES_EN_SERIE 1`, puis relancer VS Code), dans le terminal qui lance opencode.
+  Claude Code lance déjà ses hooks ensemble : rien ne change pour lui. Les hooks du dépôt
+  (vue « agents ») restent une entrée par garde.
 
 ### Limites connues
 
@@ -203,9 +219,11 @@ traînent dans ce dossier ne tournent plus.
   **installer le greffon avant d'ouvrir Copilot sur un dépôt, puis une fenêtre neuve.**
 - **Un hook qui dépasse son délai laisse passer l'appel**, sous Copilot comme sous Claude
   Code (« A timed-out command hook doesn't block the tool call », doc des hooks de Claude
-  Code). C'est le comportement des moteurs, pas un choix d'Ephor ; sous opencode, le
-  greffon refuse au contraire. Mesuré : une commande de 2 Mo est jugée en 0,5 s, loin des
-  délais (10 à 30 s) ; le risque est faible, et le juge reste la barrière.
+  Code). C'est le comportement des moteurs, pas un choix d'Ephor. Le greffon de Copilot et
+  celui d'opencode arrêtent une garde muette au bout de 20 s et refusent, bien avant ce
+  délai ; restent les hooks du dépôt (vue « agents ») et Claude Code. Mesuré : une commande
+  de 2 Mo est jugée en 0,5 s, loin des délais (10 à 30 s) ; le risque est faible, et le juge
+  reste la barrière.
 - **Copilot refuse souvent de lui-même**, avant d'appeler le moindre outil. C'est
   appréciable et ce n'est pas une garantie ; surtout, ça brouille les essais : pour éprouver
   un garde-fou, il faut une demande que l'agent n'a aucune raison de refuser seul.
