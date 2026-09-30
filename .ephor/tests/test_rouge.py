@@ -926,9 +926,11 @@ def test_l_approbation_ouvre_le_dossier_de_la_tache(repo: Path, tmp_path: Path) 
     """Plusieurs tâches dans un même dossier se marchaient dessus (session réelle, #32). Une
     tâche approuvée s'ouvre maintenant dans son dossier, avec la ligne qui y lance l'agent ;
     et se ferme, dossier et branche, une fois fusionnée."""
-    for nom in ("judge.py", "zones.txt", "operateur.py", "scripts/worktree.sh", "scripts/clore.sh"):
-        (repo / ".ephor" / nom).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(ROOT / ".ephor" / nom, repo / ".ephor" / nom)
+    moteur = ROOT / ".ephor"
+    for source in (moteur / "judge.py", moteur / "zones.txt", moteur / "operateur.py"):
+        (repo / ".ephor").mkdir(exist_ok=True)
+        shutil.copy(source, repo / ".ephor" / source.name)
+    shutil.copytree(moteur / "scripts", repo / ".ephor" / "scripts")
     plan = plan_a_approuver(repo, tmp_path)
     code, sortie = dans_un_terminal(approuve(plan, repo), "oui", repo)
     assert code == 0, sortie
@@ -959,9 +961,11 @@ def test_l_approbation_ouvre_le_dossier_de_la_tache(repo: Path, tmp_path: Path) 
 
 
 def test_l_approbation_sans_dossier_le_dit(repo: Path, tmp_path: Path) -> None:
-    for nom in ("judge.py", "operateur.py", "scripts/worktree.sh"):
-        (repo / ".ephor" / nom).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(ROOT / ".ephor" / nom, repo / ".ephor" / nom)
+    moteur = ROOT / ".ephor"
+    for source in (moteur / "judge.py", moteur / "zones.txt", moteur / "operateur.py"):
+        (repo / ".ephor").mkdir(exist_ok=True)
+        shutil.copy(source, repo / ".ephor" / source.name)
+    shutil.copytree(moteur / "scripts", repo / ".ephor" / "scripts")
     plan = plan_a_approuver(repo, tmp_path)
     code, sortie = dans_un_terminal(approuve(plan, repo, "--sans-dossier"), "oui", repo)
     assert code == 0, sortie
