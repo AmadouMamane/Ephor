@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -449,6 +450,79 @@ def test_steer_injects_only_real_content(tmp_path: Path) -> None:
     (tmp_path / "STEER.md").write_text(template + "\nNe touche plus à service.py\n")
     result = hook("steer.sh", {}, project=tmp_path)
     assert "CONSIGNE" in result.stdout and "service.py" in result.stdout
+
+
+AGENT = r"""
+import json, subprocess, sys
+for ligne in sys.stdin:
+    mot, _, session = ligne.strip().partition(" ")
+    if mot != "tour":
+        break
+    fait = subprocess.run(
+        [sys.argv[1]], input=json.dumps({"session_id": session}), capture_output=True, text=True
+    )
+    print(json.dumps(fait.stdout), flush=True)
+"""
+
+
+class Agent:
+    """Un processus d'agent, vivant tant qu'on ne le quitte pas, qui lance le hook de début de
+    tour à chaque tour qu'on lui demande."""
+
+    def __init__(self, repo: Path) -> None:
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo)}
+        self.processus = subprocess.Popen(
+            [sys.executable, "-c", AGENT, str(HOOKS / "steer.sh")],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            env=env,
+        )
+
+    def tour(self, session: str) -> str:
+        assert self.processus.stdin is not None and self.processus.stdout is not None
+        self.processus.stdin.write(f"tour {session}\n")
+        self.processus.stdin.flush()
+        sortie: str = json.loads(self.processus.stdout.readline())
+        return sortie
+
+    def quitter(self) -> None:
+        assert self.processus.stdin is not None
+        self.processus.stdin.close()
+        self.processus.wait(timeout=30)
+
+
+def test_deux_sessions_dans_un_meme_dossier_sont_prevenues_une_fois(tmp_path: Path) -> None:
+    """Vécu en session réelle (30/09/2026) : plusieurs tâches lancées dans le même dossier se
+    marchaient dessus. Au début de chaque tour, Ephor prévient quand une autre session d'agent
+    y tourne encore : une fois, et jamais pour un /clear (nouvelle session, même processus)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "base")
+    alerte = "une autre session d'agent travaille dans ce dossier"
+    premier, second = Agent(repo), Agent(repo)
+    try:
+        assert alerte not in premier.tour("s-a"), "seule dans le dossier"
+        assert alerte not in premier.tour("s-a2"), "un /clear : même processus, rien à dire"
+        vu = second.tour("s-b")
+        assert alerte in vu and "make task-worktree" in vu and "branche main" in vu
+        assert alerte not in second.tour("s-b"), "une seule fois"
+        assert alerte in premier.tour("s-a2"), "l'autre l'apprend aussi, à son tour suivant"
+        premier.quitter()
+        assert alerte not in second.tour("s-b")
+        troisieme = Agent(repo)
+        try:
+            assert alerte in troisieme.tour("s-c"), "le second tourne encore"
+        finally:
+            troisieme.quitter()
+    finally:
+        for agent in (premier, second):
+            if agent.processus.poll() is None:
+                agent.quitter()
+    sessions = git(repo, "rev-parse", "--absolute-git-dir").strip() + "/ephor-sessions"
+    restantes = sorted(p.name for p in Path(sessions).iterdir() if p.name.isdigit())
+    assert str(second.processus.pid) in restantes and str(premier.processus.pid) not in restantes
 
 
 def test_checkpoint_saves_everything_without_touching_the_branch(tmp_path: Path) -> None:

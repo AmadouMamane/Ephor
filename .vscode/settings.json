@@ -48,6 +48,8 @@
     "/^make adapters\\b/": false,
     "/^make fetch-docs\\b/": false,
     "/^make checkpoints-purge\\b/": false,
+    "/^make task-worktree\\b/": false,
+    "/^bash \\.ephor\\/scripts\\/worktree\\.sh\\b/": false,
     "/^python3 \\.ephor\\/fetch_docs\\.py\\b/": false,
     "/^python3 \\.ephor\\/judge\\.py new\\b/": false,
     "/^python3 \\.ephor\\/judge\\.py rouge\\b/": false

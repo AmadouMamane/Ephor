@@ -77,6 +77,8 @@
       "Bash(make adapters *)",
       "Bash(make fetch-docs *)",
       "Bash(make checkpoints-purge *)",
+      "Bash(make task-worktree *)",
+      "Bash(bash .ephor/scripts/worktree.sh *)",
       "Bash(python3 .ephor/fetch_docs.py *)",
       "Bash(python3 .ephor/judge.py new *)",
       "Bash(python3 .ephor/judge.py rouge *)",

@@ -35,6 +35,10 @@ if [ "${1:-}" != consigne ]; then
     printf '%s\n' "$ALERTE" >&2
     exit 2
   fi
+  # Une autre session d'agent dans ce même dossier ? Un avertissement, une fois (sessions.sh).
+  printf '%s' "$INPUT" | bash "$(dirname "$0")/sessions.sh" 2>/dev/null
+  # `steer.sh photo` (greffon d'opencode) s'arrête là : il lit la consigne par `consigne`.
+  [ "${1:-}" = photo ] && exit 0
 fi
 ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 F="$ROOT/STEER.md"

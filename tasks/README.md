@@ -35,7 +35,10 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
    `make task-check` sans `ID` liste les tâches dont la trace est à refaire, lues sur la
    branche principale comme le juge les lira (un reformatage du dépôt en périme plusieurs).
 4. **Travailler.** L'agent travaille sur la branche `task/FEAT-001`, dans le périmètre
-   `allowed_paths`. Il ne peut modifier ni ce dossier, ni les zones de contrôle.
+   `allowed_paths`. Il ne peut modifier ni ce dossier, ni les zones de contrôle. Plusieurs
+   tâches en même temps : une par dossier, `make task-worktree ID=FEAT-001`, et une session
+   d'agent dans chacun. Deux sessions dans un même dossier partagent la branche et les
+   fichiers, et se marchent dessus : Ephor le signale au début du tour.
 5. **Juger.** `make judge TASK=FEAT-001` en local, puis le job `juge` de la CI sur la merge request.
 
 ## Écrire un bon contrat

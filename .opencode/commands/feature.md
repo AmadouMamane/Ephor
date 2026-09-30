@@ -26,7 +26,10 @@ tests : `make task-new ID=<ID> FROM=.verify/plans/<ID>.md`. Puis **arrête-toi**
 lui qui les crée, les relit, les voit échouer (`make task-check`) et les commite sur
 `main`. Tu ne peux ni écrire dans `tasks/`, ni commencer sans ce commit.
 
-**2. La branche de travail.** `git switch -c task/<ID>` depuis la branche principale.
+**2. La branche de travail.** `git switch -c task/<ID>` depuis la branche principale. Dans un
+dossier ouvert par `make task-worktree`, tu y es déjà. Si Ephor signale une autre session dans
+ce dossier, ne change pas de branche : demande à l'opérateur `make task-worktree ID=<ID>`, et
+une session dans le dossier qu'il ouvre.
 
 **3. Cadrer sans tout lire.** Code inconnu : délègue au sous-agent `scout`. Sa sortie
 volumineuse reste dans son contexte, seule la synthèse remonte.

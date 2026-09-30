@@ -130,6 +130,9 @@ task-check: ## Contrat prêt à approuver ? Sa forme, puis chaque critère doit 
 	@if [ -z "$(ID)" ]; then $(EPHOR_PY) .ephor/judge.py perimes; \
 	else $(EPHOR_PY) .ephor/judge.py rouge --task-id "$(ID)" --runtime "$(RUNTIME)" $(if $(IMAGE),--image "$(IMAGE)"); fi
 
+task-worktree: ## Ouvre une tâche approuvée dans son propre dossier, pour travailler en parallèle (OPÉRATEUR) : make task-worktree ID=FEAT-001 [DIR=../dossier]
+	@bash .ephor/scripts/worktree.sh "$(ID)" "$(DIR)"
+
 delivery-manifest: ## Génère le manifeste de livraison scellé : make delivery-manifest [TASK=<ID>] [DIGEST=<sha256:...>] [REPORT=<rapport du juge>]
 	@$(EPHOR_PY) .ephor/deploy/manifest.py generate $(if $(TASK),--task-id "$(TASK)",) $(if $(DIGEST),--artifact-digest "$(DIGEST)",) $(if $(REPORT),--report "$(REPORT)",)
 
@@ -170,4 +173,4 @@ clean: ## Efface les sorties, SAUF la mesure de tokens et le journal des jugemen
 $(V):
 	@mkdir -p $(V)
 
-.PHONY: help doctor setup ci-image gitlab-check review delivery-manifest delivery-check fmt lint types arch test test-fast sec mutants verify judge task-new task-check adapters copilot-install usage ephor-test checkpoints checkpoints-purge map refs stop resume score fetch-docs clean
+.PHONY: help doctor setup ci-image gitlab-check review delivery-manifest delivery-check fmt lint types arch test test-fast sec mutants verify judge task-new task-check task-worktree adapters copilot-install usage ephor-test checkpoints checkpoints-purge map refs stop resume score fetch-docs clean

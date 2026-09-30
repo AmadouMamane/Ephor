@@ -99,6 +99,7 @@ CIBLES_OPERATEUR = {
     "fetch-docs",
     "copilot-install",
     "checkpoints-purge",
+    "task-worktree",
 }
 SCRIPTS_OPERATEUR = {
     "judge.py": {"new", "rouge"},
@@ -106,6 +107,7 @@ SCRIPTS_OPERATEUR = {
     "fetch_docs.py": None,  # toute invocation
     "install_copilot_plugin.sh": None,
     "bootstrap_existing_repo.sh": None,
+    "worktree.sh": None,
 }
 # Ce qui lit un fichier et en montre le contenu : un secret lu entre dans le prompt.
 SECRET = "::lecture d'un secret::"

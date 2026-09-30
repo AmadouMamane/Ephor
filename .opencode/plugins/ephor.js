@@ -186,10 +186,11 @@ export const ephor = async ({ worktree, directory, client }) => {
     // Début du tour : la sentinelle photographie les zones de contrôle. opencode n'avait pas
     // de sentinelle : un script qui écrivait dans tasks/ n'était vu par personne, et l'agent
     // pouvait commiter le contrat qu'il s'était écrit (constaté le 29/09/2026).
+    // Il dit aussi quand une autre session d'agent travaille dans ce dossier (sessions.sh).
     "chat.message": async (entree) => {
       if (!entree?.sessionID) return
-      const photo = garde(racine, "steer.sh", { session_id: entree.sessionID })
-      if (photo.refuse && photo.message) await annonce(client, photo.message, "error")
+      const photo = garde(racine, "steer.sh", { session_id: entree.sessionID }, ["photo"])
+      if (photo.message) await annonce(client, photo.message, photo.refuse ? "error" : "warning")
     },
 
     // Chaque requête : le plafond de réponse relevé, et la mémoire du modèle notée pour

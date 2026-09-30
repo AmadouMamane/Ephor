@@ -829,3 +829,54 @@ def test_la_ci_mute_avec_le_script_du_moteur() -> None:
         assert "bash .ephor/scripts/mutants.sh --tout" in texte, chemin.name
         assert "mutmut run" not in texte, chemin.name
         assert ".verify/mutants-run.log" in texte, f"{chemin.name} : le journal reste joint"
+
+
+def test_une_tache_s_ouvre_dans_son_propre_dossier(tmp_path: Path) -> None:
+    """Vécu en session réelle (30/09/2026) : plusieurs tâches lancées dans un même dossier se
+    marchaient dessus. `make task-worktree` ouvre une tâche approuvée dans son dossier, sur sa
+    branche, avec son environnement ; et le bac à sable de Claude Code y protège aussi le
+    `.git/info/` du dépôt principal, qu'il laissait écrire depuis un worktree (mesuré)."""
+    cible = tmp_path / "depot"
+    cible.mkdir()
+    git(cible, "init", "-q", "-b", "main")
+    git(cible, "config", "user.email", "test@example.invalid")
+    git(cible, "config", "user.name", "Ephor test")
+    bootstrap(cible)
+    (cible / "tasks" / "FEAT-001").mkdir(parents=True)
+    (cible / "tasks" / "FEAT-001" / "contract.json").write_text('{"risk": "faible"}\n')
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "FEAT-001 approuvé")
+    journal = tmp_path / "uv.txt"
+    env = _uv_factice(tmp_path / "bin", f'echo "uv $*" >> "{journal}"\nexit 0\n')
+
+    def ouvre(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", ".ephor/scripts/worktree.sh", *args],
+            cwd=cible,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    sortie = ouvre("FEAT-001")
+    assert sortie.returncode == 0, sortie.stdout + sortie.stderr
+    dossier = tmp_path / "depot-FEAT-001"
+    assert git(dossier, "branch", "--show-current").strip() == "task/FEAT-001"
+    assert "environnement prêt" in sortie.stdout and "sync" in journal.read_text()
+    assert f'cd "{dossier.resolve()}"' in sortie.stdout
+    local = json.loads((dossier / ".claude" / "settings.local.json").read_text())
+    commun = git(cible, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+    systeme = local["sandbox"]["filesystem"]
+    assert local["sandbox"]["enabled"] is True and f"{commun}/info" in systeme["denyWrite"]
+    assert "~/.cache/uv" in systeme["allowWrite"], "le reste du bac à sable est repris"
+    assert git(dossier, "status", "--porcelain") == "", "les réglages locaux restent hors de git"
+
+    deux_fois = ouvre("FEAT-001")
+    assert deux_fois.returncode == 2 and "existe déjà" in deux_fois.stdout
+    ailleurs = ouvre("FEAT-001", str(tmp_path / "autre"))
+    assert ailleurs.returncode == 2 and "task/FEAT-001" in ailleurs.stdout + ailleurs.stderr
+    sans_contrat = ouvre("FEAT-002")
+    assert sans_contrat.returncode == 2 and "pas de contrat approuvé" in sans_contrat.stdout
+    assert not (tmp_path / "depot-FEAT-002").exists()

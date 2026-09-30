@@ -39,13 +39,24 @@ Chacune rejouée, puis fermée par un test qui échoue sur la 1.3.0.
   fichier de la tâche. Un chemin hors de la tâche ou un Python illisible, et rien n'est créé.
   La skill `feature` enregistre la réponse du planner dans `.verify/plans/<ID>.md` et donne
   la commande. Un contrat JSON seul marche comme avant.
+- **Une tâche par dossier : `make task-worktree ID=<ID>`.** Plusieurs tâches lancées dans un
+  même dossier se marchaient dessus (session réelle) : elles partagent la branche et les
+  fichiers. La commande ouvre une tâche approuvée dans son propre dossier (un worktree git),
+  sur sa branche, avec son environnement : une session d'agent par dossier. Mesuré avec
+  Claude Code 2.1.285 : depuis un worktree, le bac à sable laisse commiter et protège la
+  configuration et les hooks du dépôt principal, mais pas son `.git/info/` ; la commande
+  l'ajoute aux réglages locaux du dossier. Juge, gardes et sentinelle y tournent pareil.
+- **Deux sessions dans un même dossier : Ephor prévient.** Au début du tour, une fois, quand
+  une autre session d'agent encore vivante travaille dans le même dossier ; sous opencode,
+  par un message à l'écran. Rien après un `/clear`. Limite : sous Copilot, deux
+  conversations d'une même fenêtre VS Code ne se voient pas.
 
 Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
 La CI n'est pas mise à jour par Ephor : pour la passe de nuit, remplacez la ligne
 `uv run mutmut run …` par `bash .ephor/scripts/mutants.sh --tout`, et joignez
 `.verify/mutants-run.log` à la place de `mutants-full.log` (GitHub : ajoutez
-`include-hidden-files: true` à l'envoi). Pour opencode : relancez-le (le planner et la
-commande `feature` sont regénérés).
+`include-hidden-files: true` à l'envoi). Pour opencode : relancez-le (son greffon, le
+planner et la commande `feature` ont changé).
 
 ## 1.3.0 — 30 septembre 2026
 

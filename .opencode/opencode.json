@@ -49,6 +49,8 @@
       "make adapters *": "deny",
       "make fetch-docs *": "deny",
       "make checkpoints-purge *": "deny",
+      "make task-worktree *": "deny",
+      "bash .ephor/scripts/worktree.sh *": "deny",
       "python3 .ephor/fetch_docs.py *": "deny",
       "python3 .ephor/judge.py new *": "deny",
       "python3 .ephor/judge.py rouge *": "deny"

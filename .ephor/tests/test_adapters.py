@@ -364,13 +364,10 @@ console.log(JSON.stringify(resultat))
 """
 
 
-@pytest.mark.skipif(MOTEUR is None, reason="greffon opencode : bun ou node est nécessaire")
-def test_la_sentinelle_tourne_sous_opencode(tmp_path: Path) -> None:
-    """opencode n'avait pas de sentinelle : un script qui écrivait dans tasks/ n'était vu par
-    personne (29/09/2026). Son greffon a pourtant un début et une fin de tour."""
+def projet_opencode(tmp_path: Path) -> Path:
+    """Un projet commité avec les hooks, les zones et les réglages d'Ephor."""
     projet = tmp_path / "projet"
-    for dossier in ("hooks",):
-        shutil.copytree(ROOT / ".ephor" / dossier, projet / ".ephor" / dossier)
+    shutil.copytree(ROOT / ".ephor" / "hooks", projet / ".ephor" / "hooks")
     shutil.copy(ROOT / ".ephor" / "zones.txt", projet / ".ephor" / "zones.txt")
     shutil.copy(ROOT / ".ephor" / "usage.py", projet / ".ephor" / "usage.py")
     (projet / ".claude").mkdir()
@@ -382,6 +379,54 @@ def test_la_sentinelle_tourne_sous_opencode(tmp_path: Path) -> None:
     git(projet, "config", "user.name", "t")
     git(projet, "add", "-A")
     git(projet, "commit", "-qm", "base")
+    return projet
+
+
+PILOTE_UN_TOUR = """
+const module = await import("__GREFFON__")
+const annonces = []
+const client = { tui: { showToast: async ({ body }) => { annonces.push(body) } } }
+const hooks = await module.ephor({ worktree: "__RACINE__", client })
+await hooks["chat.message"]({ sessionID: "s-opencode" }, { message: {}, parts: [] })
+console.log(JSON.stringify(annonces))
+"""
+
+
+@pytest.mark.skipif(MOTEUR is None, reason="greffon opencode : bun ou node est nécessaire")
+def test_sous_opencode_l_autre_session_du_dossier_est_annoncee(tmp_path: Path) -> None:
+    """Une autre session d'agent vivante dans le même dossier : opencode ne donne pas au modèle
+    ce que le début de tour écrit, son greffon le montre donc à l'opérateur."""
+    projet = projet_opencode(tmp_path)
+    autre = subprocess.Popen(["sleep", "60"])
+    try:
+        sessions = Path(git(projet, "rev-parse", "--absolute-git-dir").strip()) / "ephor-sessions"
+        sessions.mkdir()
+        (sessions / str(autre.pid)).write_text("session=s-autre\nbranche=task/T-2\noutil=sleep\n")
+        pilote = tmp_path / "pilote.mjs"
+        pilote.write_text(
+            PILOTE_UN_TOUR.replace("__RACINE__", str(projet)).replace(
+                "__GREFFON__", str(ROOT / ".opencode" / "plugins" / "ephor.js")
+            ),
+            encoding="utf-8",
+        )
+        assert MOTEUR is not None
+        sortie = subprocess.run(
+            [MOTEUR, str(pilote)], capture_output=True, text=True, timeout=120, check=True
+        )
+    finally:
+        autre.kill()
+        autre.wait()
+    annonces = json.loads(sortie.stdout)
+    assert [a["variant"] for a in annonces] == ["warning"], annonces
+    assert "une autre session d'agent" in annonces[0]["message"]
+    assert "branche task/T-2" in annonces[0]["message"]
+
+
+@pytest.mark.skipif(MOTEUR is None, reason="greffon opencode : bun ou node est nécessaire")
+def test_la_sentinelle_tourne_sous_opencode(tmp_path: Path) -> None:
+    """opencode n'avait pas de sentinelle : un script qui écrivait dans tasks/ n'était vu par
+    personne (29/09/2026). Son greffon a pourtant un début et une fin de tour."""
+    projet = projet_opencode(tmp_path)
     pilote = tmp_path / "pilote.mjs"
     pilote.write_text(
         PILOTE_SENTINELLE.replace("__RACINE__", str(projet)).replace(
@@ -834,6 +879,8 @@ def test_les_gestes_de_l_operateur_sont_refuses_aux_trois_outils() -> None:
     for geste in (
         "make task-new *",
         "make task-check *",
+        "make task-worktree *",
+        "bash .ephor/scripts/worktree.sh *",
         "python3 .ephor/judge.py new *",
         "python3 .ephor/judge.py rouge *",
     ):
