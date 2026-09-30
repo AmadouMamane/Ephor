@@ -70,6 +70,16 @@ Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
   contrat. `/feature <ID> pas-a-pas` demande un « ok » avant chaque étape. Pas de fenêtre
   de confirmation du système : elle ne s'ouvre pas depuis le terminal de Claude Code
   (mesuré). La procédure montre aussi le tableau des tâches (`make taches`).
+- **Les sous-agents mesurés : où part le temps.** Les tâches confiées à un sous-agent, le
+  planner surtout, prenaient énormément de temps (session réelle) ; sans chiffres, on ne
+  tranche pas. `make usage` montre maintenant, pour les sous-agents récents du dépôt (Claude
+  Code et opencode) : durée, modèle et effort, sortie (et réflexion sous opencode), appels
+  d'outils, fichiers lus. Et le compte des sous-agents de Claude Code est corrigé : chaque bloc
+  d'une réponse porte le compte de sortie du moment où il a été écrit, seul le dernier est
+  juste, et Ephor gardait le premier ; les agents d'un « Workflow » n'étaient pas lus
+  (anthropics/claude-code#93620). Sur ce poste (Claude Code 2.1.278 à 2.1.281), même le dernier
+  bloc reste à quelques tokens : `make usage` le dit (« sortie non écrite ») au lieu d'afficher
+  un coût faux. L'effort du planner se décidera sur ces chiffres, sur de vraies tâches.
 
 ## 1.4.0 — 30 septembre 2026
 

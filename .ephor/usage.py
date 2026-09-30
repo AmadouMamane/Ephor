@@ -31,8 +31,12 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import sqlite3
 import sys
+from collections import Counter
+from contextlib import suppress
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -100,8 +104,10 @@ def sous_agents(journal: Path) -> list[Path]:
     journaux de sous-agents — un tiers de la dépense invisible au plafond, alors qu'AGENTS.md
     demande justement de déléguer l'exploration à des sous-agents.
     """
+    # Les agents d'un « Workflow » écrivent sous subagents/workflows/<run>/ : un lecteur qui ne
+    # connaît que subagents/agent-*.jsonl ne les voyait pas (anthropics/claude-code#93620).
     dossier = journal.with_suffix("") / "subagents"
-    return sorted(dossier.glob("*.jsonl")) if dossier.is_dir() else []
+    return sorted(dossier.rglob("*.jsonl")) if dossier.is_dir() else []
 
 
 def _claude_un_journal(journal: Path, sous: dict[str, Any]) -> dict[str, Any]:
@@ -115,6 +121,15 @@ def _claude_un_journal(journal: Path, sous: dict[str, Any]) -> dict[str, Any]:
     deja_vues = sous.get("vues")
     ordre: list[str] = [str(v) for v in deja_vues] if isinstance(deja_vues, list) else []
     vues = set(ordre)
+    # Dans le journal d'un sous-agent, chaque bloc d'une réponse porte le compte de sortie du
+    # moment où il a été écrit : seul le dernier est juste (anthropics/claude-code#93620). On
+    # garde donc, par réponse, la plus grande valeur vue, et on ajoute l'écart.
+    deja_sorties = sous.get("sorties")
+    sorties: dict[str, int] = (
+        {str(k): nombre(v) for k, v in deja_sorties.items()}
+        if isinstance(deja_sorties, dict)
+        else {}
+    )
 
     with journal.open(encoding="utf-8", errors="ignore") as fichier:
         fichier.seek(depart)
@@ -140,17 +155,25 @@ def _claude_un_journal(journal: Path, sous: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(usage, dict):
                 continue
             identifiant = str(entree.get("requestId") or message.get("id") or "")
-            if not identifiant or identifiant in vues:
+            if not identifiant:
+                continue
+            sortie = nombre(usage.get("output_tokens"))
+            if identifiant in vues:
+                if sortie > sorties.get(identifiant, 0):
+                    sous["output"] += sortie - sorties.get(identifiant, 0)
+                    sorties[identifiant] = sortie
                 continue
             vues.add(identifiant)
             ordre.append(identifiant)
+            sorties[identifiant] = sortie
             sous["requetes"] += 1
             sous["input"] += nombre(usage.get("input_tokens"))
-            sous["output"] += nombre(usage.get("output_tokens"))
+            sous["output"] += sortie
             sous["cache_write"] += nombre(usage.get("cache_creation_input_tokens"))
             sous["cache_read"] += nombre(usage.get("cache_read_input_tokens"))
         sous["octets"] = position
     sous["vues"] = ordre[-200:]  # de quoi dédoublonner à la frontière, pas un historique
+    sous["sorties"] = {cle: sorties[cle] for cle in sous["vues"] if cle in sorties}
     return sous
 
 
@@ -352,6 +375,198 @@ def opencode(base: Path, repertoire: Path) -> dict[str, Any]:
     return totalise(compte)
 
 
+# ------------------------------------------------------- sous-agents : où part le temps
+#
+# Vu en session réelle (30/09/2026, #34) : les tâches confiées à un sous-agent, le planner
+# surtout, prenaient énormément de temps. L'effort ? Le modèle ? Le nombre de fichiers lus ?
+# Sans chiffres, on ne tranche pas. Pour chaque sous-agent récent du dépôt : sa durée, son
+# modèle et son effort, ce qu'il a produit, ses appels d'outils et les fichiers qu'il a lus.
+
+
+SORTIE_PARTIELLE = 10
+
+
+def _secondes(horodatage: Any) -> float | None:
+    if not isinstance(horodatage, str):
+        return None
+    try:
+        return datetime.fromisoformat(horodatage.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def profil_claude(journal: Path) -> dict[str, Any]:
+    """Un sous-agent de Claude Code, d'après son journal et la fiche posée à côté."""
+    fiche: dict[str, Any] = {}
+    with suppress(OSError, ValueError):
+        lue = json.loads(journal.with_suffix(".meta.json").read_text(encoding="utf-8"))
+        fiche = lue if isinstance(lue, dict) else {}
+    debut = fin = None
+    sorties: dict[str, int] = {}
+    modeles: set[str] = set()
+    efforts: set[str] = set()
+    outils: Counter[str] = Counter()
+    lus: set[str] = set()
+    with journal.open(encoding="utf-8", errors="ignore") as fichier:
+        for ligne in fichier:
+            try:
+                entree = json.loads(ligne)
+            except ValueError:
+                continue
+            if not isinstance(entree, dict):
+                continue
+            moment = _secondes(entree.get("timestamp"))
+            if moment is not None:
+                debut = moment if debut is None else min(debut, moment)
+                fin = moment if fin is None else max(fin, moment)
+            if isinstance(entree.get("effort"), str):
+                efforts.add(entree["effort"])
+            message = entree.get("message")
+            if not isinstance(message, dict) or entree.get("type") != "assistant":
+                continue
+            if isinstance(message.get("model"), str):
+                modeles.add(message["model"])
+            identifiant = str(entree.get("requestId") or message.get("id") or "")
+            usage = message.get("usage")
+            if identifiant and isinstance(usage, dict):
+                sortie_lue = nombre(usage.get("output_tokens"))
+                sorties[identifiant] = max(sorties.get(identifiant, 0), sortie_lue)
+            contenu = message.get("content")
+            for bloc in contenu if isinstance(contenu, list) else []:
+                if isinstance(bloc, dict) and bloc.get("type") == "tool_use":
+                    outils[str(bloc.get("name"))] += 1
+                    cible = (bloc.get("input") or {}).get("file_path")
+                    if bloc.get("name") == "Read" and isinstance(cible, str):
+                        lus.add(cible)
+    return {
+        "outil": "claude-code",
+        "role": str(fiche.get("agentType") or journal.stem),
+        "demande": str(fiche.get("description") or ""),
+        "modele": ", ".join(sorted(modeles)),
+        "effort": ", ".join(sorted(efforts)),
+        "debut": debut,
+        "secondes": round((fin or 0) - (debut or 0), 1) if debut is not None else None,
+        "requetes": len(sorties),
+        "sortie": sum(sorties.values()),
+        # Quelques tokens par réponse, sur une réponse qui a réfléchi et appelé des outils :
+        # c'est le compte du début de la réponse, jamais complété (anthropics/claude-code#93620).
+        "sortie_ecrite": not sorties
+        or sorted(sorties.values())[len(sorties) // 2] > SORTIE_PARTIELLE,
+        "reflexion": None,  # comptée dans la sortie par Claude Code
+        "outils": dict(outils.most_common()),
+        "fichiers_lus": len(lus),
+    }
+
+
+def dossier_claude(repo: Path) -> Path:
+    """Où Claude Code range les journaux des sessions ouvertes dans ce dépôt."""
+    nom = re.sub(r"[^A-Za-z0-9]", "-", str(repo.resolve()))
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects" / nom
+
+
+def sous_agents_claude(repo: Path, combien: int = 10) -> list[dict[str, Any]]:
+    dossier = dossier_claude(repo)
+    if not dossier.is_dir():
+        return []
+    sessions = sorted(dossier.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+    profils: list[dict[str, Any]] = []
+    for session in sessions[:20]:
+        for journal in sous_agents(session):
+            with suppress(OSError):
+                profils.append(profil_claude(journal))
+    profils.sort(key=lambda p: p.get("debut") or 0, reverse=True)
+    return profils[:combien]
+
+
+def sous_agents_opencode(base: Path, repertoire: Path, combien: int = 10) -> list[dict[str, Any]]:
+    """Les sous-agents d'opencode dans ce dépôt : ses sessions filles (base SQLite, lecture
+    seule). opencode compte la réflexion à part : on la montre."""
+    if not base.exists():
+        return []
+    try:
+        connexion = sqlite3.connect(base.resolve().as_uri() + "?mode=ro", uri=True)
+    except sqlite3.Error:
+        return []
+    profils: list[dict[str, Any]] = []
+    try:
+        sessions = connexion.execute(
+            "select id, title, tokens_output, tokens_reasoning from session"
+            " where parent_id is not null and (directory = ? or path = ?)"
+            " order by time_created desc limit ?",
+            (str(repertoire), str(repertoire), combien),
+        ).fetchall()
+        for ident, titre, sortie, reflexion in sessions:
+            messages = connexion.execute(
+                "select time_created, time_updated, data from message where session_id = ?",
+                (ident,),
+            ).fetchall()
+            parts = connexion.execute(
+                "select data from part where session_id = ?", (ident,)
+            ).fetchall()
+            debut = min((m[0] for m in messages), default=None)
+            fin = max((m[1] for m in messages), default=None)
+            role, modele = "", ""
+            for _, _, donnees in messages:
+                with suppress(ValueError, TypeError):
+                    lu = json.loads(donnees)
+                    role = role or str(lu.get("agent") or "")
+                    modele = modele or str(
+                        (lu.get("model") or {}).get("modelID") or lu.get("modelID") or ""
+                    )
+            outils: Counter[str] = Counter()
+            lus: set[str] = set()
+            for (donnees,) in parts:
+                with suppress(ValueError, TypeError):
+                    lu = json.loads(donnees)
+                    if lu.get("type") == "tool":
+                        outils[str(lu.get("tool"))] += 1
+                        cible = ((lu.get("state") or {}).get("input") or {}).get("filePath")
+                        if lu.get("tool") == "read" and isinstance(cible, str):
+                            lus.add(cible)
+            profils.append(
+                {
+                    "outil": "opencode",
+                    "role": role or str(titre),
+                    "demande": str(titre),
+                    "modele": modele,
+                    "effort": "",
+                    "debut": debut / 1000 if debut else None,
+                    "secondes": round((fin - debut) / 1000, 1) if debut and fin else None,
+                    "requetes": len(messages),
+                    "sortie": nombre(sortie),
+                    "reflexion": nombre(reflexion),
+                    "outils": dict(outils.most_common()),
+                    "fichiers_lus": len(lus),
+                }
+            )
+    except sqlite3.DatabaseError:
+        return []
+    finally:
+        connexion.close()
+    return profils
+
+
+def duree(secondes: float | None) -> str:
+    if secondes is None:
+        return "?"
+    minutes, reste = divmod(round(secondes), 60)
+    return f"{minutes} min {reste:02d} s" if minutes else f"{reste} s"
+
+
+def ligne_sous_agent(profil: dict[str, Any]) -> str:
+    appels = sum(profil["outils"].values())
+    detail = ", ".join(f"{nom} {nombre}" for nom, nombre in list(profil["outils"].items())[:4])
+    reglage = " · ".join(v for v in (profil["modele"], profil["effort"]) if v)
+    reflexion = f" (réflexion {milliers(profil['reflexion'])})" if profil.get("reflexion") else ""
+    sortie = f"sortie {milliers(profil['sortie'])}{reflexion}"
+    if not profil.get("sortie_ecrite", True):
+        sortie = "sortie non écrite par Claude Code"
+    return (
+        f"  {profil['role'][:16]:<16} {duree(profil['secondes']):>12}  {reglage[:28]:<28}"
+        f" {sortie} · {appels} appels ({detail}) · {profil['fichiers_lus']} fichiers lus"
+    )
+
+
 def milliers(nombre: int) -> str:
     return f"{nombre:,}".replace(",", " ")
 
@@ -433,6 +648,10 @@ def rapport(repo: Path) -> str:
             continue
         budget = ""
         contrat = repo / "tasks" / fichier.stem / "contract.json"
+        if not contrat.exists():  # rangée par fonctionnalité : tasks/<lot>/<ID>/ (#35)
+            contrat = next(
+                iter(sorted((repo / "tasks").glob(f"*/{fichier.stem}/contract.json"))), contrat
+            )
         if contrat.exists():
             try:
                 lu = json.loads(contrat.read_text(encoding="utf-8"))
@@ -467,6 +686,18 @@ def rapport(repo: Path) -> str:
         )
     if not mesures and not oc["requetes"]:
         lignes.append("  (rien de mesuré : pas de tâche en cours, ou pas de session enregistrée)")
+    profils = sous_agents_claude(repo) + sous_agents_opencode(base_opencode(), repo.resolve())
+    if profils:
+        lignes.append("")
+        lignes.append("sous-agents récents : durée, modèle et effort, sortie, appels d'outils")
+        profils.sort(key=lambda p: p.get("debut") or 0, reverse=True)
+        lignes += [ligne_sous_agent(profil) for profil in profils[:10]]
+        if not all(profil.get("sortie_ecrite", True) for profil in profils[:10]):
+            lignes.append(
+                "  sortie non écrite : Claude Code n'écrit pas toujours la sortie de ses"
+                " sous-agents dans leur journal (anthropics/claude-code#93620) ; leur coût est"
+                " alors sous-estimé, leur durée et leurs appels restent justes"
+            )
     return "\n".join(lignes)
 
 

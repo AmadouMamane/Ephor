@@ -46,6 +46,28 @@ def test_une_requete_comptee_une_fois(tmp_path: Path) -> None:
     assert mesure["cache_read"] == 50000
 
 
+def bloc(requete: str, sortie: int, sorte: str = "text", **extra: object) -> dict[str, object]:
+    """Une ligne d'une réponse de Claude Code : un bloc, et l'usage tel qu'il l'écrit."""
+    usage_ = {"input_tokens": 10, "output_tokens": sortie, "cache_creation_input_tokens": 0}
+    message = {"id": requete, "usage": usage_, "content": [{"type": sorte, **extra}]}
+    return {"type": "assistant", "requestId": requete, "message": message}
+
+
+def test_la_sortie_d_un_sous_agent_se_lit_a_son_dernier_bloc(tmp_path: Path) -> None:
+    """Dans le journal d'un sous-agent, chaque bloc d'une réponse porte le compte de sortie du
+    moment où il a été écrit ; seul le dernier est juste (anthropics/claude-code#93620). Le
+    premier gardé, une session très déléguée était sous-estimée d'un facteur dix chez d'autres.
+    Et les agents d'un « Workflow » écrivent sous subagents/workflows/<run>/."""
+    principal = journal(tmp_path / "session.jsonl", [REPONSE])
+    sous = tmp_path / "session" / "subagents"
+    (sous / "workflows" / "run1").mkdir(parents=True)
+    journal(sous / "agent-a.jsonl", [bloc("r1", 8, "thinking"), bloc("r1", 8), bloc("r1", 1200)])
+    journal(sous / "workflows" / "run1" / "agent-b.jsonl", [bloc("r2", 300)])
+    mesure = usage.claude_code(principal)
+    assert mesure["output"] == 100 + 1200 + 300, mesure
+    assert mesure["requetes"] == 3
+
+
 def test_la_mesure_reprend_ou_elle_s_etait_arretee(tmp_path: Path) -> None:
     fichier = journal(tmp_path / "session.jsonl", [REPONSE])
     premier = usage.claude_code(fichier)
@@ -98,6 +120,71 @@ def test_les_sessions_opencode_du_depot_sont_additionnees(tmp_path: Path) -> Non
     assert mesure["requetes"] == 2, "les sessions d'un autre dépôt ne comptent pas"
     assert mesure["facturables"] == (100 + 5 + 20) + (1 + 3 + 2)
     assert mesure["cout_dollars"] == 0.5
+
+
+def test_le_profil_des_sous_agents_dit_ou_part_le_temps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Session réelle (30/09/2026, #34) : les tâches confiées à un sous-agent, le planner
+    surtout, prenaient énormément de temps. Sans chiffres, on ne tranche pas : durée, modèle
+    et effort, sortie, appels d'outils, fichiers lus, pour Claude Code et opencode."""
+    depot = tmp_path / "depot"
+    depot.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    dossier = usage.dossier_claude(depot)
+    sous = dossier / "session" / "subagents"
+    sous.mkdir(parents=True)
+    journal(dossier / "session.jsonl", [REPONSE])
+
+    def horodate(ligne: dict[str, object], moment: str) -> dict[str, object]:
+        return {**ligne, "timestamp": f"2026-09-30T10:{moment}.000Z", "effort": "max"}
+
+    lectures = [
+        horodate(bloc("r1", 900, "tool_use", name="Read", input={"file_path": "a.py"}), "00:00"),
+        horodate(bloc("r2", 700, "tool_use", name="Read", input={"file_path": "b.py"}), "00:40"),
+        horodate(bloc("r3", 500, "tool_use", name="Grep", input={"pattern": "x"}), "01:30"),
+    ]
+    journal(sous / "agent-p.jsonl", lectures)
+    (sous / "agent-p.meta.json").write_text('{"agentType": "planner", "description": "plan"}')
+    partiel = [horodate(bloc("r4", 8, "thinking"), "02:00"), horodate(bloc("r5", 3), "02:10")]
+    journal(sous / "agent-s.jsonl", partiel)
+    (sous / "agent-s.meta.json").write_text('{"agentType": "scout"}')
+    profils = {p["role"]: p for p in usage.sous_agents_claude(depot)}
+    planner = profils["planner"]
+    assert planner["secondes"] == 90 and planner["effort"] == "max"
+    assert planner["outils"] == {"Read": 2, "Grep": 1} and planner["fichiers_lus"] == 2
+    assert planner["sortie"] == 2100 and planner["sortie_ecrite"]
+    assert "1 min 30 s" in usage.ligne_sous_agent(planner)
+    assert "sortie non écrite" in usage.ligne_sous_agent(profils["scout"]), "3 et 8 tokens"
+
+    base = tmp_path / "opencode.db"
+    connexion = sqlite3.connect(base)
+    connexion.execute(
+        "create table session (id text, title text, parent_id text, directory text, path text,"
+        " time_created int, tokens_output int, tokens_reasoning int)"
+    )
+    connexion.execute(
+        "create table message (session_id text, time_created int, time_updated int, data text)"
+    )
+    connexion.execute("create table part (session_id text, data text)")
+    connexion.execute(
+        "insert into session values ('f', 'plan', 'p', ?, ?, 1, 4000, 30000)",
+        (str(depot), str(depot)),
+    )
+    donnees = json.dumps({"agent": "planner", "model": {"modelID": "claude-opus"}})
+    connexion.execute("insert into message values ('f', 1000, 181000, ?)", (donnees,))
+    for outil, entree in (
+        ("read", {"filePath": "a.py"}),
+        ("read", {"filePath": "a.py"}),
+        ("glob", {}),
+    ):
+        partie = {"type": "tool", "tool": outil, "state": {"input": entree}}
+        connexion.execute("insert into part values ('f', ?)", (json.dumps(partie),))
+    connexion.commit()
+    connexion.close()
+    (oc,) = usage.sous_agents_opencode(base, depot)
+    assert oc["role"] == "planner" and oc["secondes"] == 180 and oc["reflexion"] == 30000
+    assert oc["outils"] == {"read": 2, "glob": 1} and oc["fichiers_lus"] == 1
 
 
 def test_une_base_inconnue_le_dit_au_lieu_de_zero(tmp_path: Path) -> None:
