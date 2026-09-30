@@ -102,6 +102,7 @@ CIBLES_OPERATEUR = {
     "task-worktree",
     "task-approve",
     "task-ranger",
+    "task-clore",
     "opencode-modeles",
 }
 SCRIPTS_OPERATEUR = {
@@ -111,6 +112,7 @@ SCRIPTS_OPERATEUR = {
     "install_copilot_plugin.sh": None,
     "bootstrap_existing_repo.sh": None,
     "worktree.sh": None,
+    "clore.sh": None,
 }
 # Ce qui lit un fichier et en montre le contenu : un secret lu entre dans le prompt.
 SECRET = "::lecture d'un secret::"

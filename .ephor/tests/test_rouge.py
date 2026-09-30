@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -919,6 +920,53 @@ def test_l_approbation_d_un_seul_geste(repo: Path, tmp_path: Path) -> None:
         "tasks/FEAT-020/rouge.json",
     ]
     assert git(repo, "status", "--porcelain", "--", "tasks") == ""
+
+
+def test_l_approbation_ouvre_le_dossier_de_la_tache(repo: Path, tmp_path: Path) -> None:
+    """Plusieurs tâches dans un même dossier se marchaient dessus (session réelle, #32). Une
+    tâche approuvée s'ouvre maintenant dans son dossier, avec la ligne qui y lance l'agent ;
+    et se ferme, dossier et branche, une fois fusionnée."""
+    for nom in ("judge.py", "zones.txt", "operateur.py", "scripts/worktree.sh", "scripts/clore.sh"):
+        (repo / ".ephor" / nom).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / ".ephor" / nom, repo / ".ephor" / nom)
+    plan = plan_a_approuver(repo, tmp_path)
+    code, sortie = dans_un_terminal(approuve(plan, repo), "oui", repo)
+    assert code == 0, sortie
+    dossier = (repo.parent / "repo-FEAT-020").resolve()
+    assert git(dossier, "branch", "--show-current").strip() == "task/FEAT-020"
+    assert f'cd "{dossier}" && claude "/feature FEAT-020"' in sortie, sortie
+
+    def clore(*options: str) -> subprocess.CompletedProcess[str]:
+        env = {k: v for k, v in os.environ.items() if k not in operateur.VARIABLES}
+        return subprocess.run(
+            ["bash", ".ephor/scripts/clore.sh", "FEAT-020", *options],
+            cwd=repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+
+    refus = clore()
+    assert refus.returncode == 2 and "pas fusionnée" in refus.stdout, refus.stdout
+    assert dossier.is_dir(), "une tâche en cours garde son dossier"
+    git(dossier, "commit", "-q", "--allow-empty", "-m", "le travail")
+    git(repo, "merge", "-q", "--no-ff", "-m", "Merge branch 'task/FEAT-020'", "task/FEAT-020")
+    fermee = clore()
+    assert fermee.returncode == 0, fermee.stdout + fermee.stderr
+    assert not dossier.exists() and "task/FEAT-020" not in git(repo, "branch")
+
+
+def test_l_approbation_sans_dossier_le_dit(repo: Path, tmp_path: Path) -> None:
+    for nom in ("judge.py", "operateur.py", "scripts/worktree.sh"):
+        (repo / ".ephor" / nom).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / ".ephor" / nom, repo / ".ephor" / nom)
+    plan = plan_a_approuver(repo, tmp_path)
+    code, sortie = dans_un_terminal(approuve(plan, repo, "--sans-dossier"), "oui", repo)
+    assert code == 0, sortie
+    assert not (repo.parent / "repo-FEAT-020").exists()
+    assert "make task-worktree ID=FEAT-020" in sortie
 
 
 @pytest.mark.parametrize("reponse", ["non", "", "o"])

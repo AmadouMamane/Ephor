@@ -82,7 +82,7 @@ relancer opencode ou Claude Code.
 | Nouvelle fonctionnalité | contrat et tests préparés par `planner`, approuvés d'un geste par l'opérateur (`make task-approve ID=<ID> FROM=.verify/plans/<ID>.md` : résumé, « oui », contrôle rouge, commit sur `main`) ; ou pas à pas : `make task-new … FROM=…`, `make task-check ID=<ID>`, commit |
 | Pendant | branche `task/<ID>`, `make verify` après chaque incrément |
 | Sous opencode, une fois par poste | `make opencode-modeles FORT=<fournisseur/modèle> RAPIDE=<…>` : chaque rôle reçoit le modèle de son niveau (`make doctor` le rappelle) |
-| Plusieurs tâches en même temps | une par dossier : `make task-worktree ID=<ID>` (branche, environnement, bac à sable), puis une session d'agent dans chacun ; Ephor prévient quand deux sessions tournent dans le même dossier |
+| Plusieurs tâches en même temps | une par dossier, ouvert par `make task-approve` (ou `make task-worktree ID=<ID>`) : branche, environnement, bac à sable, et la ligne qui y lance l'agent ; `make task-clore ID=<ID>` le ferme après la fusion ; Ephor prévient quand deux sessions tournent dans le même dossier |
 | Beaucoup de tâches | `make taches` : une ligne par tâche et son état, calculé ; `make task-ranger LOT=<fonctionnalité> PREFIXE=<ID->` les range dans `tasks/<lot>/` |
 | Avant de conclure | `make judge TASK=<ID>` ; en conteneur, `RUNTIME=podman` |
 | Revue | `make review TASK=<ID>` : enchaîne ce que le risque du contrat exige, et rien de plus |

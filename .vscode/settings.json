@@ -55,6 +55,8 @@
     "/^python3 \\.ephor\\/judge\\.py approuve\\b/": false,
     "/^python3 \\.ephor\\/judge\\.py ranger\\b/": false,
     "/^bash \\.ephor\\/scripts\\/worktree\\.sh\\b/": false,
+    "/^make task-clore\\b/": false,
+    "/^bash \\.ephor\\/scripts\\/clore\\.sh\\b/": false,
     "/^python3 \\.ephor\\/fetch_docs\\.py\\b/": false,
     "/^python3 \\.ephor\\/judge\\.py new\\b/": false,
     "/^python3 \\.ephor\\/judge\\.py rouge\\b/": false

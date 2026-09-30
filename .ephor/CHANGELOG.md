@@ -56,6 +56,13 @@ Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
   `EPHOR_RAPPEL_PROGRES_TOURS` change le seuil, `EPHOR_RAPPEL_PROGRES=0` l'éteint. Et les
   réponses de fin de tour sortent en un seul objet JSON : deux à la suite, l'outil n'en lisait
   aucun.
+- **Une tâche, un dossier, par défaut.** Plusieurs tâches dans un même dossier se marchaient
+  dessus (session réelle). `make task-approve` finit maintenant en ouvrant le dossier de la
+  tâche (`DOSSIER=non` pour s'en passer), et affiche la ligne à coller :
+  `cd … && claude --model … --effort … "/feature <ID>"`, au niveau du contrat. `/feature`
+  n'implémente plus dans le dossier principal, sauf demande de l'opérateur.
+  `make task-clore ID=<ID>` retire le dossier et la branche locale d'une tâche fusionnée
+  (`FORCE=1` pour une tâche abandonnée ; jamais un dossier qui a du travail pas commité).
 
 ## 1.4.0 — 30 septembre 2026
 

@@ -33,10 +33,12 @@ le planner propose : la tâche se range dans `tasks/<lot>/`. Pour les retoucher 
 Une fois l'approbation faite, enchaîne les étapes 2 à 7 sans attendre d'autre feu vert :
 l'approbation était le seul. Arrête-toi seulement sur un blocage (étape 5) ou au verdict.
 
-**2. La branche de travail.** `git switch -c task/<ID>` depuis la branche principale. Dans un
-dossier ouvert par `make task-worktree`, tu y es déjà. Si Ephor signale une autre session dans
-ce dossier, ne change pas de branche : demande à l'opérateur `make task-worktree ID=<ID>`, et
-une session dans le dossier qu'il ouvre.
+**2. Le dossier de la tâche.** Une tâche s'implémente dans son propre dossier, sur sa
+branche : `make task-approve` l'ouvre, et affiche la ligne qui y lance une session au niveau
+du contrat (`cd … && claude --model … "/feature <ID>"`). Dans ce dossier, tu es déjà sur
+`task/<ID>` : continue. Dans le dossier principal, sur la branche principale : ne crée pas la
+branche ici ; donne cette ligne à l'opérateur (ou `make task-worktree ID=<ID>` s'il ne l'a
+pas), et arrête-toi. Seulement s'il te demande de travailler ici : `git switch -c task/<ID>`.
 
 **3. Cadrer sans tout lire.** Code inconnu : délègue au sous-agent `scout`. Sa sortie
 volumineuse reste dans son contexte, seule la synthèse remonte.

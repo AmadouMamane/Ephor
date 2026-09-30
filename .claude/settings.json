@@ -85,6 +85,8 @@
       "Bash(python3 .ephor/judge.py approuve *)",
       "Bash(python3 .ephor/judge.py ranger *)",
       "Bash(bash .ephor/scripts/worktree.sh *)",
+      "Bash(make task-clore *)",
+      "Bash(bash .ephor/scripts/clore.sh *)",
       "Bash(python3 .ephor/fetch_docs.py *)",
       "Bash(python3 .ephor/judge.py new *)",
       "Bash(python3 .ephor/judge.py rouge *)",

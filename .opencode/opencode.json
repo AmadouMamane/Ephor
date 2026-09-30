@@ -56,6 +56,8 @@
       "python3 .ephor/judge.py approuve *": "deny",
       "python3 .ephor/judge.py ranger *": "deny",
       "bash .ephor/scripts/worktree.sh *": "deny",
+      "make task-clore *": "deny",
+      "bash .ephor/scripts/clore.sh *": "deny",
       "python3 .ephor/fetch_docs.py *": "deny",
       "python3 .ephor/judge.py new *": "deny",
       "python3 .ephor/judge.py rouge *": "deny"

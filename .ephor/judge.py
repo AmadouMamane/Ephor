@@ -3534,6 +3534,22 @@ def cmd_taches(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_etat(args: argparse.Namespace) -> int:
+    """L'état d'une tâche, tel que `make taches` le calcule : pour `make task-clore`."""
+    repo = repo_root(args.repo)
+    ref, _ = resolve_base(repo, None)
+    dossier = taches_a(repo, ref).get(args.task_id)
+    if dossier is None:
+        print("inconnue")
+        return 1
+    brut = git(repo, "show", f"{ref}:{dossier}/contract.json").decode("utf-8")
+    contrat = parse_contract(lire_json(brut), args.task_id, dossier)
+    branche = branches_de_tache(repo).get(args.task_id)
+    verdict = derniers_verdicts(repo).get(args.task_id, "")
+    print(etat_de_tache(repo, ref, args.task_id, contrat, branche, verdict))
+    return 0
+
+
 def cmd_ranger(args: argparse.Namespace) -> int:
     """`make task-ranger LOT=<lot> ID=<ID> | PREFIXE=<P>` : range des tâches dans un dossier par
     fonctionnalité, `tasks/<lot>/<ID>/`, dans un commit sur la branche principale. Dans
@@ -4123,10 +4139,24 @@ def cmd_approuve(args: argparse.Namespace) -> int:
             return 1
     court = git(repo, "rev-parse", "--short", "HEAD").decode().strip()
     print(
-        f"{task_id} approuvé ({court}, sur {branche}). L'agent peut travailler : branche"
-        f" task/{task_id}, ou make task-worktree ID={task_id} pour un dossier à part. Le"
-        " serveur ne le saura qu'après votre git push."
+        f"{task_id} approuvé ({court}, sur {branche}). Le serveur ne le saura qu'après votre"
+        " git push."
     )
+    # Une tâche, un dossier : plusieurs tâches dans un même dossier se marchaient dessus
+    # (session réelle, #32). Sauf DOSSIER=non, la tâche s'ouvre dans le sien, avec la ligne
+    # qui y lance une session au niveau du contrat.
+    ouvrir = repo / ".ephor" / "scripts" / "worktree.sh"
+    if getattr(args, "sans_dossier", False):
+        print(
+            f"Dossier à part : make task-worktree ID={task_id} ;"
+            f" ou ici : git switch -c task/{task_id}"
+        )
+    elif not ouvrir.is_file():
+        print(f"Ouvrez son dossier : make task-worktree ID={task_id}")
+    elif subprocess.run(
+        ["bash", str(ouvrir), task_id], cwd=repo, timeout=1800, check=False
+    ).returncode:
+        print(f"Le dossier de la tâche ne s'est pas ouvert : make task-worktree ID={task_id}")
     return 0
 
 
@@ -4235,6 +4265,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     approuve.add_argument("--workdir", help="dossier de travail (défaut : ~/.cache/ephor/judge)")
     approuve.add_argument("--lot", help="ranger la tâche dans tasks/<lot>/ (une fonctionnalité)")
+    approuve.add_argument(
+        "--sans-dossier", action="store_true", help="ne pas ouvrir le dossier de la tâche"
+    )
     approuve.set_defaults(func=cmd_approuve)
 
     taches = sub.add_parser("taches", help="une ligne par tâche et son état (make taches)")
@@ -4248,6 +4281,11 @@ def main(argv: list[str] | None = None) -> int:
     ranger.add_argument("--task-id", action="append", help="une tâche (répétable)")
     ranger.add_argument("--prefixe", help="toutes les tâches dont l'identifiant commence ainsi")
     ranger.set_defaults(func=cmd_ranger)
+
+    etat = sub.add_parser("etat", help="l'état d'une tâche, comme make taches (scripts)")
+    etat.add_argument("--repo")
+    etat.add_argument("--task-id", required=True)
+    etat.set_defaults(func=cmd_etat)
 
     dossier = sub.add_parser("dossier", help="le dossier d'une tâche, rangée ou non (scripts)")
     dossier.add_argument("--repo")

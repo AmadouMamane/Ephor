@@ -135,7 +135,7 @@ task-check: ## Contrat prêt à approuver ? Sa forme, puis chaque critère doit 
 
 task-approve: ## Approuve une tâche d'un seul geste (OPÉRATEUR) : le plan devient contrat et tests, vus échouer, puis commités sur la branche principale : make task-approve ID=FEAT-001 FROM=.verify/plans/FEAT-001.md
 	@test -n "$(ID)" -a -n "$(FROM)" || { echo "usage : make task-approve ID=FEAT-001 FROM=.verify/plans/FEAT-001.md [LOT=paiement] [RUNTIME=podman]"; exit 2; }
-	@$(EPHOR_PY) .ephor/judge.py approuve --task-id "$(ID)" --from "$(FROM)" --runtime "$(RUNTIME)" $(if $(IMAGE),--image "$(IMAGE)") $(if $(LOT),--lot "$(LOT)")
+	@$(EPHOR_PY) .ephor/judge.py approuve --task-id "$(ID)" --from "$(FROM)" --runtime "$(RUNTIME)" $(if $(IMAGE),--image "$(IMAGE)") $(if $(LOT),--lot "$(LOT)") $(if $(filter non,$(DOSSIER)),--sans-dossier)
 
 taches: ## Une ligne par tâche et son état (approuvée, en cours, vérifiée, fusionnée…), calculé : make taches [TOUT=1]
 	@$(EPHOR_PY) .ephor/judge.py taches $(if $(TOUT),--tout)
@@ -146,6 +146,9 @@ task-ranger: ## Range des tâches par fonctionnalité, dans tasks/<lot>/ (OPÉRA
 
 task-worktree: ## Ouvre une tâche approuvée dans son propre dossier, pour travailler en parallèle (OPÉRATEUR) : make task-worktree ID=FEAT-001 [DIR=../dossier]
 	@bash .ephor/scripts/worktree.sh "$(ID)" "$(DIR)"
+
+task-clore: ## Ferme une tâche fusionnée : son dossier et sa branche locale (OPÉRATEUR) : make task-clore ID=FEAT-001 [FORCE=1]
+	@bash .ephor/scripts/clore.sh "$(ID)" "$(FORCE)"
 
 delivery-manifest: ## Génère le manifeste de livraison scellé : make delivery-manifest [TASK=<ID>] [DIGEST=<sha256:...>] [REPORT=<rapport du juge>]
 	@$(EPHOR_PY) .ephor/deploy/manifest.py generate $(if $(TASK),--task-id "$(TASK)",) $(if $(DIGEST),--artifact-digest "$(DIGEST)",) $(if $(REPORT),--report "$(REPORT)",)
@@ -188,4 +191,4 @@ clean: ## Efface les sorties, SAUF la mesure de tokens et le journal des jugemen
 $(V):
 	@mkdir -p $(V)
 
-.PHONY: help doctor setup ci-image gitlab-check review delivery-manifest delivery-check fmt lint types arch test test-fast sec mutants verify judge task-new task-check task-approve taches task-ranger task-worktree opencode-modeles adapters copilot-install usage ephor-test checkpoints checkpoints-purge map refs stop resume score fetch-docs clean
+.PHONY: help doctor setup ci-image gitlab-check review delivery-manifest delivery-check fmt lint types arch test test-fast sec mutants verify judge task-new task-check task-approve taches task-ranger task-worktree task-clore opencode-modeles adapters copilot-install usage ephor-test checkpoints checkpoints-purge map refs stop resume score fetch-docs clean
