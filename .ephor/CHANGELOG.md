@@ -14,6 +14,12 @@ Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
   `make task-approve` (avant le « oui ») nomment le test et l'autre contrat ; le juge le
   rappelle en revue ; le planner ne l'écrit plus. Et un contrôle rouge périmé dit maintenant
   quel commit l'a périmé, et à quel autre contrat la preuve appartient.
+- **L'évaluateur relance les tests.** En mode « plan », il ne pouvait lancer aucun test
+  (Claude Code n'y laisse passer que les commandes de lecture ; opencode : git, rg, fd, jq),
+  et sa procédure lui disait de « raisonner ». Il relance maintenant `make verify` et les
+  tests de la tâche, comme le relecteur ; il n'écrit toujours rien (édition refusée, ni
+  commit ni `make fmt` dans sa consigne). Pour « un test échouerait sans le changement »,
+  il lit le contrôle rouge, qui le prouve pour chaque critère.
 
 ## 1.4.0 — 30 septembre 2026
 

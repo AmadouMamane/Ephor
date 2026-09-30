@@ -3,7 +3,8 @@
 # Une mise à jour ne remplace un de ces fichiers que si son contenu est l'une de ces
 # versions, donc s'il n'a jamais été retouché dans le projet. « actuelle » : celle-ci.
 e3416208cd825f8211289b365b2326fe8f60cbdce512f03b21be49e562cbc8c3 .claude/agents/debt-collector.md actuelle
-55a2e0bce091798eaa78789453f528d29f6f9d3649fc1f493aaf764f2d44516d .claude/agents/evaluator.md actuelle
+001c3952914c6379ae9cab1dbfdf793e64c11625ed70030e49b5a9d50e6bc723 .claude/agents/evaluator.md actuelle
+55a2e0bce091798eaa78789453f528d29f6f9d3649fc1f493aaf764f2d44516d .claude/agents/evaluator.md
 0c97add64b8c6eb841ed6bae05714c0de10767d921fb10e23d5ff4dd87e98038 .claude/agents/planner.md
 0dc01e18e8c86552aa18c48abb23a569a802b66697bda04e68cec1efb7f00e0d .claude/agents/planner.md
 0f55b5c767b7e1c5f590228ff14fc322988b36fe36ca3dd7d24288a2bf500561 .claude/agents/planner.md

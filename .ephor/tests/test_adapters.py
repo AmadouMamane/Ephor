@@ -118,13 +118,30 @@ def test_les_zones_de_controle_sont_refusees_aux_trois_outils() -> None:
 
 
 def test_un_sous_agent_en_mode_plan_ne_peut_que_lire() -> None:
-    meta, _ = adapters.entete(ROOT / ".claude" / "agents" / "evaluator.md")
-    regles = adapters.permissions_agent(meta)
+    regles = adapters.permissions_agent({"tools": "Read, Bash", "permissionMode": "plan"})
     assert regles["edit"] == "deny"
     assert regles["bash"]["*"] == "deny"
     assert regles["bash"]["git diff *"] == "allow"
     meta, _ = adapters.entete(ROOT / ".claude" / "agents" / "planner.md")
     assert adapters.permissions_agent(meta)["bash"] == "deny", "sans Bash, rien à lancer"
+
+
+def test_l_evaluateur_peut_lancer_les_tests() -> None:
+    """Session réelle (30/09/2026) : l'évaluateur, en mode plan, ne pouvait lancer aucun test
+    (Claude Code n'y laisse passer que la lecture ; opencode : git, rg, fd, jq), et sa
+    procédure lui disait de « raisonner ». Il relance maintenant les tests, comme le
+    relecteur ; il n'écrit toujours rien."""
+    meta, corps = adapters.entete(ROOT / ".claude" / "agents" / "evaluator.md")
+    assert meta.get("permissionMode") != "plan", "le mode plan refuse make test et pytest"
+    regles = adapters.permissions_agent(meta)
+    assert regles == {"edit": "deny"}, "le terminal suit les règles du projet"
+    projet = adapters.permissions(json.loads((ROOT / ".claude" / "settings.json").read_text()))
+    bash = projet["bash"]
+    assert isinstance(bash, dict)
+    assert bash["make *"] == "allow" and bash["uv run pytest *"] == "allow"
+    assert "make verify" in corps and "rouge.json" in corps
+    genere = (ROOT / ".opencode" / "agents" / "evaluator.md").read_text(encoding="utf-8")
+    assert "bash:" not in genere and "edit: deny" in genere
 
 
 def test_un_sous_agent_sans_terminal_ne_recoit_pas_l_ordre_de_s_en_servir() -> None:
