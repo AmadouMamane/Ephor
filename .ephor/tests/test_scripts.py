@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from conftest import ROOT, bootstrap, depot_node, git
+import operateur
+from conftest import ROOT, bootstrap, depot_node, git, judge
 
 
 def test_doctor_no_longer_cries_wolf_about_the_network(tmp_path: Path) -> None:
@@ -895,3 +896,54 @@ def test_une_tache_s_ouvre_dans_son_propre_dossier(tmp_path: Path) -> None:
     sans_contrat = ouvre("FEAT-002")
     assert sans_contrat.returncode == 2 and "pas de contrat approuvé" in sans_contrat.stdout
     assert not (tmp_path / "depot-FEAT-002").exists()
+
+
+@pytest.mark.parametrize("variable", ["CLAUDECODE", "OPENCODE", "AI_AGENT", "COPILOT_AGENT"])
+def test_un_geste_de_l_operateur_refuse_sous_un_agent(
+    tmp_path: Path, variable: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Les refus des réglages comparent des débuts de commande : un autre ordre des mots, un
+    script ou `bash -c` passaient (audit du 29/09/2026). Chaque outil d'agent pose une
+    variable que tout ce qu'il lance hérite ; le geste de l'opérateur la lit et refuse."""
+    cible = tmp_path / "depot"
+    cible.mkdir()
+    git(cible, "init", "-q", "-b", "main")
+    git(cible, "config", "user.email", "test@example.invalid")
+    git(cible, "config", "user.name", "Ephor test")
+    bootstrap(cible)
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "équipé")
+    env = {**os.environ, variable: "1"}
+
+    def lance(*commande: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            list(commande), cwd=cible, env=env, capture_output=True, text=True, timeout=120
+        )
+
+    for commande in (
+        ("make", "task-new", "ID=FEAT-001"),
+        ("make", "task-check", "ID=FEAT-001"),
+        ("make", "task-worktree", "ID=FEAT-001"),
+        ("make", "adapters"),
+        ("make", "fetch-docs", "URL=https://example.com/doc"),
+        ("make", "checkpoints-purge"),
+        ("bash", "-c", "python3 .ephor/judge.py new --task-id FEAT-001"),
+        ("bash", str(ROOT / ".ephor" / "scripts" / "bootstrap_existing_repo.sh"), str(cible)),
+    ):
+        sortie = lance(*commande)
+        assert sortie.returncode != 0, commande
+        assert f"({variable} est posé" in sortie.stdout + sortie.stderr, commande
+    assert not (cible / "tasks" / "FEAT-001").exists()
+    assert not (tmp_path / "depot-FEAT-001").exists()
+    monkeypatch.setenv(variable, "1")
+    assert judge.main(["rouge", "--task-id", "FEAT-001", "--repo", str(cible)]) == 2
+    # Lancé par un humain, le même geste passe.
+    ouvert = subprocess.run(
+        ["make", "task-new", "ID=FEAT-001"],
+        cwd=cible,
+        env={k: v for k, v in os.environ.items() if k not in operateur.VARIABLES},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert ouvert.returncode == 0, ouvert.stdout + ouvert.stderr

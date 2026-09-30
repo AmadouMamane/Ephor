@@ -177,13 +177,19 @@ Sous Claude Code, rien d'autre à faire : les sous-agents d'Ephor nomment leur n
 (`haiku`, `sonnet`, `opus`). Sous opencode, **à régler une fois sur le poste** : les
 adaptateurs ne recopient aucun nom de modèle, exprès (les noms de l'entreprise n'ont rien à
 faire dans le dépôt), et un sous-agent sans modèle prend celui de l'agent qui l'appelle (doc
-d'opencode). Sans ces lignes, `scout` comme `planner` tournent sur le modèle de la session.
+d'opencode). Sans ce réglage, `scout` comme `planner` tournent sur le modèle de la session.
 `small_model` n'y change rien : il ne sert qu'aux petites tâches d'opencode, comme le titre
-des sessions. `make doctor` dit si les rôles sont réglés.
+des sessions. `make doctor` dit si les rôles sont réglés. Une commande le fait :
+
+```bash
+make opencode-modeles FORT=<passerelle>/<modèle fort> RAPIDE=<passerelle>/<modèle rapide>
+# STANDARD=<…> en plus pour reviewer et debt-collector ; sinon, ils prennent celui de la session
+```
+
+Elle écrit, dans `~/.config/opencode/opencode.json` (jamais dans le dépôt) :
 
 ```json
 {
-  "model": "<passerelle>/<modèle standard>",
   "agent": {
     "scout": { "model": "<passerelle>/<modèle rapide>" },
     "planner": { "model": "<passerelle>/<modèle fort>" },
@@ -192,7 +198,9 @@ des sessions. `make doctor` dit si les rôles sont réglés.
 }
 ```
 
-`reviewer` et `debt-collector` sont au niveau standard : ils prennent celui de la session.
+Écarté : nommer des variables d'environnement dans la configuration du dépôt
+(`{env:…}`). Une variable absente y devient un modèle vide, qui remplace le réglage du poste
+(code d'opencode 1.18.33, lu le 30/09/2026).
 
 Chez opencode, une sortie d'outil est plafonnée à 600 lignes ou 50 ko (`tool_output` dans
 `.opencode/opencode.json`, généré) ; le reste part sur disque. C'est un plafond, pas un

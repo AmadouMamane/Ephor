@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -16,6 +17,13 @@ ROOT = EPHOR.parent
 sys.path.insert(0, str(EPHOR))
 
 import judge  # noqa: E402
+import operateur  # noqa: E402
+
+# Les tests jouent l'opérateur : lancés par un agent (CLAUDECODE, AI_AGENT…), ils ne doivent
+# pas voir refuser les gestes de l'opérateur qu'ils exercent (operateur.py). Retiré dès le
+# chargement, avant toute fixture, même de portée « module ».
+for _variable in operateur.VARIABLES:
+    os.environ.pop(_variable, None)
 
 DEFECT = "def accuracy(batches):\n    return sum(c / t for c, t in batches) / len(batches)\n"
 FIX = (

@@ -10,6 +10,8 @@
 # Idempotent : relancez-le après chaque `make adapters`.
 set -euo pipefail
 RACINE="$(cd -- "$(dirname -- "$0")/../.." && pwd -P)"
+# Geste de l'opérateur : refusé quand un agent le lance, détours compris (.ephor/operateur.py).
+python3 "$RACINE/.ephor/operateur.py" "make copilot-install" || exit 2
 SOURCE="$RACINE/.ephor/greffon-copilot"
 GREFFONS="${COPILOT_PLUGINS:-$HOME/.copilot/installed-plugins}"
 CIBLE="$GREFFONS/ephor"

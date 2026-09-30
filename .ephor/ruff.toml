@@ -27,6 +27,8 @@ ignore = ["S101"]  # assert autorisé dans les tests
 "judge.py" = ["S603", "S607", "S314", "T20", "UP017"]
 # Le générateur d'adaptateurs écrit son compte rendu sur la console : c'est son métier.
 "adapters.py" = ["T20"]
+# Le refus d'un geste de l'opérateur s'écrit sur la console : c'est son métier.
+"operateur.py" = ["T20"]
 # Le compteur de tokens écrit son résultat sur la console : c'est son métier.
 "usage.py" = ["T20"]
 # L'aspirateur de docs télécharge (schéma vérifié avant) et rend compte sur la console.

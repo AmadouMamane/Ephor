@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -18,7 +19,8 @@ from typing import Any
 
 import pytest
 
-from conftest import CHECK_C2, FIX, ROOT, WRONG, git, judge, trace_rouge
+import operateur
+from conftest import CHECK_C1, CHECK_C2, FIX, ROOT, WRONG, contract, git, judge, trace_rouge
 
 Runner = Callable[..., tuple[int, dict[str, Any]]]
 
@@ -607,3 +609,191 @@ def test_le_makefile_liste_les_controles_perimes_sans_id() -> None:
     recette = (ROOT / "Makefile").read_text(encoding="utf-8").split("\ntask-check:")[1]
     recette = recette.split("\n\n")[0]
     assert "judge.py perimes" in recette
+
+
+def test_une_approbation_pas_encore_sur_le_serveur_est_signalee(
+    repo: Path, run_judge: Runner
+) -> None:
+    """Audit du 29/09/2026 (F2) : localement, rien n'est hors de portée de l'agent ; le juge
+    de la CI lit l'approbation sur la branche protégée du serveur. Le juge local dit quand
+    celle qu'il lit n'y est pas encore."""
+    (repo / "src" / "metrics.py").write_text(FIX)
+    code, _ = run_judge(repo)
+    resume = repo / ".verify" / "judge" / "T-001" / "latest" / "summary.txt"
+    assert code == 0 and "pas encore sur le serveur" not in resume.read_text(), "sans serveur"
+    # Le serveur, tel qu'au dernier fetch, n'a pas encore la tâche.
+    arbre_vide = git(repo, "hash-object", "-t", "tree", "-w", os.devnull).strip()
+    vide = git(repo, "commit-tree", arbre_vide, "-m", "vide")
+    git(repo, "update-ref", "refs/remotes/origin/main", vide.strip())
+    code, _ = run_judge(repo)
+    texte = resume.read_text()
+    assert code == 0, "une information, pas un refus : la CI tranchera"
+    assert "approbation locale, pas encore sur le serveur (origin/main" in texte
+    git(repo, "update-ref", "refs/remotes/origin/main", git(repo, "rev-parse", "main").strip())
+    run_judge(repo)
+    assert "pas encore sur le serveur" not in resume.read_text(), "poussée : plus rien à dire"
+
+
+PLAN_EN_SCRIPTS = """Le contrat.
+
+```json
+@CONTRAT@
+```
+
+La preuve du premier critère, `tasks/FEAT-020/check_c1.py` :
+
+```python
+@C1@```
+
+Celle du second, `tasks/FEAT-020/check_c2.py` :
+
+```python
+@C2@```
+"""
+
+
+def plan_a_approuver(repo: Path, tmp_path: Path) -> Path:
+    """La réponse d'un planner : contrat et preuves, prête pour `make task-approve`."""
+    criteres = [
+        {
+            "id": "C1",
+            "description": "lots de tailles différentes",
+            "check": ["{python}", "tasks/FEAT-020/check_c1.py"],
+        },
+        {
+            "id": "C2",
+            "description": "liste vide donne None",
+            "check": ["{python}", "tasks/FEAT-020/check_c2.py"],
+        },
+    ]
+    texte = (
+        PLAN_EN_SCRIPTS.replace(
+            "@CONTRAT@", json.dumps(contract(id="FEAT-020", criteria=criteres), indent=2)
+        )
+        .replace("@C1@", CHECK_C1)
+        .replace("@C2@", CHECK_C2)
+    )
+    plan = tmp_path / "plan.md"
+    plan.write_text(texte, encoding="utf-8")
+    git(repo, "switch", "-q", "main")
+    return plan
+
+
+# Le pseudo-terminal naît dans un processus à part : pytest a plusieurs fils d'exécution, et
+# `forkpty` y risque un blocage dans l'enfant (avertissement de Python 3.12).
+PILOTE_TERMINAL = """
+import os, pty, sys
+reponse, argv = sys.argv[1], sys.argv[2:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(argv[0], argv)
+sortie, repondu = b"", False
+while True:
+    try:
+        morceau = os.read(fd, 4096)
+    except OSError:
+        break
+    if not morceau:
+        break
+    sortie += morceau
+    if reponse != "-" and not repondu and "Tapez « oui »".encode() in sortie:
+        os.write(fd, (reponse + "\\n").encode())
+        repondu = True
+_, statut = os.waitpid(pid, 0)
+sys.stdout.buffer.write(sortie)
+sys.exit(os.waitstatus_to_exitcode(statut))
+"""
+
+
+def dans_un_terminal(argv: list[str], reponse: str | None, cwd: Path) -> tuple[int, str]:
+    """Lance la commande dans un vrai pseudo-terminal, comme l'opérateur, et répond à la
+    question quand elle arrive. Pas de raccourci pour les tests : la confirmation n'en a pas."""
+    env = {k: v for k, v in os.environ.items() if k not in operateur.VARIABLES}
+    fait = subprocess.run(
+        [sys.executable, "-c", PILOTE_TERMINAL, "-" if reponse is None else reponse, *argv],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        timeout=300,
+        check=False,
+    )
+    return fait.returncode, fait.stdout.decode("utf-8", "replace")
+
+
+def approuve(plan: Path, repo: Path, *options: str) -> list[str]:
+    return [
+        sys.executable,
+        str(ROOT / ".ephor" / "judge.py"),
+        "approuve",
+        "--task-id",
+        "FEAT-020",
+        "--from",
+        str(plan),
+        "--repo",
+        str(repo),
+        "--workdir",
+        str(repo.parent / "work"),
+        *options,
+    ]
+
+
+def test_l_approbation_d_un_seul_geste(repo: Path, tmp_path: Path) -> None:
+    """Vu en session réelle : contrats et tests viennent d'un agent, et les gestes de
+    l'opérateur (task-new, recopier les tests, task-check, commit) étaient mécaniques. Un seul
+    geste les enchaîne, après le résumé et un « oui » tapé dans son terminal."""
+    plan = plan_a_approuver(repo, tmp_path)
+    avant = git(repo, "rev-parse", "HEAD").strip()
+    code, sortie = dans_un_terminal(approuve(plan, repo), "oui", repo)
+    assert code == 0, sortie
+    assert "liste vide donne None" in sortie and "check_c2.py" in sortie, "le résumé est montré"
+    assert "rouge  C1" in sortie and "rouge  C2" in sortie, "le contrôle rouge a tourné"
+    assert "FEAT-020 approuvé" in sortie
+    assert git(repo, "log", "-1", "--format=%s").strip() == "FEAT-020 : contrat approuvé"
+    assert git(repo, "rev-parse", "HEAD~1").strip() == avant
+    fichiers = git(repo, "show", "--name-only", "--format=", "HEAD").split()
+    assert sorted(fichiers) == [
+        "tasks/FEAT-020/check_c1.py",
+        "tasks/FEAT-020/check_c2.py",
+        "tasks/FEAT-020/contract.json",
+        "tasks/FEAT-020/rouge.json",
+    ]
+    assert git(repo, "status", "--porcelain", "--", "tasks") == ""
+
+
+@pytest.mark.parametrize("reponse", ["non", "", "o"])
+def test_sans_oui_rien_n_est_fait(repo: Path, tmp_path: Path, reponse: str) -> None:
+    plan = plan_a_approuver(repo, tmp_path)
+    avant = git(repo, "rev-parse", "HEAD").strip()
+    code, sortie = dans_un_terminal(approuve(plan, repo), reponse, repo)
+    assert code == 1 and "rien n'est fait" in sortie
+    assert not (repo / "tasks" / "FEAT-020").exists()
+    assert git(repo, "rev-parse", "HEAD").strip() == avant
+
+
+def test_l_approbation_veut_un_terminal_et_la_branche_principale(
+    repo: Path, tmp_path: Path
+) -> None:
+    """Sans terminal (la CI, un agent), pas de « oui » possible : refus. Et l'approbation se
+    commite sur la branche principale, nulle part ailleurs."""
+    plan = plan_a_approuver(repo, tmp_path)
+    sans_terminal = subprocess.run(
+        approuve(plan, repo),
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        timeout=120,
+        check=False,
+    )
+    assert sans_terminal.returncode == 1 and "pas de terminal" in sans_terminal.stdout
+    assert not (repo / "tasks" / "FEAT-020").exists()
+    git(repo, "switch", "-q", "task/T-001")
+    code, sortie = dans_un_terminal(approuve(plan, repo), "oui", repo)
+    assert code == 2 and "branche principale" in sortie
+
+
+def test_un_plan_sans_ses_preuves_est_refuse_avant_la_question(repo: Path, tmp_path: Path) -> None:
+    plan = plan_a_approuver(repo, tmp_path)
+    plan.write_text(plan.read_text(encoding="utf-8").split("Celle du second")[0], encoding="utf-8")
+    code, sortie = dans_un_terminal(approuve(plan, repo), None, repo)
+    assert code == 2 and "tasks/FEAT-020/check_c2.py" in sortie and "Tapez" not in sortie

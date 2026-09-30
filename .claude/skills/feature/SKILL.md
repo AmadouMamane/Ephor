@@ -23,10 +23,14 @@ Contrats disponibles :
 S'il n'existe pas de `tasks/<ID>/contract.json` sur la branche principale, délègue au
 sous-agent `planner`, avec la sortie de `make map` dans la demande : il n'a pas de
 terminal pour la faire lui-même. Enregistre sa réponse entière, telle quelle, dans
-`.verify/plans/<ID>.md`, et donne à l'opérateur la commande qui crée le contrat et les
-tests : `make task-new ID=<ID> FROM=.verify/plans/<ID>.md`. Puis **arrête-toi** : c'est
-lui qui les crée, les relit, les voit échouer (`make task-check`) et les commite sur
-`main`. Tu ne peux ni écrire dans `tasks/`, ni commencer sans ce commit.
+`.verify/plans/<ID>.md`, et donne à l'opérateur la commande qui l'approuve d'un seul geste :
+`make task-approve ID=<ID> FROM=.verify/plans/<ID>.md` (résumé, « oui » tapé, contrat et
+tests créés, vus échouer, commités sur `main`). Pour les retoucher d'abord :
+`make task-new ID=<ID> FROM=.verify/plans/<ID>.md`, puis `make task-check`. Puis
+**arrête-toi** : tu ne peux ni écrire dans `tasks/`, ni commencer sans ce commit.
+
+Une fois l'approbation faite, enchaîne les étapes 2 à 7 sans attendre d'autre feu vert :
+l'approbation était le seul. Arrête-toi seulement sur un blocage (étape 5) ou au verdict.
 
 **2. La branche de travail.** `git switch -c task/<ID>` depuis la branche principale. Dans un
 dossier ouvert par `make task-worktree`, tu y es déjà. Si Ephor signale une autre session dans

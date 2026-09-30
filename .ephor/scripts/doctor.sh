@@ -343,7 +343,7 @@ else
     ok "opencode : un modèle réglé pour scout, planner et evaluator"
   else
     warn "opencode : aucun modèle réglé sur ce poste pour $SANS_MODELE — ils tournent sur le modèle de la session" \
-         "dans $CONF_OC/opencode.json : \"agent\": {\"scout\": {\"model\": \"<rapide>\"}, \"planner\": {\"model\": \"<fort>\"}, …} (.ephor/docs/07-token-budget.md, 2.6)"
+         "make opencode-modeles FORT=<fournisseur/modèle> RAPIDE=<…> [STANDARD=<…>], une fois par poste (.ephor/docs/07-token-budget.md, 2.6)"
   fi
   if [ "${EPHOR_GARDES_EN_SERIE:-0}" = "1" ]; then
     printf '  [ -- ] gardes lancées l'"'"'une après l'"'"'autre (EPHOR_GARDES_EN_SERIE=1) : même verdict, deux fois plus lent\n'

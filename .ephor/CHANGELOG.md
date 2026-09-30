@@ -58,6 +58,30 @@ Chacune rejouée, puis fermée par un test qui échoue sur la 1.3.0.
   à chaque tour. Sous Claude Code, dès l'appel d'outil suivant, et plus seulement au
   prochain message de l'opérateur : mesuré dans une vraie session, une consigne écrite
   pendant une commande de l'agent a été suivie dès la fin de la commande.
+- **Un geste de l'opérateur refuse de tourner sous un agent.** Les refus des réglages
+  comparent des débuts de commande : un autre ordre des mots, un script ou `bash -c` les
+  contournaient. Chaque outil d'agent pose une variable que tout ce qu'il lance hérite
+  (`CLAUDECODE` et `AI_AGENT` pour Claude Code, `OPENCODE`, `AI_AGENT` et `COPILOT_AGENT` dans le
+  terminal d'agent de VS Code) : `task-new`, `task-check`, `task-worktree`, `adapters`, `fetch-docs`,
+  `copilot-install`, `checkpoints-purge` et l'installation la lisent, et refusent. La garde du
+  terminal refuse qu'on retire ces variables (`unset`, `env -u`, `env -i`, `X= commande`). Ce
+  n'est pas un mur : le juge et la CI restent la barrière.
+- **L'approbation d'un seul geste : `make task-approve ID=<ID> FROM=<plan>`.** Contrats et
+  tests viennent d'un agent ; les gestes de l'opérateur (créer la tâche, recopier les tests,
+  contrôle rouge, commit) étaient mécaniques. La commande montre le résumé du plan, attend un
+  « oui » tapé dans le terminal de l'opérateur, puis crée la tâche, la voit échouer et commite
+  l'approbation sur la branche principale. L'agent enchaîne ensuite seul jusqu'au verdict.
+  Pas de fenêtre de confirmation : mesuré, elle ne s'ouvre pas depuis le terminal de Claude
+  Code, dont le bac à sable refuse aussi d'écrire `tasks/` ; et un agent qui aurait les droits
+  d'accessibilité du système pourrait la cliquer.
+- **Le juge dit quand l'approbation qu'il lit est encore locale.** Quand le serveur est connu
+  (`origin/main`, au dernier fetch) et n'a pas encore le contrat : « approbation locale, pas
+  encore sur le serveur », car c'est là que la CI la lira.
+- **Sous opencode, les rôles reçoivent leurs modèles d'une commande :
+  `make opencode-modeles FORT=… [STANDARD=…] [RAPIDE=…]`.** Elle écrit la configuration
+  d'opencode du poste, jamais le dépôt ; `make doctor` la propose tant qu'un rôle n'a pas de
+  modèle. Écarté après lecture du code d'opencode : `{env:…}` dans la configuration du dépôt
+  (une variable absente y devient un modèle vide, qui remplace le réglage du poste).
 
 Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
 La CI n'est pas mise à jour par Ephor : pour la passe de nuit, remplacez la ligne

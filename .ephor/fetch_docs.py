@@ -22,6 +22,7 @@ import html
 import ipaddress
 import re
 import socket
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -475,6 +476,17 @@ def find_repo(start: Path) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Geste de l'opérateur : refusé quand un agent le lance, détours compris (operateur.py).
+    sys.dont_write_bytecode = True  # rien de compilé dans le moteur, une zone
+    try:
+        from operateur import refus as refus_operateur
+    except ImportError:
+        print("REFUS : .ephor/operateur.py manque : moteur incomplet, refaites la mise à jour.")
+        return 2
+    message = refus_operateur("make fetch-docs")
+    if message:
+        print(message)
+        return 2
     parser = argparse.ArgumentParser(
         description="Aspire une page de documentation dans docs/external/ (opérateur)."
     )

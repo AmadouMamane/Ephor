@@ -17,6 +17,7 @@ commandes — pour éviter d'entretenir trois copies à la main.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from collections.abc import Iterator
@@ -491,6 +492,17 @@ def perimes(attendus: dict[str, str]) -> Iterator[str]:
 
 
 def ecrire() -> int:
+    # Geste de l'opérateur : refusé quand un agent le lance, détours compris (operateur.py).
+    sys.dont_write_bytecode = True  # rien de compilé dans le moteur, une zone
+    try:
+        from operateur import refus as refus_operateur
+    except ImportError:
+        print("REFUS : .ephor/operateur.py manque : moteur incomplet, refaites la mise à jour.")
+        return 2
+    message = refus_operateur("make adapters")
+    if message:
+        print(message)
+        return 2
     attendus = fichiers()
     ecrits = 0
     for nom, contenu in attendus.items():
@@ -529,6 +541,58 @@ def verifier() -> int:
     return 0
 
 
+# Le niveau de chaque rôle, tel que son en-tête le nomme pour Claude Code.
+NIVEAUX = {"opus": "FORT", "sonnet": "STANDARD", "haiku": "RAPIDE"}
+
+
+def modeles_opencode(valeurs: dict[str, str]) -> int:
+    """`make opencode-modeles FORT=… [STANDARD=…] [RAPIDE=…]` : chaque rôle d'Ephor reçoit le
+    modèle de son niveau, dans la configuration d'opencode de CE poste. Jamais dans le dépôt :
+    les noms de modèles de l'entreprise n'ont rien à y faire.
+
+    Vu en session réelle : sans ce réglage, `planner` et `evaluator` tournaient sur le modèle
+    de la session ; la recette de la doc 07 n'avait pas été trouvée. Écarté : `{env:…}` dans la
+    configuration du dépôt. Une variable absente y devient un modèle vide, qui remplace le
+    réglage du poste (opencode 1.18.33, agent.ts) et casse l'agent sur sa branche principale."""
+    from operateur import refus as refus_operateur
+
+    message = refus_operateur("make opencode-modeles")
+    if message:
+        print(message)
+        return 2
+    if not any(valeurs.values()):
+        print("usage : make opencode-modeles FORT=<fournisseur/modèle> [STANDARD=…] [RAPIDE=…]")
+        return 2
+    roles: dict[str, str] = {}
+    for source in sorted((ROOT / ".claude" / "agents").glob("*.md")):
+        meta, _ = entete(source)
+        modele = valeurs.get(NIVEAUX.get(meta.get("model", ""), ""), "")
+        if modele:
+            roles[meta.get("name", source.stem)] = modele
+    dossier = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "opencode"
+    fichier = dossier / "opencode.json"
+    ajout = {"agent": {role: {"model": modele} for role, modele in roles.items()}}
+    if (dossier / "opencode.jsonc").exists() and not fichier.exists():
+        # Réécrire un JSONC en perdrait les commentaires : on dit quoi y ajouter.
+        print(f"{dossier / 'opencode.jsonc'} a des commentaires : ajoutez-y vous-même")
+        print(json.dumps(ajout, indent=2, ensure_ascii=False))
+        return 1
+    try:
+        config = json.loads(fichier.read_text(encoding="utf-8")) if fichier.exists() else {}
+    except json.JSONDecodeError as exc:
+        print(f"{fichier} illisible ({exc}) : rien n'est changé")
+        return 2
+    config.setdefault("$schema", "https://opencode.ai/config.json")
+    agents = config.setdefault("agent", {})
+    for role, modele in roles.items():
+        agents.setdefault(role, {})["model"] = modele
+    dossier.mkdir(parents=True, exist_ok=True)
+    fichier.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"réglé dans {fichier} : " + ", ".join(f"{r} -> {m}" for r, m in sorted(roles.items())))
+    print("Relancez opencode.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     commande = arguments[0] if arguments else ""
@@ -536,6 +600,9 @@ def main(argv: list[str] | None = None) -> int:
         return ecrire()
     if commande == "check":
         return verifier()
+    if commande == "modeles":
+        valeurs = dict(a.split("=", 1) for a in arguments[1:] if "=" in a)
+        return modeles_opencode({cle.upper(): valeur for cle, valeur in valeurs.items()})
     print(__doc__)
     return 2
 

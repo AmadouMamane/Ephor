@@ -100,10 +100,12 @@ CIBLES_OPERATEUR = {
     "copilot-install",
     "checkpoints-purge",
     "task-worktree",
+    "task-approve",
+    "opencode-modeles",
 }
 SCRIPTS_OPERATEUR = {
-    "judge.py": {"new", "rouge"},
-    "adapters.py": {"write"},
+    "judge.py": {"new", "rouge", "approuve"},
+    "adapters.py": {"write", "modeles"},
     "fetch_docs.py": None,  # toute invocation
     "install_copilot_plugin.sh": None,
     "bootstrap_existing_repo.sh": None,
@@ -111,6 +113,15 @@ SCRIPTS_OPERATEUR = {
 }
 # Ce qui lit un fichier et en montre le contenu : un secret lu entre dans le prompt.
 SECRET = "::lecture d'un secret::"
+# Les variables qui disent qu'un agent tourne : les gestes de l'opérateur les lisent pour se
+# refuser à lui (.ephor/operateur.py). Les retirer, c'est les contourner.
+AGENT = "::variable d'agent::"
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.environ.get("EPHOR_MOTEUR", ""))
+try:
+    from operateur import VARIABLES as AGENTS
+except ImportError:
+    AGENTS = ()
 LECTEURS = {
     "cat", "less", "more", "head", "tail", "bat", "batcat", "nl", "tac", "rev", "strings",
     "xxd", "od", "hexdump", "base64", "rg", "grep", "egrep", "fgrep", "ag", "ack", "jq", "yq",
@@ -631,6 +642,34 @@ def gestes_et_lectures(nom, args, ici):
             yield SECRET + chemin, nom
 
 
+def agent_retire(mots):
+    """La variable d'agent que cette commande retire, ou None : `X= commande`, `unset X`,
+    `export X=`, `env -u X`, ou `env -i`, qui les retire toutes."""
+    for mot in mots:
+        affectation = re.match(r"^(\w+)=", mot)
+        if not affectation:
+            break
+        if affectation.group(1) in AGENTS:
+            return affectation.group(1)
+    tete, args = (os.path.basename(mots[0]), mots[1:]) if mots else ("", [])
+    if tete == "unset":
+        return next((a for a in args if a in AGENTS), None)
+    if tete == "export":
+        return next((a.split("=", 1)[0] for a in args if a.split("=", 1)[0] in AGENTS), None)
+    if tete == "env":
+        for i, a in enumerate(args):
+            if a in {"-i", "--ignore-environment", "-"}:
+                return "tout l'environnement"
+            retiree = args[i + 1] if a in {"-u", "--unset"} and i + 1 < len(args) else None
+            retiree = retiree or (a[len("--unset="):] if a.startswith("--unset=") else None)
+            retiree = retiree or (a[2:] if a.startswith("-u") and len(a) > 2 else None)
+            if retiree in AGENTS or a.split("=", 1)[0] in AGENTS:
+                return retiree if retiree in AGENTS else a.split("=", 1)[0]
+            if not a.startswith("-") and not re.match(r"^\w+=", a):
+                break
+    return None
+
+
 def heredocs(texte):
     """Retire les documents en ligne du texte, et dit ce que chacun écrit selon qui le reçoit."""
     trouves = []
@@ -714,6 +753,9 @@ def cibles(texte, profondeur=0, base=None):
         tete = os.path.basename(reste[0]) if reste else ""
         if tete in {"env", "printenv"} and all(re.match(r"^\w+=", m) or m.startswith("-") for m in reste[1:]):
             yield SECRET + "tout l'environnement", tete
+        retiree = agent_retire(reste)
+        if retiree:
+            yield AGENT + retiree, "variable d'agent"
         nom, args = programme(reste)
         if not nom:
             continue
@@ -836,7 +878,9 @@ def cibles(texte, profondeur=0, base=None):
 
 try:
     for cible, pourquoi in cibles(commande):
-        speciale = next((m for m in (PRINCIPALE, OPERATEUR, SECRET) if cible.startswith(m)), None)
+        speciale = next(
+            (m for m in (PRINCIPALE, OPERATEUR, SECRET, AGENT) if cible.startswith(m)), None
+        )
         if speciale:
             print(f"{cible[len(speciale):]}\t{speciale}\t{pourquoi}")
             break
@@ -851,6 +895,7 @@ except Exception:  # un défaut de cette analyse ne doit pas tout laisser passer
             break
 PY
 VERDICT="$(EPHOR_COMMANDE="$COMMANDE" EPHOR_MOTIFS="$MOTIFS" EPHOR_EXCEPTIONS="$EXCEPTIONS" \
+  EPHOR_MOTEUR="$(dirname "$ZONES_MOTEUR")" \
   EPHOR_BRANCHE="$BRANCHE" EPHOR_PRINCIPALES="$PRINCIPALES" EPHOR_LECTURES="$LECTURES" \
   python3 -c "$ANALYSE" "$ROOT" "$HOME")"
 if [ -n "$VERDICT" ]; then
@@ -862,6 +907,8 @@ EOF
       deny "REFUSÉ : $POURQUOI écrit ou déplace $CIBLE, la branche principale. Un commit sur cette branche, c'est l'approbation de l'opérateur (le juge la lit là) : l'agent n'y écrit pas l'histoire et ne la déplace pas. Travaille sur ta branche de tâche (git switch task/<ID>). Si c'est vraiment voulu, c'est l'opérateur qui le fait, dans son terminal." ;;
     "::geste de l'opérateur::")
       deny "REFUSÉ : $CIBLE est un geste de l'opérateur (approuver une tâche, régénérer les réglages, faire entrer une page du web, installer le greffon, effacer les points de reprise) : l'agent ne le lance pas, dans aucun ordre de mots. Demande-le à l'opérateur." ;;
+    "::variable d'agent::")
+      deny "REFUSÉ : cette commande retire $CIBLE de l'environnement, ce qui dit qu'un agent tourne. Les gestes de l'opérateur le lisent pour se refuser à l'agent : le retirer, c'est les contourner. Demande le geste à l'opérateur." ;;
     "::lecture d'un secret::")
       deny "REFUSÉ : cette commande ($POURQUOI) montrerait $CIBLE, refusé à la lecture par les réglages du dépôt : un secret lu entre dans le prompt, donc chez le fournisseur du modèle. Utilise une variable d'environnement sans l'afficher, ou demande à l'opérateur." ;;
   esac

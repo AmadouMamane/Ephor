@@ -123,12 +123,19 @@ usage: ## Ce que les tâches ont coûté en tokens — mesuré, jamais deviné
 adapters: ## Régénère les réglages d'opencode et de Copilot depuis .claude/ (OPÉRATEUR)
 	@$(EPHOR_PY) .ephor/adapters.py write
 
+opencode-modeles: ## Relie les rôles d'Ephor à vos modèles, dans l'opencode de CE poste (OPÉRATEUR) : make opencode-modeles FORT=<fournisseur/modèle> [STANDARD=…] [RAPIDE=…]
+	@$(EPHOR_PY) .ephor/adapters.py modeles "FORT=$(FORT)" "STANDARD=$(STANDARD)" "RAPIDE=$(RAPIDE)"
+
 copilot-install: ## Installe le greffon Copilot sur CETTE machine (OPÉRATEUR, une fois par poste)
 	@bash .ephor/scripts/install_copilot_plugin.sh
 
 task-check: ## Contrat prêt à approuver ? Sa forme, puis chaque critère doit ÉCHOUER sur le code actuel (écrit tasks/<ID>/rouge.json) : make task-check ID=FEAT-001 [RUNTIME=podman] ; sans ID, les contrôles rouges à refaire
 	@if [ -z "$(ID)" ]; then $(EPHOR_PY) .ephor/judge.py perimes; \
 	else $(EPHOR_PY) .ephor/judge.py rouge --task-id "$(ID)" --runtime "$(RUNTIME)" $(if $(IMAGE),--image "$(IMAGE)"); fi
+
+task-approve: ## Approuve une tâche d'un seul geste (OPÉRATEUR) : le plan devient contrat et tests, vus échouer, puis commités sur la branche principale : make task-approve ID=FEAT-001 FROM=.verify/plans/FEAT-001.md
+	@test -n "$(ID)" -a -n "$(FROM)" || { echo "usage : make task-approve ID=FEAT-001 FROM=.verify/plans/FEAT-001.md [RUNTIME=podman]"; exit 2; }
+	@$(EPHOR_PY) .ephor/judge.py approuve --task-id "$(ID)" --from "$(FROM)" --runtime "$(RUNTIME)" $(if $(IMAGE),--image "$(IMAGE)")
 
 task-worktree: ## Ouvre une tâche approuvée dans son propre dossier, pour travailler en parallèle (OPÉRATEUR) : make task-worktree ID=FEAT-001 [DIR=../dossier]
 	@bash .ephor/scripts/worktree.sh "$(ID)" "$(DIR)"
@@ -151,6 +158,7 @@ checkpoints: ## Liste les points de reprise automatiques (hors historique de bra
 	@git for-each-ref --sort=-committerdate --format='  %(committerdate:relative)  %(refname:short)' refs/ephor/checkpoints | head -20
 
 checkpoints-purge: ## Supprime TOUS les points de reprise, sans attendre leurs 30 jours (OPÉRATEUR)
+	@$(EPHOR_PY) .ephor/operateur.py "make checkpoints-purge"
 	@git for-each-ref --format='delete %(refname)' refs/ephor/checkpoints | git update-ref --stdin
 	@echo "points de reprise supprimés ; leur place se libère au prochain git gc (tout de suite : git gc --prune=now)"
 
@@ -173,4 +181,4 @@ clean: ## Efface les sorties, SAUF la mesure de tokens et le journal des jugemen
 $(V):
 	@mkdir -p $(V)
 
-.PHONY: help doctor setup ci-image gitlab-check review delivery-manifest delivery-check fmt lint types arch test test-fast sec mutants verify judge task-new task-check task-worktree adapters copilot-install usage ephor-test checkpoints checkpoints-purge map refs stop resume score fetch-docs clean
+.PHONY: help doctor setup ci-image gitlab-check review delivery-manifest delivery-check fmt lint types arch test test-fast sec mutants verify judge task-new task-check task-approve task-worktree opencode-modeles adapters copilot-install usage ephor-test checkpoints checkpoints-purge map refs stop resume score fetch-docs clean

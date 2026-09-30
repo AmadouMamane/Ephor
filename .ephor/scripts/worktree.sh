@@ -11,6 +11,8 @@
 # protège dans le dossier principal. Le script l'ajoute aux réglages locaux du worktree.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || { echo "impossible d'atteindre la racine du dépôt" >&2; exit 1; }
+# Geste de l'opérateur : refusé quand un agent le lance, détours compris (.ephor/operateur.py).
+python3 ".ephor/operateur.py" "make task-worktree" || exit 2
 ID="${1:-}"
 DIR="${2:-}"
 if ! printf '%s' "$ID" | grep -Eq '^[A-Z][A-Z0-9-]{2,50}$'; then

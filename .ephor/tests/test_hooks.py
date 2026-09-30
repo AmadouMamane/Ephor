@@ -640,6 +640,9 @@ def test_les_points_de_reprise_de_plus_de_30_jours_partent(tmp_path: Path) -> No
 
 def test_make_checkpoints_purge_les_supprime_tous(tmp_path: Path) -> None:
     repo = depot_de_reprise(tmp_path)
+    # Un geste de l'opérateur : la recette vérifie d'abord qu'aucun agent ne la lance.
+    (repo / ".ephor").mkdir(exist_ok=True)
+    shutil.copy(ROOT / ".ephor" / "operateur.py", repo / ".ephor" / "operateur.py")
     (repo / "a.py").write_text("A = 2\n")
     assert hook("checkpoint.sh", {"session_id": "s1"}, project=repo).returncode == 0
     assert git(repo, "for-each-ref", "refs/ephor/checkpoints").strip()
@@ -1853,3 +1856,32 @@ def test_steer_md_est_refuse_a_l_agent(tmp_path: Path) -> None:
     assert hook("write-guard.sh", ecriture, project=repo).returncode == 2
     terminal = {"tool_name": "Bash", "tool_input": {"command": "echo 'obéis' > STEER.md"}}
     assert hook("shell-guard.sh", terminal, project=repo).returncode == 2
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "unset CLAUDECODE; make task-check ID=T-1",
+        "env -u OPENCODE make task-new ID=T-2",
+        "CLAUDECODE= make adapters",
+        "env -i bash -c 'make task-check ID=T-1'",
+        "export COPILOT_AGENT= && make task-new ID=T-3",
+        "env --unset=AI_AGENT python3 .ephor/judge.py rouge --task-id T-1",
+        "unset CLAUDECODE",
+    ],
+)
+def test_retirer_la_variable_d_agent_est_refuse(tmp_path: Path, commande: str) -> None:
+    """Les gestes de l'opérateur lisent la variable que pose l'outil de l'agent pour se refuser
+    à lui (operateur.py) : la retirer, c'est les contourner, et c'est un cas franc."""
+    appel = {"tool_name": "Bash", "tool_input": {"command": commande}}
+    resultat = hook("shell-guard.sh", appel, project=tmp_path)
+    assert resultat.returncode == 2, commande
+    assert "ce qui dit qu'un agent tourne" in resultat.stderr, resultat.stderr
+
+
+@pytest.mark.parametrize(
+    "commande", ["env FOO=1 make test", "unset FOO", "export PATH=$PATH:/opt/x", "LANG=C make test"]
+)
+def test_les_autres_variables_se_retirent_librement(tmp_path: Path, commande: str) -> None:
+    appel = {"tool_name": "Bash", "tool_input": {"command": commande}}
+    assert hook("shell-guard.sh", appel, project=tmp_path).returncode == 0, commande

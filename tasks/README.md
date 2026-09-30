@@ -41,6 +41,12 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
    fichiers, et se marchent dessus : Ephor le signale au début du tour.
 5. **Juger.** `make judge TASK=FEAT-001` en local, puis le job `juge` de la CI sur la merge request.
 
+**D'un seul geste.** `make task-approve ID=FEAT-001 FROM=.verify/plans/FEAT-001.md` fait
+les étapes 1 à 3 : il montre le résumé du plan, attend votre « oui » dans le terminal, crée
+le dossier, lance le contrôle rouge et commite l'approbation sur la branche principale. À
+préférer quand le plan vous convient tel quel ; sinon, `make task-new`, retouchez, puis
+`make task-check` et le commit.
+
 ## Écrire un bon contrat
 
 Un critère est bon quand un tiers qui n'a pas vu le code peut trancher sans discuter.

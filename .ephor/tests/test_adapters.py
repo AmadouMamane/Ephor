@@ -996,3 +996,28 @@ def test_le_greffon_opencode_lance_les_gardes_ensemble(tmp_path: Path) -> None:
         [MOTEUR, str(pilote)], capture_output=True, text=True, timeout=120, check=True
     )
     assert sortie.stdout.strip() == "ok", sortie.stdout
+
+
+def test_les_roles_recoivent_leurs_modeles_sous_opencode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Vu en session réelle : sous opencode, planner et evaluator tournaient sur le modèle de
+    la session ; la recette de la doc 07 n'avait pas été trouvée. Une commande l'applique, dans
+    la configuration du poste, jamais dans le dépôt."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    config = tmp_path / "opencode" / "opencode.json"
+    config.parent.mkdir()
+    config.write_text(json.dumps({"model": "p/session", "agent": {"scout": {"temperature": 0.1}}}))
+    assert adapters.main(["modeles", "FORT=p/fort", "RAPIDE=p/rapide", "STANDARD="]) == 0
+    reglee = json.loads(config.read_text())
+    assert reglee["model"] == "p/session", "le modèle de la session n'est pas touché"
+    assert reglee["agent"]["planner"]["model"] == reglee["agent"]["evaluator"]["model"] == "p/fort"
+    assert reglee["agent"]["scout"] == {"temperature": 0.1, "model": "p/rapide"}
+    assert "reviewer" not in reglee["agent"], "le niveau standard n'était pas donné"
+    monkeypatch.setenv("OPENCODE", "1")
+    assert adapters.main(["modeles", "FORT=p/autre"]) == 2, "un geste de l'opérateur"
+    monkeypatch.delenv("OPENCODE")
+    config.unlink()
+    (config.parent / "opencode.jsonc").write_text("// mes réglages\n{}\n")
+    assert adapters.main(["modeles", "FORT=p/fort"]) == 1, "un JSONC n'est pas réécrit"
+    assert '"planner"' in capsys.readouterr().out

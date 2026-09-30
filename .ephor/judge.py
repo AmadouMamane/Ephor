@@ -1050,6 +1050,30 @@ def base_d_approbation(repo: Path, base: str) -> bool:
     return nom in principales(repo) or base.startswith(("origin/", "refs/remotes/"))
 
 
+def pas_encore_sur_le_serveur(
+    repo: Path, base_ref: str, chemin: str, approuve: bytes
+) -> str | None:
+    """La branche du serveur (`origin/<principale>`, telle qu'au dernier fetch) quand le contrat
+    approuvé n'y est pas encore, ou pas sous cette forme ; None sinon, et sans serveur connu.
+
+    Localement, rien n'est hors de portée de l'agent : références, `.verify/`, base du juge. Le
+    juge de la CI lit l'approbation sur la branche protégée du serveur (audit du 29/09/2026, F2) :
+    une approbation qui n'y est pas encore n'est qu'une approbation locale."""
+    if base_ref.startswith(("origin/", "refs/remotes/")):
+        return None
+    nom = base_ref[len("refs/heads/") :] if base_ref.startswith("refs/heads/") else base_ref
+    distante = f"origin/{nom}"
+    try:
+        git(repo, "rev-parse", "--verify", "--quiet", f"{distante}^{{commit}}")
+    except JudgeError:
+        return None
+    try:
+        sur_le_serveur = git(repo, "show", f"{distante}:{chemin}")
+    except JudgeError:
+        return distante
+    return None if sur_le_serveur == approuve else distante
+
+
 def resolve_base(repo: Path, base: str | None) -> tuple[str, str]:
     # La base se choisit à l'appel, et `make` passe sans question : l'agent commitait sur
     # SA branche un contrat qu'il s'était écrit, puis `make judge BASE=<sa branche>`, et le
@@ -2411,6 +2435,12 @@ def cmd_check(args: argparse.Namespace) -> int:
             )
         lines.append("  ok    contrat approuvé sur la base")
         junit.append({"name": "contrat approuvé", "ok": True})
+        distante = pas_encore_sur_le_serveur(repo, base_ref, rel_contract, approved)
+        if distante:
+            lines.append(
+                f"  info  approbation locale, pas encore sur le serveur ({distante}, dernier"
+                " fetch) : la CI ne la verra qu'après le git push de la branche principale"
+            )
         jour = str(rouge.get("date") or "?")[:10]
         lines.append(
             f"  ok    contrôle rouge du {jour} : les {len(contract.criteria)} critère(s)"
@@ -2841,6 +2871,17 @@ def cmd_rouge(args: argparse.Namespace) -> int:
     reconnaître d'un échec de travers (preuve introuvable, test pytest jamais lancé), il le
     refuse ; le reste, c'est cette lecture.
     """
+    # Geste de l'opérateur : refusé quand un agent le lance, détours compris (operateur.py).
+    sys.dont_write_bytecode = True  # rien de compilé dans le moteur, une zone
+    try:
+        from operateur import refus as refus_operateur
+    except ImportError:
+        print("REFUS : .ephor/operateur.py manque : moteur incomplet, refaites la mise à jour.")
+        return 2
+    message = refus_operateur("make task-check")
+    if message:
+        print(message)
+        return 2
     if cmd_validate(args) != 0:
         return 2
     repo = repo_root(args.repo)
@@ -3160,6 +3201,17 @@ def lire_plan(texte: str, task_id: str) -> tuple[Any, dict[str, str]]:
 
 
 def cmd_new(args: argparse.Namespace) -> int:
+    # Geste de l'opérateur : refusé quand un agent le lance, détours compris (operateur.py).
+    sys.dont_write_bytecode = True  # rien de compilé dans le moteur, une zone
+    try:
+        from operateur import refus as refus_operateur
+    except ImportError:
+        print("REFUS : .ephor/operateur.py manque : moteur incomplet, refaites la mise à jour.")
+        return 2
+    message = refus_operateur("make task-new")
+    if message:
+        print(message)
+        return 2
     repo = repo_root(args.repo)
     task_id = args.task_id
     if not ID_PATTERN.match(task_id):
@@ -3255,6 +3307,8 @@ def cmd_new(args: argparse.Namespace) -> int:
             "C'est là que vivent les preuves : ailleurs, elles ne sont protégées que si\n"
             "elles existent déjà sur la branche principale."
         )
+    if getattr(args, "sans_conseil", False):
+        return 0  # make task-approve enchaîne lui-même le contrôle rouge et le commit
     if args.from_file:
         if squelettes:
             print(
@@ -3274,6 +3328,164 @@ def cmd_new(args: argparse.Namespace) -> int:
             f"(make task-check ID={task_id}), commitez le dossier sur la branche principale,\n"
             f"puis créez la branche de travail : git switch -c task/{task_id}"
         )
+    return 0
+
+
+def confirme(question: str) -> bool:
+    """Un « oui » tapé dans le terminal de l'opérateur. Sans terminal (la CI, un agent dont le
+    terminal n'en est pas un), c'est non."""
+    try:
+        # Deux ouvertures : en lecture ET écriture à la fois, Python exige un fichier qu'on
+        # peut parcourir, ce qu'un terminal n'est pas, et tout finissait en « pas de terminal ».
+        tty = Path("/dev/tty")
+        with tty.open("w", encoding="utf-8") as sortie, tty.open(encoding="utf-8") as entree:
+            sortie.write(question)
+            sortie.flush()
+            return entree.readline().strip().lower() == "oui"
+    except OSError:
+        print(
+            "REFUS : pas de terminal pour confirmer. Lancez make task-approve vous-même, dans"
+            " votre terminal."
+        )
+        return False
+
+
+def resume_du_plan(task_id: str, contract: Contract, fournis: dict[str, str], plan: str) -> str:
+    """Ce que l'opérateur approuve, en quelques lignes : le reste est dans le plan."""
+    lignes = [
+        f"Approbation de {task_id}, d'après {plan}",
+        f"  objectif  : {contract.objective}",
+        f"  risque    : {contract.risk}",
+        f"  périmètre : {', '.join(contract.allowed_paths)}",
+        "  critères  :",
+    ]
+    lignes += [f"    {c.id} {c.description}" for c in contract.criteria]
+    lignes.append("  tests d'examen :")
+    lignes += [
+        f"    {nom} ({len(contenu.splitlines())} lignes)"
+        for nom, contenu in sorted(fournis.items())
+    ]
+    lignes.append(
+        "Approuver, c'est dire : ces critères et ces tests sont l'examen de l'agent. Relisez le"
+        " plan au besoin avant de répondre."
+    )
+    return "\n".join(lignes)
+
+
+def cmd_approuve(args: argparse.Namespace) -> int:
+    """`make task-approve ID=<ID> FROM=<plan>` : l'approbation d'un seul geste. Le plan (la
+    réponse du planner) devient le contrat et les tests, le contrôle rouge les voit échouer,
+    et le commit sur la branche principale approuve, après que l'opérateur a lu le résumé et
+    tapé « oui » dans son terminal.
+
+    Vu en session réelle : contrats et tests sont écrits par un agent, et les gestes de
+    l'opérateur (task-new, recopier les tests, task-check, commit) étaient mécaniques ; seule
+    la lecture compte. Une fenêtre de confirmation ne s'ouvre pas depuis le terminal de Claude
+    Code, dont le bac à sable refuse aussi d'écrire tasks/ (mesuré le 30/09/2026), et un
+    agent qui aurait les droits d'accessibilité du système pourrait la cliquer. Un « oui » tapé
+    dans le terminal de l'opérateur, par un geste qu'aucun agent ne lance (operateur.py), non."""
+    from operateur import refus as refus_operateur
+
+    message = refus_operateur("make task-approve")
+    if message:
+        print(message)
+        return 2
+    repo = repo_root(args.repo)
+    task_id = args.task_id
+    if not ID_PATTERN.match(task_id):
+        print(f"identifiant invalide : {task_id!r} (ex. FEAT-001)")
+        return 2
+    branche = git(repo, "branch", "--show-current").decode().strip()
+    if branche not in principales(repo):
+        print(
+            f"REFUS : vous êtes sur {branche or 'une tête détachée'} ; l'approbation se commite"
+            " sur la branche principale. git switch main, puis relancez."
+        )
+        return 2
+    dossier = repo / "tasks" / task_id
+    if dossier.exists():
+        print(
+            f"REFUS : {relative(dossier, repo)} existe déjà. Pour le reprendre : make task-check"
+            f" ID={task_id}, puis commitez-le ; ou supprimez-le et relancez."
+        )
+        return 2
+    # Le plan, lu et vérifié AVANT toute question : on ne demande rien pour un plan invalide.
+    try:
+        data, fournis = lire_plan(
+            Path(args.from_file).expanduser().read_text(encoding="utf-8"), task_id
+        )
+        if isinstance(data, dict):
+            data.setdefault("id", task_id)
+        contract = parse_contract(data, task_id)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        print(f"plan introuvable ou illisible : {exc}")
+        return 2
+    except JudgeError as exc:
+        for erreur in exc.messages:
+            print(f"  REFUS {erreur}")
+        return 2
+    manquants = [chemin for chemin in wanted_tests(task_id, contract) if chemin not in fournis]
+    if manquants:
+        print(
+            f"REFUS : le plan ne donne pas {', '.join(manquants)} : un squelette échoue toujours,"
+            " et le contrôle rouge le refuserait. Complétez le plan, ou passez par make task-new."
+        )
+        return 2
+    print(resume_du_plan(task_id, contract, fournis, args.from_file))
+    if not confirme(f"Approuver {task_id} ? Tapez « oui » pour approuver : "):
+        print("rien n'est fait : l'approbation n'a pas été confirmée")
+        return 1
+    creation = argparse.Namespace(
+        repo=args.repo, task_id=task_id, from_file=args.from_file, sans_conseil=True
+    )
+    if cmd_new(creation) != 0:
+        return 2
+    rouge = argparse.Namespace(
+        command="rouge",
+        repo=args.repo,
+        task_id=task_id,
+        task=None,
+        runtime=args.runtime,
+        image=args.image,
+        workdir=args.workdir,
+    )
+    if cmd_rouge(rouge) != 0:
+        print(
+            f"Approbation arrêtée : tasks/{task_id}/ est créé, pas commité. Corrigez-le, puis"
+            f" make task-check ID={task_id} et commitez-le ; ou supprimez-le et relancez avec un"
+            " plan corrigé."
+        )
+        return 1
+    # Le commit d'approbation : le dossier de la tâche seul, avec les hooks de l'opérateur.
+    chemin = f"tasks/{task_id}"
+    for commande in (
+        ["git", "-C", str(repo), "add", "--", chemin],
+        [
+            "git",
+            "-C",
+            str(repo),
+            "commit",
+            "-q",
+            "-m",
+            f"{task_id} : contrat approuvé",
+            "--",
+            chemin,
+        ],
+    ):
+        fait = subprocess.run(commande, capture_output=True, text=True, timeout=600, check=False)
+        if fait.returncode != 0:
+            sortie = (fait.stdout + fait.stderr).splitlines()
+            dit = [ligne for ligne in sortie if ligne.strip()][-6:]
+            print(f"le commit d'approbation a échoué ({' '.join(commande[3:5])}) :")
+            for ligne in dit:
+                print(f"  {ligne}")
+            return 1
+    court = git(repo, "rev-parse", "--short", "HEAD").decode().strip()
+    print(
+        f"{task_id} approuvé ({court}, sur {branche}). L'agent peut travailler : branche"
+        f" task/{task_id}, ou make task-worktree ID={task_id} pour un dossier à part. Le"
+        " serveur ne le saura qu'après votre git push."
+    )
     return 0
 
 
@@ -3365,6 +3577,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     perimes.add_argument("--repo", help="racine du dépôt (défaut : dossier courant)")
     perimes.set_defaults(func=cmd_perimes)
+
+    approuve = sub.add_parser(
+        "approuve",
+        help="make task-approve : le plan devient contrat et tests, vus échouer, puis commités"
+        " sur la branche principale après un « oui » de l'opérateur (opérateur)",
+    )
+    approuve.add_argument("--task-id", required=True)
+    approuve.add_argument("--from", dest="from_file", required=True, help="le plan du planner")
+    approuve.add_argument("--repo")
+    approuve.add_argument(
+        "--runtime", choices=["local", "podman", "docker", "auto"], default="local"
+    )
+    approuve.add_argument(
+        "--image", help=f"image de conteneur (défaut : EPHOR_IMAGE ou {DEFAULT_IMAGE})"
+    )
+    approuve.add_argument("--workdir", help="dossier de travail (défaut : ~/.cache/ephor/judge)")
+    approuve.set_defaults(func=cmd_approuve)
 
     new = sub.add_parser("new", help="créer le squelette d'un contrat (opérateur)")
     new.add_argument("--task-id", required=True)

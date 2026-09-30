@@ -29,6 +29,8 @@
 # premier passage, puis des dizaines au second.)
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")/../.." && pwd)"
+# Geste de l'opérateur : refusé quand un agent le lance, détours compris (.ephor/operateur.py).
+python3 "$SRC/.ephor/operateur.py" "bootstrap_existing_repo.sh" || exit 2
 USAGE="usage : bootstrap_existing_repo.sh [--docs] [--mettre-a-jour] /chemin/du/depot"
 DOCS=0; MAJ=0; DST=""
 for ARG in "$@"; do
