@@ -126,6 +126,43 @@ def test_un_sous_agent_en_mode_plan_ne_peut_que_lire() -> None:
     assert adapters.permissions_agent(meta)["bash"] == "deny", "sans Bash, rien à lancer"
 
 
+def test_l_evaluateur_relit_chaque_tache() -> None:
+    """Décision de l'opérateur (30/09/2026, #30) : l'évaluation n'est jamais sautée. Le juge ne
+    voit que les critères ; l'évaluateur voit la conception, le code en double, les cas
+    oubliés. Et son effort ne dépend plus de la session qui l'appelle : lancé depuis le dossier
+    d'une tâche en effort bas, il relisait en effort bas."""
+    skill = (ROOT / ".claude" / "skills" / "feature" / "SKILL.md").read_text(encoding="utf-8")
+    revue = skill.split("**6.")[1].split("**7.")[0]
+    faible = next(ligne for ligne in revue.splitlines() if ligne.startswith("- `faible`"))
+    assert "`evaluator`" in faible, faible
+    meta, _ = adapters.entete(ROOT / ".claude" / "agents" / "evaluator.md")
+    assert "chaque tâche" in meta["description"]
+    assert meta.get("effort") == "high" and meta.get("model") == "opus"
+
+
+def test_l_effort_d_un_role_passe_a_opencode() -> None:
+    """Sous opencode, l'effort d'un rôle est la variante du modèle. Mesuré (30/09/2026, faux
+    serveur au format d'Anthropic) : `variant: high` dans le fichier de l'agent, modèle réglé
+    sur le poste, et la réflexion envoyée passe de 48 000 à 16 000 tokens."""
+    genere = (ROOT / ".opencode" / "agents" / "evaluator.md").read_text(encoding="utf-8")
+    assert 'variant: "high"' in genere
+    scout = (ROOT / ".opencode" / "agents" / "scout.md").read_text(encoding="utf-8")
+    assert "variant:" not in scout, "sans effort réglé, celui de la session"
+
+
+def test_les_reglages_d_un_role_se_lisent_et_se_changent_sur_place() -> None:
+    texte = (ROOT / ".claude" / "agents" / "evaluator.md").read_text(encoding="utf-8")
+    assert adapters.reglages_de(texte) == {"model": "opus", "effort": "high"}
+    nu = adapters.sans_reglages(texte.encode()).decode()
+    entete = nu.split("---")[1]
+    assert "model:" not in entete and "effort:" not in entete and "tools:" in entete
+    change = adapters.avec_reglages(texte, {"model": "sonnet", "effort": "max"})
+    assert change == texte.replace("model: opus\neffort: high", "model: sonnet\neffort: max")
+    sans_effort = adapters.avec_reglages(texte, {"model": "opus"})
+    assert "effort:" not in sans_effort.split("---")[1], "une valeur absente retire la ligne"
+    assert adapters.sans_reglages(change.encode()) == adapters.sans_reglages(texte.encode())
+
+
 def test_l_evaluateur_peut_lancer_les_tests() -> None:
     """Session réelle (30/09/2026) : l'évaluateur, en mode plan, ne pouvait lancer aucun test
     (Claude Code n'y laisse passer que la lecture ; opencode : git, rg, fd, jq), et sa

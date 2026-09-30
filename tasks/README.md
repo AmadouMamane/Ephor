@@ -52,9 +52,12 @@ préférer quand le plan vous convient tel quel ; sinon, `make task-new`, retouc
 **Le niveau d'implémentation.** `"niveau": "rapide" | "standard" | "fort"` et
 `"effort": "low" … "max"` disent quel modèle doit écrire la tâche : sa difficulté, pas son
 risque. `make task-worktree` donne alors la ligne de lancement qui va avec (Claude Code :
-`claude --model opus --effort max` ; opencode : le modèle du poste pour ce niveau). Sous le
-niveau fort, l'`evaluator` relit même une tâche à risque faible. Le juge note le niveau
-dans son rapport : `make score` dira, sur de vraies tâches, ce que chaque niveau coûte.
+`claude --model opus --effort max` ; opencode : le modèle du poste pour ce niveau).
+L'`evaluator` (modèle fort) relit chaque tâche, quel que soit son niveau. Le juge note le
+niveau dans son rapport : `make score` dira, sur de vraies tâches, ce que chaque niveau coûte.
+Le modèle et l'effort de chaque rôle (évaluateur, relecteur, planner, scout) se règlent dans
+l'en-tête de son sous-agent, `.claude/agents/<rôle>.md` : `model:` et `effort:`. La mise à
+jour d'Ephor garde ces deux lignes ; `make adapters` les passe à opencode.
 
 **Hors Python** (Maven, Gradle, Jest, Go) : la preuve qui va au bout est le rapport JUnit de
 l'outil de test, écrit dans le dossier `{rapport}` que le juge lui donne, hors de la copie
@@ -134,8 +137,8 @@ qu'en local : en dessous de quelques secondes, le verdict dépendrait du mode d'
 fichier du périmètre de l'agent qui n'existe pas encore sur la base, le juge refuse le
 contrat avant d'exécuter quoi que ce soit — sinon l'agent noterait sa propre copie.
 
-Le champ `risk` règle la dépense de revue. `faible` : les contrôles automatiques suffisent.
-`modere` : relecture par le sous-agent `evaluator`. `eleve` : évaluateur, test de mutation
+Le champ `risk` règle la dépense de revue. L'`evaluator` relit chaque tâche, quel que soit
+son risque : le juge ne voit que les critères. `eleve` : en plus, test de mutation, relecteur
 et revue humaine attentive ; le juge y exige en plus que chaque critère prouve qu'il est
 allé au bout, et refuse tout silencieux ajouté par le patch (`# noqa`, `# type: ignore`,
 `pytest.mark.skip`…). Un silencieux vraiment justifié, c'est vous qui l'ajoutez sur la

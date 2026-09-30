@@ -163,6 +163,21 @@ modèle a son propre cache de prompt**, donc un changement de modèle en cours d
 session relit toute la conversation sans cache. Router par sous-agent plutôt que
 par `/model` en cours de route.
 
+**Le modèle et l'effort de chaque rôle se règlent là, et nulle part ailleurs** : deux lignes
+de l'en-tête de son sous-agent, `.claude/agents/<rôle>.md`.
+
+| Rôle | Par défaut | Pourquoi |
+|---|---|---|
+| `evaluator` | `model: opus`, `effort: high` | il relit chaque tâche ; son effort ne dépend plus de la session qui l'appelle |
+| `reviewer` | `model: sonnet`, `effort: high` | la relecture des tâches à risque élevé |
+| `planner` | `model: opus`, effort de la session | à fixer après mesure (#34) |
+| `scout`, `debt-collector` | `haiku`, `sonnet`, effort de la session | du volume, pas de la finesse |
+
+Changez ces lignes pour votre équipe si vous le voulez, puis `make adapters` : opencode reçoit
+l'effort de chaque rôle comme variante de son modèle (`variant`). La mise à jour d'Ephor garde
+ces deux lignes, et remplace le reste du sous-agent. `make doctor` dit quand l'évaluateur n'est
+plus au niveau fort : sa relecture ne vaut alors plus celle d'un modèle fort.
+
 Derrière une passerelle, ces trois noms ne veulent plus rien dire : parlez en **rapide,
 standard, fort**, et branchez-les une fois, sur votre poste, jamais dans le dépôt — les noms
 de modèles de l'entreprise n'ont rien à faire dans un dépôt partagé.

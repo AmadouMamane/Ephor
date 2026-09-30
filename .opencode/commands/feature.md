@@ -47,9 +47,9 @@ Au troisième échec sur le même critère : arrête-toi, écris le blocage dans
 `PROGRESS.md` sous `## Bloqué`, rends la main. Ne boucle pas.
 
 **6. La revue, proportionnée au risque du contrat.**
-- `faible` : pas de relecture par un modèle. Le juge et la CI suffisent. Sauf un contrat
-  de `niveau` rapide ou standard : écrit par un modèle moins fort, il est relu par
-  l'`evaluator` (fort). Écrire coûte plus cher que relire.
+- `faible` : sous-agent `evaluator`, toujours. Le juge et la CI ne voient que les critères ;
+  lui voit la conception, le code en double, les cas oubliés. Relire coûte bien moins cher
+  qu'écrire. S'il rend `NEEDS_WORK`, retour à l'étape 4.
 - `modere` : sous-agent `evaluator`. S'il rend `NEEDS_WORK`, retour à l'étape 4.
 - `eleve` : `evaluator`, puis `make mutants`, puis sous-agent `reviewer`.
 Chaque relecture par un modèle coûte des tokens : ne paie que ce que le risque justifie.

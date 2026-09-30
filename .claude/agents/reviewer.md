@@ -4,6 +4,7 @@ description: Revue de code d'un diff avant ouverture de PR. Complémentaire de l
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 model: sonnet
+effort: high
 color: yellow
 ---
 

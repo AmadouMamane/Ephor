@@ -29,6 +29,15 @@ Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
   prend le reste. L'effort demandé ne change pas. Mesuré de bout en bout, opencode 1.18.33
   et un faux serveur au format d'Anthropic : avant, 64 000 tokens envoyés dont 63 999 de
   réflexion ; après, 64 000 dont 48 000.
+- **L'évaluateur relit chaque tâche, et le modèle et l'effort de chaque rôle se règlent.**
+  L'évaluation sautait encore une tâche à risque faible écrite par un modèle fort : elle a
+  maintenant lieu à chaque fois (décision de l'opérateur). Aucun sous-agent ne fixait son
+  effort : il héritait de celui de la session, et dans le dossier d'une tâche lancée en effort
+  bas, l'évaluateur relisait en effort bas. Par défaut, évaluateur `opus` en `high`,
+  relecteur `sonnet` en `high`. Le réglage de chaque rôle tient dans deux lignes de l'en-tête
+  de son sous-agent (`model:`, `effort:`) : la mise à jour les garde et remplace le reste,
+  `make adapters` passe l'effort à opencode (sa `variant`, mesuré : 48 000 → 16 000 tokens
+  de réflexion en `high`), et `make doctor` dit quand l'évaluateur n'est plus au niveau fort.
 
 ## 1.4.0 — 30 septembre 2026
 

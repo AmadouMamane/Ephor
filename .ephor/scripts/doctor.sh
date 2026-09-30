@@ -306,6 +306,21 @@ printf '         le signale en fin de tour, le juge refuse le correctif — ce n
 printf '         La frontière, sous Claude Code, c'"'"'est le bac à sable ; opencode peut l'"'"'avoir par srt (.ephor/docs/11), Copilot non.\n'
 
 echo
+echo "== Rôles des sous-agents =="
+# L'évaluateur relit chaque tâche : c'est le seul regard sur ce que les critères ne mesurent
+# pas. Réglé sous le niveau fort (son en-tête, `model:`), sa relecture ne vaut plus celle d'un
+# modèle fort (#30). Un choix que le projet peut faire, mais qui doit se voir.
+if [ -f .claude/agents/evaluator.md ]; then
+  EVAL_MODELE="$(awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit } /^model:/ { sub(/^model:[[:space:]]*/, ""); print; exit }' .claude/agents/evaluator.md)"
+  EVAL_EFFORT="$(awk 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit } /^effort:/ { sub(/^effort:[[:space:]]*/, ""); print; exit }' .claude/agents/evaluator.md)"
+  case "$EVAL_MODELE" in
+    *opus* | "") ok "évaluateur : modèle fort, effort ${EVAL_EFFORT:-celui de la session} (.claude/agents/evaluator.md)" ;;
+    *) warn "évaluateur réglé sur « $EVAL_MODELE » : sa relecture ne vaut plus celle d'un modèle fort" \
+            "remettez model: opus dans .claude/agents/evaluator.md, sauf choix assumé par l'équipe ; puis make adapters" ;;
+  esac
+fi
+
+echo
 echo "== Mise à jour d'Ephor =="
 # Un .ephor-new, c'est une version d'Ephor posée à côté d'un fichier que la mise à jour n'a pas
 # pu remplacer : tant qu'il reste, c'est l'ANCIENNE version qui tourne. Mesuré le 29/09/2026 :

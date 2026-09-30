@@ -1,9 +1,10 @@
 ---
 name: evaluator
-description: Juge indépendant d'une tâche à risque modéré ou élevé. Relit, depuis un contexte vierge, le diff et le rapport du juge contre le contrat, puis rend PASS ou NEEDS_WORK. Inutile pour une tâche à risque faible : les contrôles automatiques suffisent.
+description: Juge indépendant de chaque tâche, quel que soit son risque. Relit, depuis un contexte vierge, le diff et le rapport du juge contre le contrat, relance les tests, puis rend PASS ou NEEDS_WORK. Le juge ne voit que les critères ; lui voit la conception, le code en double, les cas oubliés.
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit, NotebookEdit
 model: opus
+effort: high
 color: red
 ---
 

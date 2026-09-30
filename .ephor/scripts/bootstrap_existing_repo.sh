@@ -93,6 +93,14 @@ version_livree() { # version_livree <relatif> : ce contenu est-il une version li
   [ -n "$h" ] || return 1
   grep -qxF "$h $1" "$EMPREINTES" || grep -qxF "$h $1 actuelle" "$EMPREINTES"
 }
+reglages_seuls() { # reglages_seuls <relatif> : un sous-agent qui ne diffère d'une version livrée
+  # que par ses lignes `model:` et `effort:`, les réglages du rôle, que la mise à jour garde (#30)
+  local h
+  case "$1" in .claude/agents/*.md) ;; *) return 1 ;; esac
+  [ -f "$EMPREINTES" ] || return 1
+  h="$(python3 "$SRC/.ephor/adapters.py" sans-reglages "$1" 2>/dev/null)" || return 1
+  [ -n "$h" ] && grep -qxF "$h $1 sans-reglages" "$EMPREINTES"
+}
 intact_depuis_le_commit() { # le contenu exact du dernier commit ?
   local ancien
   ancien="$(git rev-parse -q --verify "HEAD:./$1" 2>/dev/null)" || return 1
@@ -103,7 +111,7 @@ remplacable() { # remplacable <relatif>
   case "$1" in .ephor/projet/*) return 1 ;; esac
   if [ -L "$1" ] || [ ! -f "$1" ] || [ ! -w "$1" ]; then return 1; fi
   intact_depuis_le_commit "$1" || return 1
-  moteur_du_projet "$1" || version_livree "$1"
+  moteur_du_projet "$1" || version_livree "$1" || reglages_seuls "$1"
 }
 pourquoi_pas() { # pourquoi_pas <relatif> : pourquoi un fichier d'Ephor n'a pas été remplacé
   if [ -L "$1" ]; then echo "lien symbolique"
@@ -121,7 +129,17 @@ copy() { # copy <relatif>
   elif [ ! -L "$rel" ] && cmp -s "$src" "$rel"; then
     SAME=$((SAME+1))
   elif remplacable "$rel"; then
+    local garde=""
+    if ! moteur_du_projet "$rel" && ! version_livree "$rel"; then
+      # Les réglages du rôle (model, effort), gardés d'une version à l'autre.
+      garde="$(mktemp "${TMPDIR:-/tmp}/ephor-role.XXXXXX")" && cp "$rel" "$garde" || garde=""
+    fi
     cp "$src" "$rel"; echo "  ↻ $rel"
+    if [ -n "$garde" ]; then
+      python3 "$SRC/.ephor/adapters.py" garder-reglages "$garde" "$rel" \
+        && echo "    réglages du rôle gardés (model, effort)"
+      rm -f "$garde"
+    fi
     if moteur_du_projet "$rel"; then REMPLACES="$REMPLACES $rel"; else HORS_MOTEUR="$HORS_MOTEUR $rel"; fi
   else
     cp "$src" "$rel.ephor-new"; SIDE=$((SIDE+1)); COTE="$COTE $rel"

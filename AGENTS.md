@@ -65,8 +65,8 @@ Procédure complète : `tasks/README.md`. Fonctionnement du juge : `.ephor/READM
 5. Un commit par incrément, message à l'impératif, sur ta branche de tâche. Jamais sur
    la branche principale : un commit y vaut approbation, c'est le geste de l'opérateur.
 6. Mets à jour `PROGRESS.md` : fait, en cours, bloqué, une ligne chacun.
-7. Revue proportionnée au risque du contrat : `faible`, aucune relecture par un modèle ;
-   `modere`, un évaluateur sans droit d'écriture ; `eleve`, évaluateur, mutation, relecteur.
+7. Revue : l'évaluateur relit chaque tâche, sans droit d'écriture ; en risque `eleve`,
+   s'y ajoutent la mutation et le relecteur.
 
 Trois échecs sur le même critère : **arrête-toi**, écris le blocage sous `## Bloqué`
 dans `PROGRESS.md`, et rends la main. Ne boucle pas.

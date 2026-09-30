@@ -16,6 +16,7 @@ commandes — pour éviter d'entretenir trois copies à la main.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -217,6 +218,10 @@ def agent_opencode(source: Path, meta: dict[str, str], corps: str) -> str:
     couleur = COULEURS.get(meta.get("color", ""))
     if couleur is not None:
         lignes.append("color: " + couleur)
+    # L'effort du rôle : sous opencode, la variante du modèle (high, max…), valable quand le
+    # modèle de l'agent est celui que le poste lui donne (make opencode-modeles).
+    if meta.get("effort"):
+        lignes.append("variant: " + valeur_yaml(meta["effort"]))
     regles = permissions_agent(meta)
     if regles:
         lignes.append("permission:")
@@ -593,9 +598,88 @@ def modeles_opencode(valeurs: dict[str, str]) -> int:
     return 0
 
 
+# ------------------------------------------------------------ réglages des rôles
+#
+# Le modèle et l'effort d'un rôle se règlent dans l'en-tête de son sous-agent, deux lignes :
+# `model:` (haiku, sonnet, opus : rapide, standard, fort) et `effort:` (low à max). Une seule
+# source : opencode en reçoit l'effort (`variant`) par `make adapters`, et son modèle par
+# `make opencode-modeles`. La mise à jour garde ces deux lignes quand le projet les a changées,
+# et remplace le reste du sous-agent (#30).
+REGLAGES_DE_ROLE = ("model", "effort")
+
+
+def _cle(ligne: str) -> str:
+    return ligne.split(":", 1)[0].strip() if ":" in ligne else ""
+
+
+def _entete_et_corps(texte: str) -> tuple[list[str], str] | None:
+    if not texte.startswith("---\n"):
+        return None
+    fin = texte.find("\n---\n", 3)
+    if fin < 0:
+        return None
+    return texte[4:fin].split("\n"), texte[fin:]
+
+
+def sans_reglages(texte: bytes) -> bytes:
+    """Le sous-agent sans ses lignes `model:` et `effort:` : si ce reste est une version livrée,
+    la mise à jour le remplace en gardant ces deux lignes."""
+    morceaux = _entete_et_corps(texte.decode("utf-8", "surrogateescape"))
+    if morceaux is None:
+        return texte
+    entete, corps = morceaux
+    garde = [ligne for ligne in entete if _cle(ligne) not in REGLAGES_DE_ROLE]
+    return ("---\n" + "\n".join(garde) + corps).encode("utf-8", "surrogateescape")
+
+
+def reglages_de(texte: str) -> dict[str, str]:
+    """Les valeurs de `model:` et `effort:` de l'en-tête, s'il les donne."""
+    morceaux = _entete_et_corps(texte)
+    if morceaux is None:
+        return {}
+    return {
+        _cle(ligne): ligne.split(":", 1)[1].strip()
+        for ligne in morceaux[0]
+        if _cle(ligne) in REGLAGES_DE_ROLE
+    }
+
+
+def avec_reglages(texte: str, reglages: dict[str, str]) -> str:
+    """L'en-tête avec ces valeurs de `model:` et `effort:` ; une valeur absente retire la ligne."""
+    morceaux = _entete_et_corps(texte)
+    if morceaux is None:
+        return texte
+    entete, corps = morceaux
+    sortie: list[str] = []
+    places = False
+    for ligne in entete:
+        cle = _cle(ligne)
+        if cle not in REGLAGES_DE_ROLE:
+            sortie.append(ligne)
+            continue
+        if not places:
+            # Les deux lignes, à la place de la première : l'en-tête garde son ordre.
+            sortie += [f"{nom}: {reglages[nom]}" for nom in REGLAGES_DE_ROLE if reglages.get(nom)]
+            places = True
+    if not places:
+        sortie += [f"{nom}: {reglages[nom]}" for nom in REGLAGES_DE_ROLE if reglages.get(nom)]
+    return "---\n" + "\n".join(sortie) + corps
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     commande = arguments[0] if arguments else ""
+    # Pour la mise à jour (bootstrap_existing_repo.sh), qui garde les réglages des rôles.
+    if commande == "sans-reglages" and len(arguments) == 2:
+        print(hashlib.sha256(sans_reglages(Path(arguments[1]).read_bytes())).hexdigest())
+        return 0
+    if commande == "garder-reglages" and len(arguments) == 3:
+        ancien, nouveau = (Path(chemin) for chemin in arguments[1:])
+        garde = reglages_de(ancien.read_text(encoding="utf-8"))
+        nouveau.write_text(
+            avec_reglages(nouveau.read_text(encoding="utf-8"), garde), encoding="utf-8"
+        )
+        return 0
     if commande == "write":
         return ecrire()
     if commande == "check":

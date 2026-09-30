@@ -268,6 +268,27 @@ def test_le_doctor_dit_quand_un_point_d_entree_manque(tmp_path: Path) -> None:
     assert "[FAIL] hooks déclarés par .claude/settings.json introuvables : fin-tour.sh" in doctor()
 
 
+def test_le_doctor_dit_quand_l_evaluateur_n_est_pas_au_niveau_fort(tmp_path: Path) -> None:
+    """L'évaluateur relit chaque tâche (#30) : réglé sous le niveau fort, sa relecture ne vaut
+    plus celle d'un modèle fort. Un choix que le projet peut faire, mais qui doit se voir."""
+    projet = tmp_path / "projet"
+    (projet / ".ephor" / "scripts").mkdir(parents=True)
+    shutil.copy(ROOT / ".ephor" / "scripts" / "doctor.sh", projet / ".ephor" / "scripts")
+    (projet / ".claude" / "agents").mkdir(parents=True)
+    source = (ROOT / ".claude" / "agents" / "evaluator.md").read_text(encoding="utf-8")
+    evaluateur = projet / ".claude" / "agents" / "evaluator.md"
+
+    def doctor() -> str:
+        return subprocess.run(
+            ["bash", ".ephor/scripts/doctor.sh"], cwd=projet, capture_output=True, text=True
+        ).stdout
+
+    evaluateur.write_text(source, encoding="utf-8")
+    assert "[ OK ] évaluateur : modèle fort, effort high" in doctor()
+    evaluateur.write_text(source.replace("model: opus", "model: sonnet"), encoding="utf-8")
+    assert "[WARN] évaluateur réglé sur « sonnet »" in doctor()
+
+
 def test_doctor_refuses_a_python_that_is_too_old(tmp_path: Path) -> None:
     """Le motif `3.[2-9]*` attrapait 3.9 : le python3 d'un Mac passait pour un ≥ 3.11,
     exactement le blocage que .ephor/docs/10 annonce en premier sur un poste d'entreprise."""

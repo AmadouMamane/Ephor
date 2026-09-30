@@ -96,16 +96,32 @@ def contenus(objets: list[str]) -> dict[str, bytes]:
     return rendus
 
 
+def sans_reglages(texte: bytes) -> bytes:
+    """Celle des adaptateurs : un seul calcul, pour l'écriture et pour la mise à jour."""
+    sys.path.insert(0, str(RACINE / ".ephor"))
+    from adapters import sans_reglages as calcul
+
+    return calcul(texte)
+
+
 def liste() -> str:
     lignes = [ENTETE.rstrip("\n")]
     for chemin in chemins():
-        objets = sorted(objets_passes(chemin))
-        empreintes = {hashlib.sha256(c).hexdigest() for c in contenus(objets).values()}
+        passes = list(contenus(sorted(objets_passes(chemin))).values())
+        empreintes = {hashlib.sha256(c).hexdigest() for c in passes}
         # La version du disque, commitée ou non : c'est elle que la livraison emporte.
-        actuelle = hashlib.sha256((RACINE / chemin).read_bytes()).hexdigest()
+        disque = (RACINE / chemin).read_bytes()
+        actuelle = hashlib.sha256(disque).hexdigest()
         for empreinte in sorted(empreintes | {actuelle}):
             suffixe = " actuelle" if empreinte == actuelle else ""
             lignes.append(f"{empreinte} {chemin}{suffixe}")
+        # Un sous-agent dont le projet n'a changé que le modèle ou l'effort reste remplaçable :
+        # la mise à jour garde ces deux lignes (#30).
+        if fnmatch.fnmatchcase(chemin, ".claude/agents/*.md"):
+            for empreinte in sorted(
+                {hashlib.sha256(sans_reglages(c)).hexdigest() for c in [*passes, disque]}
+            ):
+                lignes.append(f"{empreinte} {chemin} sans-reglages")
     return "\n".join(lignes) + "\n"
 
 

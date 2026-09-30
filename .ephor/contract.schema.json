@@ -38,7 +38,7 @@
         "standard",
         "fort"
       ],
-      "description": "Le modèle qui implémente : sa difficulté, pas son risque. Claude Code : haiku, sonnet, opus ; opencode : les modèles du poste (make opencode-modeles). Sous le niveau fort, l'evaluator relit même une tâche à risque faible."
+      "description": "Le modèle qui implémente : sa difficulté, pas son risque. Claude Code : haiku, sonnet, opus ; opencode : les modèles du poste (make opencode-modeles). L'evaluator relit chaque tâche, quel que soit son niveau."
     },
     "effort": {
       "enum": [

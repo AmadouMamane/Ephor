@@ -373,6 +373,36 @@ def test_des_reglages_d_avant_les_points_d_entree_disent_quoi_remplacer(
     assert "REMPLACENT la liste des gardes" in bilan
 
 
+def test_les_reglages_d_un_role_survivent_a_la_mise_a_jour(
+    tmp_path: Path, version_suivante: Path
+) -> None:
+    """Le modèle et l'effort d'un rôle se règlent dans l'en-tête de son sous-agent (#30). Un
+    réglage du projet faisait du fichier une retouche : la mise à jour le laissait en
+    `.ephor-new`, et le rôle gardait sa consigne d'avant. Elle garde maintenant ces deux
+    lignes, remplace le reste, et opencode les reçoit."""
+    cible = projet_equipe(tmp_path / "noderepo")
+    evaluateur = cible / ".claude" / "agents" / "evaluator.md"
+    texte = evaluateur.read_text(encoding="utf-8")
+    evaluateur.write_text(
+        texte.replace("model: opus", "model: sonnet").replace("effort: high", "effort: max"),
+        encoding="utf-8",
+    )
+    git(cible, "commit", "-qam", "notre évaluateur")
+    ajoute(version_suivante / ".claude" / "agents" / "evaluator.md", "\nConsigne suivante.\n")
+    git(version_suivante, "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+        "commit", "-qam", "évaluateur suivant")  # fmt: skip
+
+    sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
+
+    nouveau = evaluateur.read_text(encoding="utf-8")
+    assert "Consigne suivante." in nouveau, "la consigne suit la version"
+    assert "model: sonnet\neffort: max" in nouveau, "les réglages du projet restent"
+    assert not evaluateur.with_name("evaluator.md.ephor-new").exists()
+    assert "réglages du rôle gardés" in sortie
+    derive = (cible / ".opencode" / "agents" / "evaluator.md").read_text(encoding="utf-8")
+    assert 'variant: "max"' in derive, "et opencode les reçoit"
+
+
 def test_une_retouche_du_projet_hors_du_moteur_reste_et_se_donne_a_reprendre(
     tmp_path: Path, version_suivante: Path
 ) -> None:

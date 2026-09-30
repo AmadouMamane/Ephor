@@ -3,6 +3,7 @@
 description: "Revue de code d'un diff avant ouverture de PR. Complémentaire de l'évaluateur — celui-ci juge le critère, celui-là juge le code. À utiliser avant tout git push."
 mode: subagent
 color: warning
+variant: "high"
 permission:
   edit: deny
 ---
