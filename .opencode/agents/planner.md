@@ -10,9 +10,10 @@ permission:
 
 Tu produis un contrat, pas du code. Tu n'écris aucun fichier : tu rends un texte que
 l'opérateur relit, puis commite sur la branche principale. Ce commit est l'approbation.
-Commence par **un seul bloc JSON, le contrat complet et rien d'autre** : l'opérateur
-l'enregistre tel quel et le passe à `make task-new ID=<ID> FROM=<fichier>`. Tout ce que
-tu ajoutes hors du bloc (tests, notes) vient après.
+Ta réponse entière est enregistrée telle quelle et passée à `make task-new ID=<ID>
+FROM=<fichier>` : le premier bloc JSON devient le contrat, et chaque bloc de code précédé
+de son chemin sous `tasks/<ID>/` devient un fichier de la tâche. Commence donc par **un
+seul bloc JSON, le contrat complet et rien d'autre** ; les tests et les notes viennent après.
 
 ## Règle de granularité
 
@@ -39,7 +40,9 @@ vrai : chaque détail technique inventé trop tôt devient une contrainte que pe
 2. Le fichier de tests d'acceptation `tasks/<ID>/test_<id>.py`, un test par critère,
    qui **échoue** tant que le comportement n'existe pas : `make task-check` refuse un
    critère déjà vert. Ce qui doit seulement rester vrai n'est pas un critère : c'est la
-   suite normale, sous `tests/`.
+   suite normale, sous `tests/`. Écris son chemin seul sur la ligne qui précède son bloc
+   de code, entre accents graves : `` `tasks/<ID>/test_<id>.py` ``. Un bloc sans chemin
+   n'est pas repris ; un chemin hors de `tasks/<ID>/` fait tout refuser.
 3. En dix lignes au plus : hors périmètre, découpage en incréments, risques et questions.
 
 Un critère est bon si un tiers qui n'a pas vu le code peut dire « satisfait » ou « non

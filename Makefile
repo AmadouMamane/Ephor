@@ -126,9 +126,9 @@ adapters: ## Régénère les réglages d'opencode et de Copilot depuis .claude/ 
 copilot-install: ## Installe le greffon Copilot sur CETTE machine (OPÉRATEUR, une fois par poste)
 	@bash .ephor/scripts/install_copilot_plugin.sh
 
-task-check: ## Contrat prêt à approuver ? Sa forme, puis chaque critère doit ÉCHOUER sur le code actuel (écrit tasks/<ID>/rouge.json) : make task-check ID=FEAT-001 [RUNTIME=podman]
-	@test -n "$(ID)" || { echo "usage : make task-check ID=FEAT-001 [RUNTIME=podman] [IMAGE=<image>]"; exit 2; }
-	@$(EPHOR_PY) .ephor/judge.py rouge --task-id "$(ID)" --runtime "$(RUNTIME)" $(if $(IMAGE),--image "$(IMAGE)")
+task-check: ## Contrat prêt à approuver ? Sa forme, puis chaque critère doit ÉCHOUER sur le code actuel (écrit tasks/<ID>/rouge.json) : make task-check ID=FEAT-001 [RUNTIME=podman] ; sans ID, les contrôles rouges à refaire
+	@if [ -z "$(ID)" ]; then $(EPHOR_PY) .ephor/judge.py perimes; \
+	else $(EPHOR_PY) .ephor/judge.py rouge --task-id "$(ID)" --runtime "$(RUNTIME)" $(if $(IMAGE),--image "$(IMAGE)"); fi
 
 delivery-manifest: ## Génère le manifeste de livraison scellé : make delivery-manifest [TASK=<ID>] [DIGEST=<sha256:...>] [REPORT=<rapport du juge>]
 	@$(EPHOR_PY) .ephor/deploy/manifest.py generate $(if $(TASK),--task-id "$(TASK)",) $(if $(DIGEST),--artifact-digest "$(DIGEST)",) $(if $(REPORT),--report "$(REPORT)",)

@@ -73,7 +73,7 @@ relancer opencode ou Claude Code.
 | Moment | Geste |
 |---|---|
 | Début de session | `cat PROGRESS.md`, puis `/feature <ID>` ou reprise du « Prochain pas » |
-| Nouvelle fonctionnalité | contrat préparé par `planner`, créé par l'opérateur (`make task-new ID=<ID> FROM=plan.json`), vu échouer (`make task-check ID=<ID>`), commité sur `main` |
+| Nouvelle fonctionnalité | contrat et tests préparés par `planner`, créés par l'opérateur (`make task-new ID=<ID> FROM=.verify/plans/<ID>.md`), vu échouer (`make task-check ID=<ID>`), commité sur `main` |
 | Pendant | branche `task/<ID>`, `make verify` après chaque incrément |
 | Avant de conclure | `make judge TASK=<ID>` ; en conteneur, `RUNTIME=podman` |
 | Revue | `make review TASK=<ID>` : enchaîne ce que le risque du contrat exige, et rien de plus |

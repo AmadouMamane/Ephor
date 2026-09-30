@@ -173,8 +173,8 @@ signaux:
       for i in $(seq 1 10); do bash .ephor/scripts/pytest_ci.sh -q -m flaky || { echo "instable au tour $i"; instable=1; }; done
       [ "$instable" = 0 ] || echec="$echec tests-instables"
       uv run pip-audit || echec="$echec vulnérabilités"
-      # Un mutmut mort au démarrage sortait en silence : on exige son rapport de fin.
-      { uv run mutmut run > mutants-full.log 2>&1 && grep -q "mutations/second" mutants-full.log; } || echec="$echec mutation"
+      # Le script écarte les tests de structure, et dit ÉCHEC quand mutmut ne va pas au bout.
+      bash .ephor/scripts/mutants.sh --tout || echec="$echec mutation"
       if [ -n "${SNYK_TOKEN:-}" ]; then uvx snyk-agent-scan==0.6.4 --ci || echec="$echec agents"; else non_lance="$non_lance agents(pas de SNYK_TOKEN)"; fi
       if [ -n "$non_lance" ]; then echo "signaux NON lancés :$non_lance — ce n'est pas un vert"; fi
       if [ -n "$echec" ]; then echo "signaux en échec :$echec"; exit 1; fi
@@ -182,7 +182,7 @@ signaux:
   artifacts:
     when: always
     expire_in: 30 days
-    paths: [mutants-full.log]
+    paths: [.verify/mutants-run.log]
 
 # Détection de secrets native de GitLab : décommentez si votre instance fournit ses images.
 # include:

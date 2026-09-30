@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from conftest import EPHOR, FIX, ROOT, WRONG, contract, git, judge, trace_rouge
+from conftest import DEFECT, EPHOR, FIX, ROOT, WRONG, contract, git, judge, trace_rouge
 
 Runner = Callable[..., tuple[int, dict[str, Any]]]
 
@@ -576,6 +576,124 @@ def test_a_missing_plan_is_said_plainly(repo: Path, tmp_path: Path) -> None:
         ["new", "--task-id", "FEAT-006", "--repo", str(repo), "--from", str(tmp_path / "absent")]
     )
     assert code == 2
+
+
+REPONSE_DU_PLANNER = """Voici le contrat, à relire.
+
+```json
+@CONTRAT@
+```
+
+Le fichier de tests d'acceptation, `tasks/FEAT-007/test_feat_007.py` :
+
+```python
+\"\"\"Tests d'acceptation de FEAT-007.\"\"\"
+
+from src.metrics import accuracy
+
+
+def test_normal() -> None:
+    assert accuracy([(9, 10), (1, 100)]) == 10 / 110
+
+
+def test_vide() -> None:
+    assert accuracy([]) is None
+```
+
+Hors périmètre : la précision. Incréments : un seul.
+"""
+
+
+def plan_du_planner(tmp_path: Path, tache: str = "FEAT-007", **remplacements: str) -> Path:
+    fichier = f"tasks/{tache}/test_{tache.lower().replace('-', '_')}.py"
+    criteres = [
+        {
+            "id": "C1",
+            "description": "le cas normal",
+            "check": ["uv", "run", "pytest", f"{fichier}::test_normal"],
+        },
+        {
+            "id": "C2",
+            "description": "la liste vide",
+            "check": ["uv", "run", "pytest", f"{fichier}::test_vide"],
+        },
+    ]
+    texte = (
+        REPONSE_DU_PLANNER.replace(
+            "@CONTRAT@", json.dumps(contract(id=tache, criteria=criteres), indent=2)
+        )
+        .replace("FEAT-007", tache)
+        .replace("test_feat_007", Path(fichier).stem)
+    )
+    for avant, apres in remplacements.items():
+        texte = texte.replace(avant, apres)
+    source = tmp_path / "plan.md"
+    source.write_text(texte, encoding="utf-8")
+    return source
+
+
+def test_la_reponse_du_planner_donne_le_contrat_et_les_tests(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Vu en session réelle, vrai en 1.3.0 : le planner rend le contrat ET les tests, `FROM=`
+    ne prenait que le contrat, et l'opérateur recopiait les tests par-dessus le squelette, à
+    chaque tâche. La réponse entière du planner entre maintenant telle quelle."""
+    source = plan_du_planner(tmp_path)
+    code = judge.main(["new", "--task-id", "FEAT-007", "--repo", str(repo), "--from", str(source)])
+    assert code == 0
+    tests = (repo / "tasks" / "FEAT-007" / "test_feat_007.py").read_text(encoding="utf-8")
+    assert "def test_vide() -> None:\n    assert accuracy([]) is None\n" in tests
+    assert judge.SQUELETTE not in tests
+    contrat = json.loads((repo / "tasks" / "FEAT-007" / "contract.json").read_text())
+    assert contrat["criteria"][1]["description"] == "la liste vide"
+    sortie = capsys.readouterr().out
+    assert "tasks/FEAT-007/test_feat_007.py (du plan)" in sortie
+    assert "Reste à écrire" not in sortie
+    assert judge.main(["validate", "--task-id", "FEAT-007", "--repo", str(repo)]) == 0
+
+
+def test_un_test_cite_mais_absent_du_plan_reste_un_squelette(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = plan_du_planner(
+        tmp_path, "FEAT-008", **{"`tasks/FEAT-008/test_feat_008.py` :": "Des tests, sans chemin :"}
+    )
+    code = judge.main(["new", "--task-id", "FEAT-008", "--repo", str(repo), "--from", str(source)])
+    assert code == 0
+    assert judge.SQUELETTE in (repo / "tasks" / "FEAT-008" / "test_feat_008.py").read_text()
+    assert "Reste à écrire : tasks/FEAT-008/test_feat_008.py" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("chemin", "motif"),
+    [
+        ("tasks/FEAT-009/../../src/metrics.py", "hors de tasks/FEAT-009/"),
+        ("tasks/AUTRE-001/test_feat_009.py", "hors de tasks/FEAT-009/"),
+    ],
+)
+def test_un_plan_qui_ecrit_hors_de_sa_tache_ne_cree_rien(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], chemin: str, motif: str
+) -> None:
+    source = plan_du_planner(
+        tmp_path, "FEAT-009", **{"tasks/FEAT-009/test_feat_009.py` :": f"{chemin}` :"}
+    )
+    code = judge.main(["new", "--task-id", "FEAT-009", "--repo", str(repo), "--from", str(source)])
+    assert code == 2
+    assert motif in capsys.readouterr().out
+    assert not (repo / "tasks" / "FEAT-009").exists()
+    assert (repo / "src" / "metrics.py").read_text() == DEFECT
+
+
+def test_un_test_du_plan_qui_n_est_pas_du_python_ne_cree_rien(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = plan_du_planner(
+        tmp_path, "FEAT-010", **{"def test_vide() -> None:": "def test_vide( -> None:"}
+    )
+    code = judge.main(["new", "--task-id", "FEAT-010", "--repo", str(repo), "--from", str(source)])
+    assert code == 2
+    assert "tasks/FEAT-010/test_feat_010.py : Python invalide" in capsys.readouterr().out
+    assert not (repo / "tasks" / "FEAT-010").exists()
 
 
 def test_example_contract_of_the_template_is_valid() -> None:

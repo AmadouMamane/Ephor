@@ -20,9 +20,10 @@ Contrats disponibles :
 **1. Un contrat approuvé, avant tout code.**
 S'il n'existe pas de `tasks/<ID>/contract.json` sur la branche principale, délègue au
 sous-agent `planner`, avec la sortie de `make map` dans la demande : il n'a pas de
-terminal pour la faire lui-même. Donne son contrat et ses tests d'acceptation à l'opérateur, puis
-**arrête-toi** : c'est lui qui les crée (`make task-new`, ou `FROM=` sur le plan que tu
-lui rends), les relit, les voit échouer (`make task-check`) et les commite sur
+terminal pour la faire lui-même. Enregistre sa réponse entière, telle quelle, dans
+`.verify/plans/<ID>.md`, et donne à l'opérateur la commande qui crée le contrat et les
+tests : `make task-new ID=<ID> FROM=.verify/plans/<ID>.md`. Puis **arrête-toi** : c'est
+lui qui les crée, les relit, les voit échouer (`make task-check`) et les commite sur
 `main`. Tu ne peux ni écrire dans `tasks/`, ni commencer sans ce commit.
 
 **2. La branche de travail.** `git switch -c task/<ID>` depuis la branche principale.

@@ -6,11 +6,14 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
 ## Le circuit
 
 1. **Rédiger.** Le sous-agent `planner` propose le contrat et les tests d'acceptation. Il
-   n'écrit aucun fichier. Vous enregistrez son bloc JSON dans un fichier et vous le passez en
-   entrée : `make task-new ID=FEAT-001 FROM=plan.json`. Le contrat est vérifié avant
-   d'être écrit — s'il est mauvais, rien n'est créé — et les fichiers de test cités par
-   les critères sont créés avec un test vide par critère, qu'il ne reste qu'à remplir.
-   Sans plan sous la main, `make task-new ID=FEAT-001` donne un squelette à compléter.
+   n'écrit aucun fichier : l'agent enregistre sa réponse entière dans
+   `.verify/plans/FEAT-001.md`, et vous la passez telle quelle :
+   `make task-new ID=FEAT-001 FROM=.verify/plans/FEAT-001.md`. Le premier bloc JSON devient
+   le contrat ; chaque bloc de code annoncé par son chemin sous `tasks/FEAT-001/` devient un
+   fichier de la tâche. Tout est vérifié avant d'être écrit — contrat mauvais, chemin hors de
+   la tâche, Python illisible : rien n'est créé. Un fichier de test cité par les critères mais
+   absent du plan est créé avec un test vide par critère, à remplir. Un contrat JSON seul
+   marche aussi (`FROM=plan.json`). Sans plan, `make task-new ID=FEAT-001` donne un squelette.
 2. **Voir échouer.** Vous relisez, puis vous lancez `make task-check ID=FEAT-001`. Il vérifie
    la forme du contrat, puis lance chaque critère une fois sur le code **commité**, plus les
    preuves de la tâche (ce dossier, les fichiers que les critères citent), comme le juge le
@@ -22,10 +25,15 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
    `make task-new` pas encore rempli. Pour le reste, lisez la raison affichée pour
    chacun : elle doit dire que le comportement manque. Alors seulement il écrit
    `tasks/FEAT-001/rouge.json`. Relancé sans que rien ait changé, il n'y touche plus.
+   Si le dépôt a ses hooks de pre-commit, il les passe d'abord sur les preuves pas encore
+   commitées, comme le commit les passera : sinon le commit les réécrivait (format, fin de
+   fichier) après le contrôle, et la trace était périmée dès l'approbation.
 3. **Approuver.** Vous commitez le dossier entier (contrat, tests, `rouge.json`) sur la
    branche principale. **Ce commit est l'approbation** : le juge refuse tout contrat absent
    de la base ou différent de sa version approuvée, et toute tâche sans contrôle rouge, ou
    dont une preuve a changé depuis. Un test retouché après coup : relancez `make task-check`.
+   `make task-check` sans `ID` liste les tâches dont la trace est à refaire, lues sur la
+   branche principale comme le juge les lira (un reformatage du dépôt en périme plusieurs).
 4. **Travailler.** L'agent travaille sur la branche `task/FEAT-001`, dans le périmètre
    `allowed_paths`. Il ne peut modifier ni ce dossier, ni les zones de contrôle.
 5. **Juger.** `make judge TASK=FEAT-001` en local, puis le job `juge` de la CI sur la merge request.

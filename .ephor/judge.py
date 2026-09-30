@@ -2746,6 +2746,86 @@ def preuves_du_dossier(
     return retenus, [c for c in chemins if c not in retenus]
 
 
+def pre_commit_du_depot(repo: Path) -> list[str] | None:
+    """La commande pre-commit que `git commit` lancera sur ce dépôt ; None quand le commit ne
+    lance pas pre-commit (pas de configuration, pas de hook installé, ou un autre hook) ;
+    liste vide quand le hook est là mais pre-commit introuvable.
+
+    Le hook se cherche avec le git de l'opérateur, pas celui du juge : `core.hooksPath` décide
+    du hook que le commit lancera, et le git durci du juge le remplace par /dev/null."""
+    if not (repo / ".pre-commit-config.yaml").is_file():
+        return None
+    try:
+        chemin = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--git-path", "hooks/pre-commit"],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+        return None
+    hook = Path(chemin) if Path(chemin).is_absolute() else repo / chemin
+    if not hook.is_file() or not os.access(hook, os.X_OK):
+        return None
+    texte = hook.read_text(encoding="utf-8", errors="replace")
+    if "pre-commit" not in texte and "pre_commit" not in texte:
+        return None
+    # Le hook d'installation de pre-commit nomme l'interpréteur qui l'a installé.
+    interprete = re.search(r"^INSTALL_PYTHON=['\"]?([^'\"\n]+)", texte, re.M)
+    if interprete and os.access(interprete.group(1), os.X_OK):
+        return [interprete.group(1), "-mpre_commit"]
+    executable = shutil.which("pre-commit")
+    return [executable] if executable else []
+
+
+def passer_les_hooks_du_commit(repo: Path, fichiers: list[str]) -> None:
+    """Les hooks de pre-commit (ruff, fin de fichier, espaces…) s'appliquent aussi à
+    `tasks/` : pris avant eux, l'empreinte du contrôle rouge était périmée dès le commit de
+    l'approbation (sept fois dans une même session réelle, rejoué le 30/09/2026). On les
+    passe donc ici, sur les preuves pas encore commitées, comme le commit les passera ; un
+    second passage vérifie qu'ils n'ont plus rien à changer."""
+    commande = pre_commit_du_depot(repo) if fichiers else None
+    if commande is None:
+        return
+    if not commande:
+        print(
+            "ATTENTION : le hook de pre-commit est installé, mais pre-commit est introuvable :"
+            " le commit échouera, ou réécrira ces fichiers après le contrôle."
+        )
+        return
+    avant = {nom: (repo / nom).read_bytes() for nom in fichiers}
+    for _ in range(2):
+        try:
+            passage = subprocess.run(
+                [*commande, "run", "--files", *fichiers],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(
+                f"ATTENTION : les hooks du commit n'ont pas pu tourner ({exc}) : s'ils"
+                " réécrivent ces fichiers au commit, le contrôle sera à refaire."
+            )
+            return
+        if passage.returncode == 0:
+            break
+    reecrits = [nom for nom in fichiers if (repo / nom).read_bytes() != avant[nom]]
+    if reecrits:
+        print("réécrit par les hooks du commit : " + ", ".join(reecrits))
+    if passage.returncode != 0:
+        print(
+            "ATTENTION : les hooks du commit échouent encore sur ces fichiers : le commit sera"
+            " refusé. Corrigez, puis relancez ce contrôle, dont la trace serait sinon périmée."
+        )
+        dit = [ligne for ligne in (passage.stdout + passage.stderr).splitlines() if ligne.strip()]
+        for ligne in dit[-8:]:
+            print(f"  {ligne}")
+
+
 def cmd_rouge(args: argparse.Namespace) -> int:
     """`make task-check` : la forme du contrat, puis chaque critère lancé une fois sur le code
     commité, comme le juge le lancera. Tous doivent échouer, et pour la bonne raison ; alors
@@ -2792,6 +2872,10 @@ def cmd_rouge(args: argparse.Namespace) -> int:
     try:
         _, modifies = snapshot(repo, head)
         retenus, ecartes = preuves_du_dossier(repo, head, contract, task_id, modifies)
+        trace_actuelle = f"tasks/{task_id}/{ROUGE}"
+        passer_les_hooks_du_commit(
+            repo, [nom for nom in retenus if nom != trace_actuelle and (repo / nom).is_file()]
+        )
         patch = snapshot(repo, head, retenus)[0] if retenus else b""
         if ecartes:
             montres = ", ".join(ecartes[:5]) + (
@@ -2885,6 +2969,58 @@ def cmd_rouge(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_perimes(args: argparse.Namespace) -> int:
+    """`make task-check` sans ID : le contrôle rouge de chaque tâche, lu sur la branche
+    principale comme le juge le lira. Un reformatage du dépôt périme d'un coup toutes les
+    traces qu'il touche ; on les découvrait une par une, au juge (session réelle, 30/09/2026).
+    Rien n'est lancé : la liste se lit dans git."""
+    repo = repo_root(args.repo)
+    ref, _ = resolve_base(repo, None)
+    try:
+        entrees = git(repo, "ls-tree", "-z", "--name-only", f"{ref}:tasks").split(b"\0")
+    except JudgeError:
+        entrees = []
+    print(f"contrôles rouges, lus sur {ref} :")
+    a_jour = 0
+    a_refaire: list[str] = []
+    for tache in sorted(entree.decode("utf-8", "replace") for entree in entrees if entree):
+        if not ID_PATTERN.match(tache):
+            continue
+        try:
+            brut = git(repo, "show", f"{ref}:tasks/{tache}/contract.json")
+        except JudgeError:
+            continue
+        try:
+            lire_trace_rouge(
+                repo, ref, parse_contract(lire_json(brut.decode("utf-8")), tache), tache
+            )
+        except JudgeError as exc:
+            a_refaire.append(tache)
+            ecarts = [
+                message.split(" : ", 1)[1]
+                for message in exc.messages
+                if message.startswith("contrôle rouge périmé : ")
+            ]
+            if ecarts:
+                print(f"  PÉRIMÉ  {tache} : {', '.join(ecarts)}")
+            else:
+                print(f"  À REFAIRE  {tache} : {exc.messages[0].split(' : ')[0]}")
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            a_refaire.append(tache)
+            print(f"  À REFAIRE  {tache} : contrat illisible ({exc})")
+        else:
+            a_jour += 1
+    print(f"à jour : {a_jour} tâche(s)")
+    if not a_refaire:
+        return 0
+    print(
+        f"à refaire sur {ref}, pour chaque tâche encore ouverte : "
+        + " ; ".join(f"make task-check ID={tache}" for tache in a_refaire)
+    )
+    print("Une tâche déjà fusionnée n'a plus besoin de sa trace : laissez-la telle quelle.")
+    return 1
+
+
 def lancer_en_rouge(
     banc: Banc, contract: Contract
 ) -> tuple[list[dict[str, str]], list[str], list[str]]:
@@ -2972,6 +3108,57 @@ def wanted_tests(task_id: str, contract: Contract) -> dict[str, list[str]]:
     return wanted
 
 
+# Un bloc de code Markdown : sa clôture (``` ou ~~~), sa ligne d'annonce, son contenu.
+BLOC_DE_CODE = re.compile(r"^(`{3,}|~{3,})([^\n]*)\n(.*?)^\1[ \t]*$", re.M | re.S)
+CHEMIN_DE_TACHE = re.compile(r"tasks/[^\s`'\"*,;()<>]+")
+
+
+def lire_plan(texte: str, task_id: str) -> tuple[Any, dict[str, str]]:
+    """Le plan de `make task-new FROM=` : un contrat JSON seul, ou la réponse entière du
+    planner. Dans la réponse, le premier bloc JSON est le contrat, et chaque bloc de code
+    annoncé par un chemin sous `tasks/` (sur sa ligne d'ouverture, ou sur la dernière ligne
+    avant lui) est un fichier de la tâche. Un chemin hors de `tasks/<ID>/`, ou un fichier
+    Python qui ne se lit pas, et rien n'est créé.
+
+    Vu en session réelle, vrai en 1.3.0 : `FROM` ne prenait que le contrat, et l'opérateur
+    recopiait à la main, à chaque tâche, les tests que le planner avait déjà écrits."""
+    if texte.lstrip().startswith("{"):
+        return lire_json(texte), {}
+    contrat: Any = None
+    fichiers: dict[str, str] = {}
+    refus: list[str] = []
+    for bloc in BLOC_DE_CODE.finditer(texte):
+        annonce, contenu = bloc.group(2).strip(), bloc.group(3)
+        langue = annonce.split()[0].lower() if annonce else ""
+        if contrat is None and (langue == "json" or (not langue and contenu.lstrip()[:1] == "{")):
+            contrat = lire_json(contenu)
+            continue
+        avant = texte[: bloc.start()].rstrip("\n").rsplit("\n", 1)[-1]
+        trouve = CHEMIN_DE_TACHE.search(annonce) or CHEMIN_DE_TACHE.search(avant)
+        if trouve is None:
+            continue
+        nom = trouve.group(0).rstrip(".:")
+        if not (safe_path(nom) and nom.startswith(f"tasks/{task_id}/")):
+            refus.append(f"le plan écrit hors de tasks/{task_id}/ : {nom}")
+        elif nom in (f"tasks/{task_id}/contract.json", f"tasks/{task_id}/{ROUGE}"):
+            refus.append(f"{nom} : vient du bloc JSON ou de make task-check, pas d'un bloc à part")
+        elif nom in fichiers:
+            refus.append(f"{nom} : deux blocs pour le même fichier")
+        else:
+            if nom.endswith(".py"):
+                try:
+                    ast.parse(contenu)
+                except SyntaxError as exc:
+                    refus.append(f"{nom} : Python invalide (ligne {exc.lineno} : {exc.msg})")
+                    continue
+            fichiers[nom] = contenu
+    if refus:
+        raise JudgeError(refus)
+    if contrat is None:
+        raise JudgeError("pas de contrat dans le plan : ni un JSON seul, ni un bloc ```json")
+    return contrat, fichiers
+
+
 def cmd_new(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo)
     task_id = args.task_id
@@ -3007,12 +3194,14 @@ def cmd_new(args: argparse.Namespace) -> int:
         "verify": ["bash", ".ephor/projet/verify.sh"],
         "timeout_seconds": DEFAULT_TIMEOUT,
     }
-    # Contrat déjà rédigé et relu : on le reprend tel quel, après l'avoir validé. Rien
-    # n'est créé si le fichier est mauvais, pour ne pas laisser un dossier à moitié fait.
+    # Contrat déjà rédigé et relu : on le reprend tel quel, après l'avoir validé, avec les
+    # fichiers de tests que le plan donne. Rien n'est créé si un morceau est mauvais, pour ne
+    # pas laisser un dossier à moitié fait.
+    fournis: dict[str, str] = {}
     if args.from_file:
         source = Path(args.from_file).expanduser()
         try:
-            data = lire_json(source.read_text(encoding="utf-8"))
+            data, fournis = lire_plan(source.read_text(encoding="utf-8"), task_id)
         except OSError as exc:
             print(f"plan introuvable ou illisible : {exc}")
             return 2
@@ -3023,7 +3212,8 @@ def cmd_new(args: argparse.Namespace) -> int:
             print(f"plan illisible (JSON) : {exc}")
             return 2
         except JudgeError as exc:
-            print(f"  REFUS {exc}")
+            for message in exc.messages:
+                print(f"  REFUS {message}")
             return 2
         if isinstance(data, dict):
             data.setdefault("id", task_id)
@@ -3043,6 +3233,11 @@ def cmd_new(args: argparse.Namespace) -> int:
         json.dumps(ordered, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     written = [f"tasks/{task_id}/contract.json"]
+    for path, contenu in sorted(fournis.items()):
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text(contenu, encoding="utf-8")
+        written.append(f"{path} (du plan)")
+    squelettes: list[str] = []
     for path, names in sorted(tests.items()):
         target = repo / path
         if target.exists():
@@ -3050,7 +3245,10 @@ def cmd_new(args: argparse.Namespace) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(skeleton_test(task_id, names or ["test_a_ecrire"]), encoding="utf-8")
         written.append(path)
+        squelettes.append(path)
     print("créé : " + ", ".join(written))
+    for path in sorted(set(fournis) - set(tests)):
+        print(f"ATTENTION : aucun critère ne cite {path} ; il fera partie des preuves, relisez-le.")
     if not tests:
         print(
             f"ATTENTION : aucun critère ne s'appuie sur un fichier de tasks/{task_id}/.\n"
@@ -3058,10 +3256,16 @@ def cmd_new(args: argparse.Namespace) -> int:
             "elles existent déjà sur la branche principale."
         )
     if args.from_file:
+        if squelettes:
+            print(
+                f"Reste à écrire : {', '.join(squelettes)} (squelette : le plan ne le donnait pas)."
+            )
         print(
-            "le contrat vient de votre plan et il est valide. Reste à écrire les tests\n"
-            f"d'acceptation, à les voir échouer (make task-check ID={task_id}), puis à commiter\n"
-            "le dossier sur la branche principale : ce commit est l'approbation.\n"
+            "le contrat vient de votre plan et il est valide"
+            + (", les tests aussi" if fournis else "")
+            + ". Relisez tout, voyez chaque critère\n"
+            f"échouer (make task-check ID={task_id}), puis commitez le dossier sur la branche\n"
+            "principale : ce commit est l'approbation.\n"
             f"Ensuite : git switch -c task/{task_id}"
         )
     else:
@@ -3155,6 +3359,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     rouge.add_argument("--workdir", help="dossier de travail (défaut : ~/.cache/ephor/judge)")
     rouge.set_defaults(func=cmd_rouge)
+
+    perimes = sub.add_parser(
+        "perimes", help="make task-check sans ID : les contrôles rouges à refaire, toutes tâches"
+    )
+    perimes.add_argument("--repo", help="racine du dépôt (défaut : dossier courant)")
+    perimes.set_defaults(func=cmd_perimes)
 
     new = sub.add_parser("new", help="créer le squelette d'un contrat (opérateur)")
     new.add_argument("--task-id", required=True)

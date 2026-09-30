@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -697,3 +698,134 @@ def test_la_revue_va_au_bout_et_dit_son_bilan(tmp_path: Path) -> None:
     assert sortie.returncode != 0
     assert "-> juge" in sortie.stdout, "le juge tourne même après un verify rouge"
     assert "revue : 0 étape(s) sur 2 vertes — en échec : vérification, juge" in sortie.stdout
+
+
+def _projet_a_muter(racine: Path, fonctions: int) -> Path:
+    """Un projet équipé en miniature : la suite de structure livrée par Ephor, le script de
+    mutation du moteur, et un module de `fonctions` fonctions ajouté sur une branche de tâche,
+    dont seule `f1` est testée."""
+    (racine / "src" / "app").mkdir(parents=True)
+    (racine / "src" / "app" / "__init__.py").write_text('"""Paquet."""\n')
+    (racine / "tests").mkdir()
+    shutil.copy(ROOT / "tests" / "test_architecture.py", racine / "tests")
+    (racine / ".ephor" / "scripts").mkdir(parents=True)
+    shutil.copy(ROOT / ".ephor" / "scripts" / "mutants.sh", racine / ".ephor" / "scripts")
+    (racine / "pyproject.toml").write_text(
+        '[project]\nname = "app"\nversion = "0"\n\n[tool.mutmut]\nsource_paths = ["src/"]\n'
+    )
+    (racine / ".gitignore").write_text("mutants/\n.verify/\n__pycache__/\n")
+    git(racine, "init", "-q", "-b", "main")
+    git(racine, "config", "user.email", "test@example.invalid")
+    git(racine, "config", "user.name", "Ephor test")
+    git(racine, "add", "-A")
+    git(racine, "commit", "-qm", "base")
+    git(racine, "switch", "-qc", "task/CALC-001")
+    lignes = ['"""Calculs."""', ""]
+    for i in range(fonctions):
+        lignes += [
+            f"def f{i}(x: int) -> int:",
+            f'    """f{i}."""',
+            f"    if x > {i}:",
+            f"        return x + {i}",
+            "    return x - 1",
+            "",
+        ]
+    (racine / "src" / "app" / "calc.py").write_text("\n".join(lignes) + "\n")
+    (racine / "tests" / "test_calc.py").write_text(
+        '"""Tests du calcul."""\n\nfrom app.calc import f1\n\n\n'
+        'def test_f1() -> None:\n    """f1."""\n    assert f1(5) == 6\n    assert f1(0) == -1\n'
+    )
+    git(racine, "add", "-A")
+    git(racine, "commit", "-qm", "calculs")
+    return racine
+
+
+def _uv_factice(dossier: Path, corps: str) -> dict[str, str]:
+    """Un `uv` placé en tête du PATH : `uv run <commande>` lance <commande> telle quelle, ou
+    joue le rôle que `corps` lui donne."""
+    dossier.mkdir()
+    uv = dossier / "uv"
+    uv.write_text("#!/usr/bin/env bash\n" + corps)
+    uv.chmod(0o755)
+    return {**os.environ, "PATH": f"{dossier}{os.pathsep}{os.environ['PATH']}"}
+
+
+def test_la_mutation_ne_bute_plus_sur_les_tests_de_structure(tmp_path: Path) -> None:
+    """Vu en session réelle, rejoué le 30/09/2026 : mutmut recopie le code en empilant les
+    variantes de chaque fonction (302 lignes, copie de 2 905). Les tests de structure lisaient
+    la copie, échouaient (« plus de 400 lignes »), et mutmut s'arrêtait avant le premier
+    mutant ; le script disait « aucun mutant exécuté », code 0, sur tout vrai module."""
+    bin_venv = Path(sys.executable).parent
+    if not (bin_venv / "mutmut").exists():
+        pytest.skip("mutmut absent de l'environnement des tests")
+    projet = _projet_a_muter(tmp_path / "projet", fonctions=20)
+    env = _uv_factice(tmp_path / "bin", '[ "$1" = run ] && shift\nexec "$@"\n')
+    env["PATH"] = f"{tmp_path / 'bin'}{os.pathsep}{bin_venv}{os.pathsep}{os.environ['PATH']}"
+    sortie = subprocess.run(
+        ["bash", ".ephor/scripts/mutants.sh"],
+        cwd=projet,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    assert sortie.returncode == 0, sortie.stdout + sortie.stderr
+    assert "score de mutation : 66%  (4 tués, 2 survivants sur 6)" in sortie.stdout, sortie.stdout
+    # Les 19 fonctions sans test ne comptent pas dans le score : le script le dit.
+    assert "114 mutant(s) qu'aucun test n'exécute" in sortie.stdout, sortie.stdout
+
+
+def test_une_mutation_arretee_en_route_n_est_pas_un_vert(tmp_path: Path) -> None:
+    """Quand mutmut s'arrêtait avant le premier mutant, le script le taisait (code 0) et
+    accusait le code. La passe de nuit de la CI exigeait déjà son rapport de fin ; le poste,
+    non. Un module sans rien de mutable reste, lui, un cas normal."""
+    projet = _projet_a_muter(tmp_path / "projet", fonctions=2)
+    appels = tmp_path / "appels.txt"
+    env = _uv_factice(
+        tmp_path / "bin",
+        f'echo "$*" >> "{appels}"\n'
+        'case "$MODE" in\n'
+        "  mort) echo 'FAILED tests/test_calc.py::test_f1 - AssertionError'\n"
+        "        echo 'failed to collect stats. runner returned 1'; exit 1 ;;\n"
+        "  vide) echo 'AssertionError: Filtered for specific mutants, but nothing matches'\n"
+        "        exit 1 ;;\n"
+        "esac\n",
+    )
+
+    def lance(mode: str, *options: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", ".ephor/scripts/mutants.sh", *options],
+            cwd=projet,
+            env={**env, "MODE": mode},
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+
+    morte = lance("mort")
+    assert morte.returncode != 0, morte.stdout
+    assert "ÉCHEC" in morte.stdout and "aucun score" in morte.stdout, morte.stdout
+    assert "failed to collect stats" in morte.stdout, "la raison de mutmut est affichée"
+    assert "test_calc.py::test_f1" in morte.stdout, "le test qui l'a arrêté est nommé"
+
+    vide = lance("vide")
+    assert vide.returncode == 0, vide.stdout
+    assert "rien à muter" in vide.stdout and "ÉCHEC" not in vide.stdout, vide.stdout
+
+    # La passe complète (celle de la CI) ne filtre rien, et passe par les mêmes règles.
+    complete = lance("mort", "--tout")
+    assert complete.returncode != 0 and "ÉCHEC" in complete.stdout, complete.stdout
+    assert appels.read_text().splitlines()[-1] == "run mutmut run"
+
+
+def test_la_ci_mute_avec_le_script_du_moteur() -> None:
+    """La passe de nuit lançait mutmut elle-même : les tests de structure l'arrêtaient au
+    démarrage sur tout vrai projet. Elle passe par le script, qui les écarte et dit ÉCHEC
+    quand mutmut ne va pas au bout."""
+    for chemin in (ROOT / ".gitlab-ci.yml", ROOT / ".github" / "workflows" / "post-merge.yml"):
+        texte = chemin.read_text(encoding="utf-8")
+        assert "bash .ephor/scripts/mutants.sh --tout" in texte, chemin.name
+        assert "mutmut run" not in texte, chemin.name
+        assert ".verify/mutants-run.log" in texte, f"{chemin.name} : le journal reste joint"

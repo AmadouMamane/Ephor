@@ -3,6 +3,50 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.4.0 — en préparation
+
+Trois gênes relevées en session réelle, sur un vrai projet : une mutation qui ne mesurait
+rien, un contrôle rouge périmé par le commit, et des tests du planner à recopier à la main.
+Chacune rejouée, puis fermée par un test qui échoue sur la 1.3.0.
+
+- **`make mutants` mesure enfin sur un vrai module.** mutmut recopie le code en empilant les
+  variantes de chaque fonction : la copie est dix fois plus longue. Les tests de structure
+  livrés par Ephor (`tests/test_architecture.py`) lisaient cette copie, échouaient (« plus
+  de 400 lignes »), et mutmut s'arrêtait avant le premier mutant ; le script répondait
+  « aucun mutant exécuté » et sortait en vert. Ces tests sont écartés du passage de mutmut :
+  ils jugent la forme du code, pas son comportement. Rejoué : un module de 302 lignes donne
+  son score au lieu de rien.
+- **Une mutation arrêtée en route est un échec.** Quand mutmut ne va pas au bout,
+  `make mutants` dit ÉCHEC, montre sa raison et sort en erreur ; `make review` le compte
+  comme une étape en échec. Un fichier sans rien de mutable reste un cas normal. Le script
+  dit aussi combien de mutants aucun test n'exécute : ce code-là n'a pas de test du tout.
+- **La passe de nuit de la CI passe par le même script** (`mutants.sh --tout`) : elle
+  échouait au démarrage sur tout vrai projet, pour la même raison. Son journal devient
+  `.verify/mutants-run.log`.
+- **Le commit ne périme plus le contrôle rouge.** `make task-check` prenait l'empreinte des
+  tests tels quels ; au commit, les hooks de pre-commit (ruff, fin de fichier, espaces) les
+  réécrivaient, et le juge refusait ensuite la tâche : « contrôle rouge périmé ». Vu sept
+  fois dans une même session. `task-check` passe maintenant ces hooks lui-même, sur les
+  preuves pas encore commitées, avant de prendre l'empreinte : le commit n'a plus rien à
+  changer. S'ils échouent sans pouvoir corriger, il le dit tout de suite.
+- **`make task-check` sans `ID` liste les contrôles rouges à refaire**, pour toutes les
+  tâches, lus sur la branche principale comme le juge les lira. Un reformatage du dépôt en
+  périme plusieurs d'un coup : on les voit tous, et plus un par un, au juge.
+- **`make task-new FROM=` reprend aussi les tests du planner.** Le planner rend le contrat
+  et les tests ; seul le contrat entrait, et les tests étaient à recopier par-dessus un
+  squelette, à chaque tâche. `FROM` accepte sa réponse entière : le premier bloc JSON devient
+  le contrat, chaque bloc de code annoncé par son chemin sous `tasks/<ID>/` devient un
+  fichier de la tâche. Un chemin hors de la tâche ou un Python illisible, et rien n'est créé.
+  La skill `feature` enregistre la réponse du planner dans `.verify/plans/<ID>.md` et donne
+  la commande. Un contrat JSON seul marche comme avant.
+
+Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version.
+La CI n'est pas mise à jour par Ephor : pour la passe de nuit, remplacez la ligne
+`uv run mutmut run …` par `bash .ephor/scripts/mutants.sh --tout`, et joignez
+`.verify/mutants-run.log` à la place de `mutants-full.log` (GitHub : ajoutez
+`include-hidden-files: true` à l'envoi). Pour opencode : relancez-le (le planner et la
+commande `feature` sont regénérés).
+
 ## 1.3.0 — 30 septembre 2026
 
 Des garde-fous deux fois plus rapides sous Copilot et opencode, et un trou fermé dans le

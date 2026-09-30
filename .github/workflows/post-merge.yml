@@ -87,15 +87,14 @@ jobs:
         run: uv run pip-audit
       - name: score de mutation, passe complète
         continue-on-error: true
-        run: |
-          uv run mutmut run > mutants-full.log 2>&1
-          # Un mutmut mort au démarrage sortait en silence : on exige son rapport de fin.
-          grep -q "mutations/second" mutants-full.log || { tail -n 30 mutants-full.log; exit 1; }
+        # Le script écarte les tests de structure, et dit ÉCHEC quand mutmut ne va pas au bout.
+        run: bash .ephor/scripts/mutants.sh --tout
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: mutants-${{ github.sha }}
-          path: mutants-full.log
+          path: .verify/mutants-run.log
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
       - name: chaîne d'approvisionnement des agents (MCP, skills, réglages)
