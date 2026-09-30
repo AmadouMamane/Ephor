@@ -475,6 +475,70 @@ def test_scope_guard_stays_out_of_the_way_without_a_task(tmp_path: Path) -> None
     assert perimetre(repo, "docs/ailleurs.md").returncode == 0, "sans contrat, le juge tranchera"
 
 
+def test_progres_md_est_demande_apres_plusieurs_tours_de_travail(tmp_path: Path) -> None:
+    """Session réelle (30/09/2026, #31) : PROGRESS.md n'était pas tenu à jour ; seules des
+    consignes le demandaient. Après trois tours de travail sans qu'il bouge, la fin de tour le
+    demande à l'agent, une fois par série ; sous opencode, à l'opérateur."""
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "a.py").write_text("A = 0\n")
+    (repo / "PROGRESS.md").write_text("# PROGRESS\n")
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "user.email", "t@example.invalid")
+    git(repo, "config", "user.name", "t")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base")
+
+    def fin(outil: str = "claude", seuil: int = 3, **charge: Any) -> str:
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo), "EPHOR_OUTIL": outil}
+        env["EPHOR_RAPPEL_PROGRES_TOURS"] = str(seuil)
+        return subprocess.run(
+            [str(HOOKS / "progres.sh")],
+            input=json.dumps({"session_id": "s", **charge}),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=60,
+            check=True,
+        ).stdout
+
+    def travaille(valeur: int) -> None:
+        (repo / "src" / "a.py").write_text(f"A = {valeur}\n")
+
+    # Un fichier nouveau, réécrit : il compte par son contenu (mesuré en session réelle).
+    (repo / "src" / "nouveau.py").write_text("B = 1\n")
+    assert fin(seuil=1) == "", "premier tour : le point de départ"
+    (repo / "src" / "nouveau.py").write_text("B = 2\n")
+    assert "decision" in json.loads(fin(seuil=1)), "réécrit, il a compté comme du travail"
+    (repo / "PROGRESS.md").write_text("# PROGRESS\n\n- en cours : B\n")
+    assert fin() == "", "écrit : la série repart"
+    for tour in (1, 2):
+        travaille(tour)
+        assert fin() == "", f"{tour} tour(s) de travail : rien encore"
+    assert fin() == "", "un tour sans travail ne compte pas"
+    travaille(3)
+    rappel = json.loads(fin())
+    assert rappel["decision"] == "block" and "PROGRESS.md" in rappel["reason"]
+    travaille(4)
+    assert fin() == "", "une fois par série"
+    (repo / "PROGRESS.md").write_text("# PROGRESS\n\n- fait : A\n")
+    assert fin() == "", "écrit : une nouvelle série commence"
+    for tour in (5, 6, 7):
+        travaille(tour)
+        assert fin(stop_hook_active=True) == "", "Claude Code continue déjà : jamais deux de suite"
+    travaille(8)
+    assert "decision" in json.loads(fin()), "la série continue après"
+    (repo / "PROGRESS.md").write_text("# PROGRESS\n\n- fait : B\n")
+    fin()
+    for tour in (9, 10, 11):
+        travaille(tour)
+        sortie = fin("opencode")
+    assert set(json.loads(sortie)) == {"systemMessage"}, "opencode : l'opérateur le lit"
+    for tour in (12, 13, 14, 15):
+        travaille(tour)
+        assert fin(sous_agent=True) == "", "un sous-agent ne tient pas PROGRESS.md"
+
+
 def test_steer_injects_only_real_content(tmp_path: Path) -> None:
     template = (ROOT / "STEER.md").read_text()
     (tmp_path / "STEER.md").write_text(template)

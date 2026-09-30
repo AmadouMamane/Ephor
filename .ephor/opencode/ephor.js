@@ -226,12 +226,13 @@ export const ephor = async ({ worktree, directory, client }) => {
         const id = event.properties?.sessionID
         if (!id) return
         const charge = { session_id: id }
-        // Le remplissage, qu'opencode ne donne qu'au greffon : pour la session principale.
+        // Un sous-agent ne tient pas PROGRESS.md, et son remplissage n'est pas celui de la
+        // session : les deux ne regardent que la session principale.
+        const sous = await estSousAgent(client, id, sousAgents)
+        if (sous) charge.sous_agent = true
         const occupe = occupes.get(id)
         const taille = tailles.get(id)
-        if (occupe && taille && !(await estSousAgent(client, id, sousAgents))) {
-          charge.contexte = { occupe, taille }
-        }
+        if (occupe && taille && !sous) charge.contexte = { occupe, taille }
         const fin = garde(racine, "fin-tour.sh", charge, [], 40000)
         // Un refus (la sentinelle) : son message, avec l'alerte de contexte redite en clair.
         if (fin.refuse) {

@@ -1249,6 +1249,42 @@ def test_la_fin_de_tour_dit_tout_ce_qu_elle_a_a_dire(
         assert sortie == ([{"systemMessage": "61 % de la mémoire"}] if avec_contexte else [])
 
 
+def test_la_fin_de_tour_rend_un_seul_objet_json(tmp_path: Path) -> None:
+    """L'alerte de contexte et le rappel de PROGRESS.md répondent chacun en JSON : deux objets
+    à la suite, et l'outil n'en lisait aucun. Ils sortent en un seul (#31)."""
+    journal = tmp_path / "journal"
+    depot = depot_aux_gardes_factices(
+        tmp_path,
+        {
+            "checkpoint.sh": journalise(journal, "checkpoint.sh"),
+            "contexte.sh": journalise(
+                journal, "contexte.sh", """echo '{"systemMessage": "61 %"}'"""
+            ),
+            "progres.sh": journalise(
+                journal,
+                "progres.sh",
+                """echo '{"decision": "block", "reason": "PROGRES", "systemMessage": "r"}'""",
+            ),
+        },
+    )
+    env = {k: v for k, v in os.environ.items() if k != "EPHOR_OUTIL"}
+    resultat = subprocess.run(
+        ["bash", str(depot / ".ephor" / "hooks" / "fin-tour.sh")],
+        input='{"session_id": "s"}',
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        env=env,
+    )
+    assert resultat.returncode == 0, resultat.stderr
+    assert json.loads(resultat.stdout) == {
+        "decision": "block",
+        "reason": "PROGRES",
+        "systemMessage": "61 %\nr",
+    }, "budget.sh absent du dépôt : sauté, sans erreur"
+
+
 def test_le_relais_sert_un_depot_d_avant_les_points_d_entree(tmp_path: Path) -> None:
     """Un poste réinstallé en 1.4 sert aussi un dépôt resté en 1.3 : sans les points d'entrée,
     le relais lance les gardes d'alors, et ne laisse pas ce dépôt sans garde-fou."""

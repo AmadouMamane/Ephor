@@ -48,6 +48,14 @@ Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
   contrat et son contrôle rouge restent valables : ils parlent de `tasks/<ID>/…`, que le juge
   traduit vers le vrai dossier ; la garde du périmètre, le budget, la revue et
   `make task-worktree` la retrouvent aussi.
+- **`PROGRESS.md` tenu à jour.** Seules des consignes le demandaient, et il ne l'était pas
+  (session réelle). Après trois tours de travail sans qu'il bouge (le code, les commits, les
+  fichiers nouveaux), la fin de tour le demande : sous Claude Code, l'agent reprend la main
+  le temps de l'écrire, une fois, sans boucle ; sous opencode, l'opérateur le lit. Mesuré en
+  vraie session Claude Code : l'agent a noté ses trois changements, puis s'est arrêté.
+  `EPHOR_RAPPEL_PROGRES_TOURS` change le seuil, `EPHOR_RAPPEL_PROGRES=0` l'éteint. Et les
+  réponses de fin de tour sortent en un seul objet JSON : deux à la suite, l'outil n'en lisait
+  aucun.
 
 ## 1.4.0 — 30 septembre 2026
 
