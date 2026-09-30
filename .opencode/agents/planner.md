@@ -45,7 +45,9 @@ vrai : chaque détail technique inventé trop tôt devient une contrainte que pe
    critère déjà vert. Ce qui doit seulement rester vrai n'est pas un critère : c'est la
    suite normale, sous `tests/`. Écris son chemin seul sur la ligne qui précède son bloc
    de code, entre accents graves : `` `tasks/<ID>/test_<id>.py` ``. Un bloc sans chemin
-   n'est pas repris ; un chemin hors de `tasks/<ID>/` fait tout refuser.
+   n'est pas repris ; un chemin hors de `tasks/<ID>/` fait tout refuser. Un critère ne lance
+   jamais le test d'un autre contrat : les deux tâches seraient liées, et aucune n'aurait un
+   verdict propre. Ce qui est commun, recopie-le dans ce fichier.
 3. En dix lignes au plus : hors périmètre, découpage en incréments, risques et questions.
 
 Un critère est bon si un tiers qui n'a pas vu le code peut dire « satisfait » ou « non

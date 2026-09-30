@@ -611,6 +611,81 @@ def test_le_makefile_liste_les_controles_perimes_sans_id() -> None:
     assert "judge.py perimes" in recette
 
 
+def tache_qui_partage(repo: Path, partage: bool = True) -> Path:
+    """T-002, sur la branche principale : son propre test, et, si `partage`, celui de T-001."""
+    git(repo, "switch", "-q", "main")
+    deux = repo / "tasks" / "T-002"
+    deux.mkdir(exist_ok=True)
+    (deux / "check_c2.py").write_text(CHECK_C2)
+    criteres = [
+        {"id": "C2", "description": "liste vide", "check": ["{python}", "tasks/T-002/check_c2.py"]}
+    ]
+    if partage:
+        criteres.insert(
+            0,
+            {"id": "C1", "description": "lots", "check": ["{python}", "tasks/T-001/check_c1.py"]},
+        )
+    contrat = contrat_de(repo)
+    contrat.update(id="T-002", criteria=criteres)
+    (deux / "contract.json").write_text(json.dumps(contrat, indent=2) + "\n")
+    return deux
+
+
+def test_task_check_signale_un_test_partage_avec_un_autre_contrat(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Session réelle (30/09/2026) : un test partagé par deux contrats empêchait un verdict
+    propre. Le juge de l'un dépend du travail de l'autre, et changer le test périme les deux
+    contrôles rouges. On l'apprenait au juge ; on le lit maintenant au moment d'approuver."""
+    deux = tache_qui_partage(repo, partage=False)
+    rouge = ["rouge", "--task-id", "T-002", "--repo", str(repo)]
+    assert judge.main([*rouge, "--workdir", str(tmp_path / "a")]) == 0
+    assert "partagée" not in capsys.readouterr().out, "ses propres tests : rien à dire"
+    tache_qui_partage(repo)
+    assert judge.main([*rouge, "--workdir", str(tmp_path / "b")]) == 0
+    sortie = capsys.readouterr().out
+    assert "preuve(s) partagée(s)" in sortie
+    assert "tasks/T-001/check_c1.py : aussi une preuve de T-001" in sortie
+    assert "dans tasks/T-002/" in sortie, "et quoi faire"
+    assert (deux / judge.ROUGE).is_file(), "un avertissement, pas un refus"
+
+
+def test_le_juge_nomme_la_tache_dont_une_preuve_depend(repo: Path, tmp_path: Path) -> None:
+    tache_qui_partage(repo)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "T-002 approuvé")
+    trace_rouge(repo, "T-002")
+    git(repo, "switch", "-qc", "task/T-002")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    git(repo, "commit", "-qam", "correctif")
+    code = judge.main(
+        ["check", "--task-id", "T-002", "--repo", str(repo), "--workdir", str(tmp_path / "w")]
+    )
+    resume = (repo / ".verify" / "judge" / "T-002" / "latest" / "summary.txt").read_text()
+    assert code == 0, resume
+    assert "info  tasks/T-001/check_c1.py est aussi une preuve de T-001" in resume
+
+
+def test_un_controle_perime_dit_quel_commit_l_a_perime(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """« tasks/T-001/check_c1.py a changé depuis » ne disait ni qui, ni pourquoi : l'opérateur
+    refaisait le contrôle sans comprendre, et recommençait à la fois suivante."""
+    tache_qui_partage(repo)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "T-002 approuvé")
+    trace_rouge(repo, "T-002")
+    test_de_t001 = repo / "tasks" / "T-001" / "check_c1.py"
+    test_de_t001.write_text(CHECK_C1 + "# précisé\n")
+    git(repo, "commit", "-qam", "précise le test de T-001")
+    assert judge.main(["perimes", "--repo", str(repo)]) == 1
+    sortie = capsys.readouterr().out
+    ligne = next(ligne for ligne in sortie.splitlines() if "PÉRIMÉ  T-002" in ligne)
+    assert "tasks/T-001/check_c1.py a changé depuis" in ligne
+    assert "« précise le test de T-001 »" in ligne
+    assert "preuve aussi de T-001" in ligne
+
+
 def test_une_approbation_pas_encore_sur_le_serveur_est_signalee(
     repo: Path, run_judge: Runner
 ) -> None:

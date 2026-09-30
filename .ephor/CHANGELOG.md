@@ -3,6 +3,18 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.5.0 — en préparation
+
+Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
+
+- **Un test partagé par deux contrats, signalé au moment d'approuver.** Un critère qui lance
+  le test d'un autre contrat lie les deux tâches : le juge de l'une peut attendre le travail
+  de l'autre, et changer ce test périme les deux contrôles rouges. Vu en session réelle :
+  aucun verdict propre, et on ne l'apprenait qu'au juge. `make task-check` et
+  `make task-approve` (avant le « oui ») nomment le test et l'autre contrat ; le juge le
+  rappelle en revue ; le planner ne l'écrit plus. Et un contrôle rouge périmé dit maintenant
+  quel commit l'a périmé, et à quel autre contrat la preuve appartient.
+
 ## 1.4.0 — 30 septembre 2026
 
 Un retour de terrain et la fin de l'audit du 29 septembre. Les gênes vues en session réelle,

@@ -87,6 +87,12 @@ n'est pas faite. Ce qui doit seulement **rester** vrai (« un libellé valide re
 n'est pas un critère : il passe déjà. Sa place est la suite normale, que l'étape `verify`
 du juge fait tourner à chaque jugement.
 
+**Chaque contrat a ses propres tests.** Un critère qui lance le test d'un autre contrat lie
+les deux tâches : le juge de l'une peut attendre le travail de l'autre, et changer ce test
+périme les deux contrôles rouges. Vu en session réelle : aucun verdict propre. Ce qui est
+commun aux deux se recopie dans le dossier de chacune. `make task-check` et
+`make task-approve` le signalent, et le juge le rappelle en revue.
+
 **Une preuve doit montrer qu'elle est allée au bout.** Un code de sortie 0 ne suffit pas :
 le code jugé peut le provoquer avant la première assertion. Le juge reconnaît trois formes
 qui le prouvent, et dit pour chaque critère laquelle il a vue :

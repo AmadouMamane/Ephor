@@ -1352,17 +1352,21 @@ A_ECRIRE = "A ECRIRE"
 SQUELETTE = "critère à écrire"
 
 
-def preuves_rouges(repo: Path, arbre: str, contract: Contract, task_id: str) -> dict[str, str]:
-    """Ce dont dépend le verdict rouge, à cet arbre git : le dossier de la tâche (contrat
-    compris), les fichiers et les dossiers que les critères citent. Un seul changé après le
-    contrôle, et ce qui a été vu échouer n'est plus ce qui sera jugé."""
+def racines_de_preuve(repo: Path, arbre: str, contract: Contract, task_id: str) -> set[str]:
+    """Le dossier de la tâche, et les fichiers et dossiers que ses critères citent."""
     racines = (
         {f"tasks/{task_id}"}
         | {dossier for _, dossier in cited_dirs(repo, arbre, contract)}
         | set(cited_paths(repo, arbre, contract))
     )
-    if "." in racines:
-        racines = {"."}
+    return {"."} if "." in racines else racines
+
+
+def preuves_rouges(repo: Path, arbre: str, contract: Contract, task_id: str) -> dict[str, str]:
+    """Ce dont dépend le verdict rouge, à cet arbre git : le dossier de la tâche (contrat
+    compris), les fichiers et les dossiers que les critères citent. Un seul changé après le
+    contrôle, et ce qui a été vu échouer n'est plus ce qui sera jugé."""
+    racines = racines_de_preuve(repo, arbre, contract, task_id)
     sortie = git(repo, "ls-tree", "-r", "-z", "--full-tree", arbre, "--", *sorted(racines))
     objets: dict[str, str] = {}
     for ligne in sortie.split(b"\0"):
@@ -1377,6 +1381,74 @@ def preuves_rouges(repo: Path, arbre: str, contract: Contract, task_id: str) -> 
     # de 400 fichiers (mesuré le 26/09/2026), payées à chaque jugement.
     contenus = lire_objets(repo, sorted(set(objets.values())))
     return {nom: sha256(contenus[objet]) for nom, objet in sorted(objets.items())}
+
+
+def chemins_de_preuve(repo: Path, arbre: str, contract: Contract, task_id: str) -> set[str]:
+    """Les fichiers dont dépend le verdict d'une tâche, à cet arbre git (ceux que relève son
+    contrôle rouge), sans lire leur contenu."""
+    racines = racines_de_preuve(repo, arbre, contract, task_id)
+    sortie = git(
+        repo, "ls-tree", "-r", "-z", "--name-only", "--full-tree", arbre, "--", *sorted(racines)
+    )
+    noms = {brut.decode("utf-8", "replace") for brut in sortie.split(b"\0") if brut}
+    return noms - {f"tasks/{task_id}/{ROUGE}"}
+
+
+@functools.lru_cache(maxsize=4096)
+def _preuves_d_une_tache(repo: str, arbre: str, task_id: str) -> frozenset[str]:
+    """Les preuves d'une AUTRE tâche, à un arbre git figé (un hash : le résultat ne bouge
+    plus). Vide si son contrat est illisible : ce n'est pas à cette tâche de le juger."""
+    depot = Path(repo)
+    try:
+        brut = git(depot, "show", f"{arbre}:tasks/{task_id}/contract.json").decode("utf-8")
+        contrat = parse_contract(lire_json(brut), task_id)
+    except (JudgeError, UnicodeDecodeError):
+        return frozenset()
+    return frozenset(chemins_de_preuve(depot, arbre, contrat, task_id))
+
+
+def preuves_partagees(
+    repo: Path, arbre: str, contract: Contract, task_id: str, miennes: set[str] | None = None
+) -> dict[str, list[str]]:
+    """Les preuves de cette tâche qui sont aussi celles d'une autre, à cet arbre : chemin ->
+    tâches. Deux contrats qui partagent un test se gênent : le juge de l'un peut dépendre du
+    travail de l'autre, et tout changement du fichier périme les deux contrôles rouges. Vu en
+    session réelle : un test partagé par deux contrats empêchait un verdict propre (30/09/2026).
+    """
+    if miennes is None:
+        miennes = chemins_de_preuve(repo, arbre, contract, task_id)
+    try:
+        fige = git(repo, "rev-parse", f"{arbre}^{{tree}}").decode().strip()
+        entrees = git(repo, "ls-tree", "-z", "--name-only", f"{fige}:tasks").split(b"\0")
+    except JudgeError:
+        return {}
+    partages: dict[str, list[str]] = {}
+    for brut in entrees:
+        autre = brut.decode("utf-8", "replace")
+        if autre == task_id or not ID_PATTERN.match(autre):
+            continue
+        for chemin in sorted(miennes & _preuves_d_une_tache(str(repo), fige, autre)):
+            partages.setdefault(chemin, []).append(autre)
+    return dict(sorted(partages.items()))
+
+
+def dire_partages(partages: dict[str, list[str]], task_id: str) -> list[str]:
+    """L'avertissement que lit l'opérateur au moment d'approuver."""
+    if not partages:
+        return []
+    lignes = ["attention : preuve(s) partagée(s) avec un autre contrat"]
+    lignes += [
+        f"  {chemin} : aussi une preuve de {', '.join(autres)}"
+        for chemin, autres in list(partages.items())[:5]
+    ]
+    if len(partages) > 5:
+        lignes.append(f"  … et {len(partages) - 5} autre(s)")
+    lignes.append(
+        f"  Le juge de {task_id} peut alors dépendre du travail de l'autre tâche, et changer ces"
+        " fichiers périme les deux contrôles rouges. Donnez à chaque contrat ses propres tests,"
+        f" dans tasks/{task_id}/ (tasks/README.md)."
+    )
+    return lignes
 
 
 def lire_objets(repo: Path, objets: list[str]) -> dict[str, bytes]:
@@ -1456,10 +1528,18 @@ def lire_trace_rouge(repo: Path, base: str, contract: Contract, task_id: str) ->
         raise JudgeError(f"contrôle rouge qui ne couvre pas ce contrat ({quoi}) : {refaire}")
     attendu: dict[str, Any] = trace["preuves"]
     present = preuves_rouges(repo, base, contract, task_id)
+    changes = [
+        nom for nom in sorted(attendu.keys() & present.keys()) if attendu[nom] != present[nom]
+    ]
+    # Qui l'a changé, et à qui d'autre appartient la preuve : sans quoi l'opérateur refait le
+    # contrôle sans savoir pourquoi il a été périmé, et recommence à la prochaine fois.
+    dehors = {nom for nom in changes if not nom.startswith(f"tasks/{task_id}/")}
+    proprietaires = preuves_partagees(repo, base, contract, task_id, dehors) if dehors else {}
+    commit_rouge = trace.get("commit")
     ecarts = [
         f"{nom} a changé depuis"
-        for nom in sorted(attendu.keys() & present.keys())
-        if attendu[nom] != present[nom]
+        + pourquoi_perime(repo, commit_rouge, base, nom, proprietaires.get(nom, []))
+        for nom in changes
     ]
     ecarts += [f"{nom} ajouté depuis" for nom in sorted(present.keys() - attendu.keys())]
     ecarts += [f"{nom} retiré depuis" for nom in sorted(attendu.keys() - present.keys())]
@@ -1469,6 +1549,24 @@ def lire_trace_rouge(repo: Path, base: str, contract: Contract, task_id: str) ->
             + [f"les critères n'ont pas été vus échouer sous leur forme actuelle : {refaire}"]
         )
     return trace
+
+
+def pourquoi_perime(repo: Path, commit: Any, base: str, nom: str, autres: list[str]) -> str:
+    """« (modifié par 1a2b3c4 « sujet » ; preuve aussi de T-002) », ou rien."""
+    raisons: list[str] = []
+    depuis = [base]
+    if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40,64}", commit):
+        depuis = [f"{commit}..{base}"]
+    try:
+        dernier = git(repo, "log", "-1", "--format=%h%x09%s", *depuis, "--", nom).decode().strip()
+    except JudgeError:
+        dernier = ""
+    if "\t" in dernier:
+        court, sujet = dernier.split("\t", 1)
+        raisons.append(f"modifié par {court} « {sujet} »")
+    if autres:
+        raisons.append(f"preuve aussi de {', '.join(autres)}")
+    return f" ({' ; '.join(raisons)})" if raisons else ""
 
 
 def changes_depuis(repo: Path, commit: Any, base: str) -> int | None:
@@ -2629,6 +2727,19 @@ def cmd_check(args: argparse.Namespace) -> int:
             " échouaient avant le travail"
         )
         junit.append({"name": "contrôle rouge", "ok": True})
+        # Une preuve hors du dossier de la tâche, qui sert aussi une autre tâche : un critère
+        # peut attendre le travail de l'autre (session réelle, 30/09/2026).
+        dehors = {
+            nom
+            for nom in chemins_de_preuve(repo, base, contract, task_id)
+            if not nom.startswith(f"tasks/{task_id}/")
+        }
+        partages = preuves_partagees(repo, base, contract, task_id, dehors) if dehors else {}
+        for chemin, autres in list(partages.items())[:5]:
+            lines.append(
+                f"  info  {chemin} est aussi une preuve de {', '.join(autres)} : un critère peut"
+                " dépendre de son travail, et changer ce fichier périme les deux contrôles rouges"
+            )
         bouge = changes_depuis(repo, rouge.get("commit"), base)
         if bouge:
             lines.append(
@@ -3120,6 +3231,7 @@ def cmd_rouge(args: argparse.Namespace) -> int:
         arbre = git(copy, "write-tree").decode().strip()
         refus = recevabilite(copy, arbre, contract)
         empreintes = preuves_rouges(copy, arbre, contract, task_id)
+        partages = preuves_partagees(copy, arbre, contract, task_id, set(empreintes))
         if not refus:
             if runtime.kind != "local":
                 ensure_image(runtime, logs / "pull.log")
@@ -3181,6 +3293,8 @@ def cmd_rouge(args: argparse.Namespace) -> int:
         print(
             f"{relative(trace_path, repo)} déjà à jour : rien n'a changé depuis le dernier contrôle"
         )
+        for ligne in dire_partages(partages, task_id):
+            print(ligne)
         return 0
     trace = trace_rouge(task_id, head, empreintes, criteres)
     trace_path.write_text(json.dumps(trace, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -3190,6 +3304,8 @@ def cmd_rouge(args: argparse.Namespace) -> int:
         f"Puis commitez tasks/{task_id}/ entier (contrat, tests, {ROUGE}) sur la branche"
         " principale : ce commit est l'approbation."
     )
+    for ligne in dire_partages(partages, task_id):
+        print(ligne)
     return 0
 
 
@@ -3619,6 +3735,8 @@ def cmd_approuve(args: argparse.Namespace) -> int:
         )
         return 2
     print(resume_du_plan(task_id, contract, fournis, args.from_file))
+    for ligne in dire_partages(preuves_partagees(repo, "HEAD", contract, task_id), task_id):
+        print(ligne)
     if not confirme(f"Approuver {task_id} ? Tapez « oui » pour approuver : "):
         print("rien n'est fait : l'approbation n'a pas été confirmée")
         return 1
