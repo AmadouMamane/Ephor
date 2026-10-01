@@ -910,6 +910,29 @@ def test_un_verdict_rendu_dans_le_dossier_de_la_tache_se_voit_du_dossier_princip
     assert "1 200" in usage.rapport(repo), "et la mesure aussi, une seule fois"
 
 
+def test_le_juge_lance_du_dossier_principal_juge_la_tache_dans_son_dossier(
+    repo: Path, tmp_path: Path
+) -> None:
+    """Mesuré le 01/10/2026 : la tâche commitée dans son dossier (#32), `make judge` lancé du
+    dossier principal, où est l'opérateur, rendait « rien à juger », et ce verdict plus récent
+    refaisait la tâche « en cours » dans `make taches`. La revue : test_scripts.py."""
+    git(repo, "switch", "-q", "main")
+    dossier = repo.parent / "repo-T-001"
+    git(repo, "worktree", "add", "-q", str(dossier), "task/T-001")
+    (dossier / "src" / "metrics.py").write_text(FIX)
+    git(dossier, "commit", "-qam", "correctif")
+    travail = ["--task-id", "T-001", "--workdir", str(tmp_path / "work")]
+    assert judge.main(["check", "--repo", str(repo), *travail]) == 0
+    resume = dossier / ".verify" / "judge" / "T-001" / "latest" / "summary.txt"
+    assert f"jugée dans son dossier, {dossier.resolve()}" in resume.read_text()
+    assert not (repo / ".verify" / "judge" / "T-001").exists(), "rien jugé dans le principal"
+    # Sans dossier à part, la branche de la tâche est nommée au lieu d'un « rien à juger » nu.
+    git(repo, "worktree", "remove", "--force", str(dossier))
+    assert judge.main(["check", "--repo", str(repo), *travail]) == 1
+    resume = repo / ".verify" / "judge" / "T-001" / "latest" / "summary.txt"
+    assert "git switch task/T-001" in resume.read_text()
+
+
 def test_une_approbation_pas_encore_sur_le_serveur_est_signalee(
     repo: Path, run_judge: Runner
 ) -> None:

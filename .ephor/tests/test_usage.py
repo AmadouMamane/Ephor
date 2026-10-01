@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import usage
-from conftest import ROOT
+from conftest import ROOT, judge
 from test_hooks import depot_de_tache, hook, sans_jq
 
 REPONSE = {
@@ -66,6 +66,53 @@ def test_la_sortie_d_un_sous_agent_se_lit_a_son_dernier_bloc(tmp_path: Path) -> 
     mesure = usage.claude_code(principal)
     assert mesure["output"] == 100 + 1200 + 300, mesure
     assert mesure["requetes"] == 3
+
+
+def test_une_sortie_de_sous_agent_sans_compte_final_est_un_minimum_et_le_dit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mesuré le 01/10/2026 avec Claude Code 2.1.286 : dans le journal d'un sous-agent, 0 à 3
+    réponses sur 48 à 67 avaient leur compte final ; les autres gardaient `stop_reason` nul et
+    quelques dizaines de tokens de sortie. Le total, le plafond et le juge sous-estimaient la
+    sortie d'environ 90 %, sans le dire, et `make usage` affichait « sortie 48 »."""
+
+    def arret(ligne: dict[str, object], raison: str | None) -> dict[str, object]:
+        message = ligne["message"]
+        assert isinstance(message, dict)
+        return {**ligne, "message": {**message, "stop_reason": raison}}
+
+    principal = journal(tmp_path / "session.jsonl", [arret(REPONSE, "end_turn")])
+    sous = tmp_path / "session" / "subagents"
+    sous.mkdir(parents=True)
+    blocs = [arret(bloc("r1", 40, "tool_use", name="Read", input={}), None)]
+    blocs += [arret(bloc("r2", 60), None), arret(bloc("r2", 900), "tool_use")]
+    blocs += [arret(bloc(f"r{i}", 48), None) for i in range(3, 6)]
+    journal(sous / "agent-a.jsonl", blocs)
+    mesure = usage.claude_code(principal)
+    assert mesure["sans_final"] == 4, "r2 a fini par avoir son compte ; r1, r3, r4, r5 non"
+    assert "au moins" in judge.usage_line(mesure, None)
+    assert "4 réponse(s) de sous-agent" in judge.usage_line(mesure, None)
+    # Reprise de la lecture : la réponse r1 reçoit son compte final plus tard.
+    with (sous / "agent-a.jsonl").open("a", encoding="utf-8") as suite:
+        suite.write(json.dumps(arret(bloc("r1", 700), "tool_use")) + "\n")
+    assert usage.claude_code(principal, mesure)["sans_final"] == 3
+    # Le profil du sous-agent ne montre plus un faux total.
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    depot = tmp_path / "depot"
+    depot.mkdir()
+    dossier = usage.dossier_claude(depot)
+    (dossier / "s" / "subagents").mkdir(parents=True)
+    journal(dossier / "s.jsonl", [REPONSE])
+    journal(dossier / "s" / "subagents" / "agent-b.jsonl", blocs)
+    (profil,) = usage.sous_agents_claude(depot)
+    assert not profil["sortie_ecrite"] and profil["sans_final"] == 4
+    assert "sortie non écrite par Claude Code (4 réponse(s) sur 5)" in usage.ligne_sous_agent(
+        profil
+    )
+    # Un journal principal ordinaire (chaque réponse a son compte final) reste exact.
+    assert "sans_final" not in usage.claude_code(
+        journal(tmp_path / "seul.jsonl", [arret(REPONSE, "end_turn")])
+    )
 
 
 def test_la_mesure_reprend_ou_elle_s_etait_arretee(tmp_path: Path) -> None:

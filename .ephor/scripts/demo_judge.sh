@@ -13,8 +13,12 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/ephor-demo.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 DEMO="$WORK/projet"
 
-rsync -a --exclude .git --exclude .venv --exclude .verify --exclude mutants \
-  --exclude '.*_cache' --exclude __pycache__ "$SRC/" "$DEMO/"
+# tar, pas rsync : rsync manque sur un Linux minimal (image de CI, conteneur), et la
+# démonstration s'arrêtait à sa première ligne. Les deux tar (GNU, BSD de macOS) savent
+# --exclude.
+mkdir -p "$DEMO"
+tar -C "$SRC" --exclude ./.git --exclude ./.venv --exclude ./.verify --exclude ./mutants \
+  --exclude '.*_cache' --exclude __pycache__ -cf - . | tar -C "$DEMO" -xf -
 cd "$DEMO"
 git init -q -b main
 git config user.email demo@example.invalid

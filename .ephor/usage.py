@@ -92,6 +92,9 @@ def somme(journaux: dict[str, dict[str, Any]]) -> dict[str, Any]:
     delegues = sum(1 for s in journaux.values() if s.get("sous_agent"))
     if delegues:
         compte["sous_agents"] = delegues
+    sans_final = sum(nombre(s.get("sans_final")) for s in journaux.values())
+    if sans_final:
+        compte["sans_final"] = sans_final
     compte["journaux"] = journaux
     return totalise(compte)
 
@@ -131,6 +134,13 @@ def _claude_un_journal(journal: Path, sous: dict[str, Any]) -> dict[str, Any]:
         if isinstance(deja_sorties, dict)
         else {}
     )
+    # Mesuré le 01/10/2026 (Claude Code 2.1.286) : dans le journal d'un sous-agent, presque
+    # aucune réponse n'a son compte final — 0 à 3 sur 48 à 67, toutes les autres gardent un
+    # `stop_reason` nul et quelques tokens de sortie. Le journal principal les a toutes. La
+    # sortie lue est alors un minimum, et la mesure le dit (`sans_final`).
+    sous["sans_final"] = nombre(sous.get("sans_final"))
+    deja_attente = sous.get("attente")
+    attente: set[str] = {str(v) for v in deja_attente} if isinstance(deja_attente, list) else set()
 
     with journal.open(encoding="utf-8", errors="ignore") as fichier:
         fichier.seek(depart)
@@ -159,14 +169,21 @@ def _claude_un_journal(journal: Path, sous: dict[str, Any]) -> dict[str, Any]:
             if not identifiant:
                 continue
             sortie = nombre(usage.get("output_tokens"))
+            final = message.get("stop_reason", "absent") is not None
             if identifiant in vues:
                 if sortie > sorties.get(identifiant, 0):
                     sous["output"] += sortie - sorties.get(identifiant, 0)
                     sorties[identifiant] = sortie
+                if final and identifiant in attente:
+                    attente.discard(identifiant)
+                    sous["sans_final"] -= 1
                 continue
             vues.add(identifiant)
             ordre.append(identifiant)
             sorties[identifiant] = sortie
+            if not final:
+                attente.add(identifiant)
+                sous["sans_final"] += 1
             sous["requetes"] += 1
             sous["input"] += nombre(usage.get("input_tokens"))
             sous["output"] += sortie
@@ -175,6 +192,7 @@ def _claude_un_journal(journal: Path, sous: dict[str, Any]) -> dict[str, Any]:
         sous["octets"] = position
     sous["vues"] = ordre[-200:]  # de quoi dédoublonner à la frontière, pas un historique
     sous["sorties"] = {cle: sorties[cle] for cle in sous["vues"] if cle in sorties}
+    sous["attente"] = [cle for cle in sous["vues"] if cle in attente]
     return sous
 
 
@@ -404,6 +422,8 @@ def profil_claude(journal: Path) -> dict[str, Any]:
         fiche = lue if isinstance(lue, dict) else {}
     debut = fin = None
     sorties: dict[str, int] = {}
+    finales: set[str] = set()
+    sans_stop: set[str] = set()
     modeles: set[str] = set()
     efforts: set[str] = set()
     outils: Counter[str] = Counter()
@@ -432,6 +452,10 @@ def profil_claude(journal: Path) -> dict[str, Any]:
             if identifiant and isinstance(usage, dict):
                 sortie_lue = nombre(usage.get("output_tokens"))
                 sorties[identifiant] = max(sorties.get(identifiant, 0), sortie_lue)
+                if message.get("stop_reason", "absent") is None:
+                    sans_stop.add(identifiant)
+                else:
+                    finales.add(identifiant)
             contenu = message.get("content")
             for bloc in contenu if isinstance(contenu, list) else []:
                 if isinstance(bloc, dict) and bloc.get("type") == "tool_use":
@@ -451,8 +475,14 @@ def profil_claude(journal: Path) -> dict[str, Any]:
         "sortie": sum(sorties.values()),
         # Quelques tokens par réponse, sur une réponse qui a réfléchi et appelé des outils :
         # c'est le compte du début de la réponse, jamais complété (anthropics/claude-code#93620).
+        # Depuis Claude Code 2.1.286, une réponse sans compte final le dit : `stop_reason` nul.
+        # La médiane seule laissait passer « sortie 48 » au lieu de quelques milliers.
+        "sans_final": len(sans_stop - finales),
         "sortie_ecrite": not sorties
-        or sorted(sorties.values())[len(sorties) // 2] > SORTIE_PARTIELLE,
+        or (
+            not (sans_stop - finales)
+            and sorted(sorties.values())[len(sorties) // 2] > SORTIE_PARTIELLE
+        ),
         "reflexion": None,  # comptée dans la sortie par Claude Code
         "outils": dict(outils.most_common()),
         "fichiers_lus": len(lus),
@@ -562,6 +592,8 @@ def ligne_sous_agent(profil: dict[str, Any]) -> str:
     sortie = f"sortie {milliers(profil['sortie'])}{reflexion}"
     if not profil.get("sortie_ecrite", True):
         sortie = "sortie non écrite par Claude Code"
+        if profil.get("sans_final"):
+            sortie += f" ({profil['sans_final']} réponse(s) sur {profil['requetes']})"
     return (
         f"  {profil['role'][:16]:<16} {duree(profil['secondes']):>12}  {reglage[:28]:<28}"
         f" {sortie} · {appels} appels ({detail}) · {profil['fichiers_lus']} fichiers lus"
@@ -797,6 +829,7 @@ def rapport(repo: Path) -> str:
             fichiers.setdefault(fichier.stem, []).append(fichier)
     mesures = sorted(fichiers)
     partiel = False
+    sans_final = 0
     for tache in mesures:
         lues = [m for m in (lire_et_rafraichir(f) for f in fichiers[tache]) if m is not None]
         if not lues:
@@ -819,6 +852,9 @@ def rapport(repo: Path) -> str:
         # total est un minimum (« ≥ »). Ce que Copilot facture, lui, est toujours là.
         minimum = "≥ " if mesure.get("detail_complet") is False else ""
         partiel = partiel or bool(minimum)
+        # Sous Claude Code, la sortie des sous-agents n'a pas toujours son compte final.
+        sans_final += nombre(mesure.get("sans_final"))
+        minimum = "≥ " if nombre(mesure.get("sans_final")) else minimum
         copilot = f" · {facture_copilot(mesure)}" if "nano_aiu" in mesure else ""
         lignes.append(
             "  {:<14}{:<14}{:>12}{}{}".format(
@@ -831,6 +867,11 @@ def rapport(repo: Path) -> str:
         )
     if partiel:
         lignes.append("  ≥ : un minimum, Copilot ne donne les tokens qu'en fermant la session")
+    if sans_final:
+        lignes.append(
+            f"  ≥ : un minimum, {sans_final} réponse(s) de sous-agent sans compte de sortie final"
+            " dans leur journal (Claude Code, anthropics/claude-code#93620)"
+        )
     oc = vide("opencode")
     for dossier in dossiers:
         ici = opencode(base_opencode(), dossier.resolve())

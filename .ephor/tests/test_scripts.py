@@ -412,6 +412,32 @@ def test_the_starting_recipes_are_runnable() -> None:
     assert ".ephor/docs/10-installation.md" in readme, "la porte d'entrée doit mener au poste bridé"
 
 
+def test_la_demonstration_du_juge_tourne_et_rend_ses_quatre_verdicts(tmp_path: Path) -> None:
+    """La recette du projet neuf finit par la démonstration du juge. Elle copiait le projet
+    par rsync, absent d'un Linux minimal (conteneur, image de CI) : elle s'arrêtait à sa
+    première ligne (mesuré le 01/10/2026). Un rsync qui échoue est mis devant dans le PATH."""
+    if shutil.which("uv") is None:
+        pytest.skip("uv absent : la démonstration installe le projet copié")
+    outils = tmp_path / "outils"
+    outils.mkdir()
+    (outils / "rsync").write_text("#!/bin/sh\nexit 127\n")
+    (outils / "rsync").chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k not in operateur.VARIABLES}
+    env.update(PATH=f"{outils}{os.pathsep}{env['PATH']}", TMPDIR=str(tmp_path), HOME=str(tmp_path))
+    fait = subprocess.run(
+        ["bash", str(ROOT / ".ephor" / "scripts" / "demo_judge.sh")],
+        capture_output=True,
+        text=True,
+        timeout=600,
+        env=env,
+        check=False,
+    )
+    verdicts = re.findall(r"^VERDICT : (\S+)", fait.stdout, re.MULTILINE)
+    assert fait.returncode == 0 and verdicts == ["VÉRIFIÉ,", "REFUSÉ,", "ÉCHEC,", "ÉCHEC,"], (
+        fait.stdout[-3000:] + fait.stderr[-2000:]
+    )
+
+
 def test_lint_ne_compte_pas_les_lignes_de_politesse() -> None:
     """`make lint` annonçait « 1 finding(s) » quand ruff dit « All checks passed! » : il
     comptait les LIGNES du fichier de sortie. Bénin, et faux dans le sens rassurant — mais
@@ -741,6 +767,39 @@ def test_la_revue_va_au_bout_et_dit_son_bilan(tmp_path: Path) -> None:
     assert sortie.returncode != 0
     assert "-> juge" in sortie.stdout, "le juge tourne même après un verify rouge"
     assert "revue : 0 étape(s) sur 2 vertes — en échec : vérification, juge" in sortie.stdout
+
+
+def test_la_revue_lancee_du_dossier_principal_se_fait_dans_le_dossier_de_la_tache(
+    tmp_path: Path,
+) -> None:
+    """Mesuré le 01/10/2026 : la tâche ouverte dans son dossier (#32), `make review` lancé du
+    dossier principal vérifiait la branche principale, et son juge n'y voyait « rien à
+    juger ». La revue se fait maintenant là où est la tâche."""
+    cible = tmp_path / "depot"
+    cible.mkdir()
+    git(cible, "init", "-q", "-b", "main")
+    git(cible, "config", "user.email", "test@example.invalid")
+    git(cible, "config", "user.name", "Ephor test")
+    bootstrap(cible)
+    (cible / "tasks" / "T-001").mkdir(parents=True)
+    (cible / "tasks" / "T-001" / "contract.json").write_text('{"risk": "faible"}\n')
+    (cible / ".ephor" / "projet" / "verify.sh").write_text(
+        'echo "vérifié sur $(git branch --show-current)"\n'
+    )
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "base")
+    dossier = tmp_path / "depot T-001"
+    git(cible, "worktree", "add", "-q", "-b", "task/T-001", str(dossier))
+    sortie = subprocess.run(
+        ["bash", ".ephor/scripts/review.sh", "T-001"],
+        cwd=cible,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    ).stdout
+    assert f"la revue s'y fait ({dossier})" in sortie
+    assert "vérifié sur task/T-001" in sortie and "vérifié sur main" not in sortie
 
 
 def _projet_a_muter(racine: Path, fonctions: int) -> Path:

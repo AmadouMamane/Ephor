@@ -1277,6 +1277,30 @@ def repo_root(start: str | None) -> Path:
     return Path(top).resolve()
 
 
+def dossier_de_la_tache(repo: Path, task_id: str) -> Path | None:
+    """Le dossier où la branche `task/<ID>` est ouverte, quand ce n'est pas celui-ci, ou None.
+
+    Une tâche vit dans son dossier depuis la 1.5 (#32). Lancés du dossier principal, où
+    l'opérateur se trouve, le juge y rendait « rien à juger » et la revue vérifiait la branche
+    principale, sur une tâche commitée et vérifiée dans son dossier (mesuré le 01/10/2026) ;
+    et ce « rien à juger », plus récent, la refaisait « en cours » dans `make taches`.
+    """
+    try:
+        sortie = git(repo, "worktree", "list", "--porcelain").decode("utf-8", "replace")
+    except JudgeError:
+        return None
+    dossier: Path | None = None
+    for ligne in sortie.splitlines():
+        if ligne.startswith("worktree "):
+            dossier = Path(ligne[len("worktree ") :])
+        elif ligne == f"branch refs/heads/task/{task_id}" and dossier is not None:
+            with suppress(OSError):
+                if dossier.is_dir() and dossier.resolve() != repo.resolve():
+                    return dossier.resolve()
+            return None
+    return None
+
+
 def taches_sur_disque(repo: Path) -> dict[str, list[str]]:
     """Les tâches du dossier de travail, rangées ou non : identifiant -> dossiers."""
     trouvees: dict[str, list[str]] = {}
@@ -2646,6 +2670,8 @@ def usage_line(usage: dict[str, Any], budget: Any) -> str:
     # Sous Copilot, une session encore ouverte n'a pas donné ses tokens : ce qui est compté
     # est un minimum. Le dire, plutôt que de laisser croire que la tâche a coûté si peu.
     minimum = "au moins " if usage.get("detail_complet") is False else ""
+    # Sous Claude Code, la sortie des sous-agents n'a pas toujours son compte final (usage.py).
+    minimum = "au moins " if entier(usage.get("sans_final")) else minimum
     detail = (
         f"  tokens  {minimum}{milliers(entier(usage.get('facturables')))} facturables"
         f" · {milliers(entier(usage.get('cache_read')))} lus en cache"
@@ -2653,6 +2679,11 @@ def usage_line(usage: dict[str, Any], budget: Any) -> str:
     )
     if entier(usage.get("sous_agents")):
         detail += f", dont {entier(usage.get('sous_agents'))} sous-agent(s)"
+    if entier(usage.get("sans_final")):
+        detail += (
+            f" ; sortie de {entier(usage.get('sans_final'))} réponse(s) de sous-agent non écrite"
+            " par Claude Code"
+        )
     if "nano_aiu" in usage:
         aiu = f"{entier(usage.get('nano_aiu')) / 1e9:.2f}".replace(".", ",")
         detail += f" · Copilot : {aiu} AIU, {entier(usage.get('requetes_premium'))} premium"
@@ -2923,6 +2954,13 @@ class Banc:
 
 def cmd_check(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo)
+    ailleurs = (
+        dossier_de_la_tache(repo, args.task_id)
+        if args.task_id and ID_PATTERN.match(args.task_id)
+        else None
+    )
+    if ailleurs is not None:
+        repo = ailleurs
     task_path, task_id = resolve_task(repo, args.task_id, args.task)
     run_id = uuid.uuid4().hex[:12]
     report_dir = (
@@ -2956,6 +2994,11 @@ def cmd_check(args: argparse.Namespace) -> int:
         "runtime": {"kind": args.runtime, "image": None},
     }
     lines: list[str] = []
+    if ailleurs is not None:
+        lines.append(
+            f"  info  jugée dans son dossier, {ailleurs} (branche task/{task_id}) : les journaux"
+            " indiqués y sont"
+        )
     junit: list[dict[str, Any]] = []
 
     def rendre_compte() -> None:
@@ -3081,6 +3124,15 @@ def cmd_check(args: argparse.Namespace) -> int:
         )
         if not paths:
             report["status"] = "no_change"
+            with suppress(JudgeError):
+                courante = git(repo, "branch", "--show-current").decode().strip()
+                if courante != f"task/{task_id}":
+                    git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/task/{task_id}")
+                    lines.append(
+                        f"  info  le travail est sur la branche task/{task_id}, et ce dossier sur"
+                        f" {courante or 'un commit détaché'} : git switch task/{task_id}, puis"
+                        f" make judge TASK={task_id}"
+                    )
             return 1
         errors = scope_errors(repo, base, contract, paths)
         if errors:

@@ -12,6 +12,15 @@ if [ -z "$TASK" ]; then
   exit 2
 fi
 
+# Une tâche vit dans son dossier (#32) : la revue s'y fait. Lancée du dossier principal, elle
+# vérifiait la branche principale, et le juge n'y voyait « rien à juger » (01/10/2026).
+AILLEURS="$(git worktree list --porcelain 2>/dev/null \
+  | awk -v b="branch refs/heads/task/$TASK" 'index($0, "worktree ") == 1 { d = substr($0, 10) } $0 == b { print d; exit }')"
+if [ -n "$AILLEURS" ] && [ -d "$AILLEURS" ] && [ "$(cd "$AILLEURS" && pwd -P)" != "$(pwd -P)" ]; then
+  echo "-> $TASK est ouverte dans son dossier : la revue s'y fait ($AILLEURS)"
+  cd "$AILLEURS" || exit 1
+fi
+
 # Rangée ou non dans un lot (tasks/<lot>/<ID>/, #35) : le juge sait où est la tâche.
 DOSSIER="$(python3 .ephor/judge.py dossier --task-id "$TASK" 2>/dev/null)" || DOSSIER="tasks/${TASK}"
 CONTRACT="$DOSSIER/contract.json"
