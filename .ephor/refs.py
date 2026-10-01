@@ -109,7 +109,19 @@ def state(ref: Ref) -> str:
     """Où en est ce dépôt : commit court, et s'il a des modifications non commitées."""
     if not ref.chemin.is_dir():
         return "ABSENT de ce poste"
-    if not (ref.chemin / ".git").exists():
+    # Le dépôt peut être au-dessus : une référence dans un sous-dossier de monorepo se disait
+    # « sans dépôt git », et le juge n'en notait aucun commit (audit du 01/10/2026).
+    try:
+        dedans = subprocess.run(
+            [*GIT, str(ref.chemin), "rev-parse", "--is-inside-work-tree"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DELAI,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        dedans = ""
+    if dedans != "true":
         return "dossier sans dépôt git"
     try:
         commit = subprocess.run(
@@ -120,7 +132,7 @@ def state(ref: Ref) -> str:
             timeout=DELAI,
         ).stdout.strip()
         sale = subprocess.run(
-            [*GIT, str(ref.chemin), "status", "--porcelain"],
+            [*GIT, str(ref.chemin), "status", "--porcelain", "--", "."],
             capture_output=True,
             text=True,
             check=True,

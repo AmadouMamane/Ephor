@@ -174,6 +174,9 @@ def test_sans_jeton_il_le_dit(
             ("https://gitlab.interne", "groupe/projet"),
         ),
         ("https://gitlab.interne/groupe/projet.git", ("https://gitlab.interne", "groupe/projet")),
+        # Sans utilisateur, une forme courante derrière un ~/.ssh/config (audit du 01/10/2026).
+        ("ssh://gitlab.interne/groupe/projet.git", ("https://gitlab.interne", "groupe/projet")),
+        ("gitlab.interne:groupe/projet.git", ("https://gitlab.interne", "groupe/projet")),
         ("https://gitlab.interne/groupe/projet", ("https://gitlab.interne", "groupe/projet")),
         # Un jeton glissé dans l'adresse ne sort pas : il était affiché en tête du rapport.
         (

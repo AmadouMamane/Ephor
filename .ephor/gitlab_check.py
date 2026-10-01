@@ -61,13 +61,16 @@ def depuis_origin() -> tuple[str | None, str | None]:
 
 
 def lire_remote(url: str) -> tuple[str | None, str | None]:
-    """`git@hote:groupe/projet.git` ou `https://hote/groupe/projet.git` -> (instance, chemin)."""
-    ssh = re.match(r"^(?:ssh://)?[^@/]+@([^:/]+)(?::\d+)?[:/](.+?)(?:\.git)?/?$", url)
-    if ssh:
-        return f"https://{ssh.group(1)}", ssh.group(2)
+    """`git@hote:groupe/projet.git` ou `https://hote/groupe/projet.git` -> (instance, chemin).
+
+    L'utilisateur est facultatif : `ssh://hote/g/p.git` et `hote:g/p.git`, courants derrière
+    un ~/.ssh/config, n'étaient pas lus (audit du 01/10/2026)."""
     web = re.match(r"^(https?://[^/]+)/(.+?)(?:\.git)?/?$", sans_identifiant(url))
     if web:
         return web.group(1), web.group(2)
+    ssh = re.match(r"^(?:ssh://)?(?:[^@/]+@)?([^:/]+)(?::\d+)?[:/](.+?)(?:\.git)?/?$", url)
+    if ssh:
+        return f"https://{ssh.group(1)}", ssh.group(2)
     return None, None
 
 

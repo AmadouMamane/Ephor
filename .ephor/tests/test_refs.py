@@ -240,3 +240,19 @@ def test_an_unset_variable_is_named(tmp_path: Path, monkeypatch: Any) -> None:
     with pytest.raises(refs.RefsError, match="DEPOTS_ABSENTS") as erreur:
         refs.load(tmp_path)
     assert "non définie" in str(erreur.value)
+
+
+def test_une_reference_dans_un_sous_dossier_de_depot_a_son_commit(tmp_path: Path) -> None:
+    """Une référence déclarée dans un sous-dossier d'un monorepo se disait « dossier sans dépôt
+    git », et le juge n'en notait aucun commit (audit du 01/10/2026)."""
+    mono = make_repo(tmp_path / "mono", "racine.py")
+    (mono / "producteurs").mkdir()
+    (mono / "producteurs" / "schema.py").write_text("class Message: ...\n", encoding="utf-8")
+    git(mono, "add", "-A")
+    git(mono, "commit", "-qm", "sous-dossier")
+    ref = refs.Ref("producteurs", mono / "producteurs", "")
+    assert len(refs.state(ref)) == 7, refs.state(ref)
+    (mono / "racine.py").write_text("# ailleurs\n", encoding="utf-8")
+    assert refs.state(ref).endswith(")") is False, "modifié hors du sous-dossier : pas lui"
+    (mono / "producteurs" / "schema.py").write_text("# modifié\n", encoding="utf-8")
+    assert "modifié" in refs.state(ref)
