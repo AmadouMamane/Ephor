@@ -88,11 +88,14 @@ def carte_fichier(chemin: Path, racine: Path) -> list[str]:
     return lignes
 
 
-def carte(repo: Path, max_lignes: int) -> str:
+def carte(repo: Path, max_lignes: int, dossier_cache: Path | None = None) -> str:
+    """La carte, depuis le cache quand le code n'a pas bougé. Le cache vit dans le dépôt de
+    TRAVAIL : celui d'un dépôt de référence, lu seulement, y aurait laissé un fichier."""
     chemins = fichiers(repo)
     if not chemins:
         return "SKIP : aucun fichier Python, et la carte ne lit que le Python (rg --files, sinon)"
-    cache = repo / ".verify" / "map" / f"{empreinte(chemins)}-{max_lignes}.txt"
+    dossier = dossier_cache or repo / ".verify" / "map"
+    cache = dossier / f"{empreinte(chemins)}-{max_lignes}.txt"
     if cache.exists():
         return cache.read_text(encoding="utf-8")
     lignes: list[str] = []
@@ -117,8 +120,9 @@ def main(argv: list[str] | None = None) -> int:
     analyseur = argparse.ArgumentParser(description="Carte des symboles Python")
     analyseur.add_argument("--repo", type=Path, default=Path.cwd())
     analyseur.add_argument("--max-lines", type=int, default=120)
+    analyseur.add_argument("--cache", type=Path, help="dossier du cache (<repo>/.verify/map)")
     options = analyseur.parse_args(argv)
-    sys.stdout.write(carte(options.repo.resolve(), options.max_lines))
+    sys.stdout.write(carte(options.repo.resolve(), options.max_lines, options.cache))
     return 0
 
 

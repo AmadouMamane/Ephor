@@ -226,7 +226,12 @@ def cmd_map(repo: Path, nom: str, max_lines: int) -> int:
     import repo_map  # import local : refs.py sert aussi sans lui
 
     print(f"== {nom} · {state(ref)} · {ref.chemin} ==")
-    return repo_map.main(["--repo", str(ref.chemin), "--max-lines", str(max_lines)])
+    # Le cache chez le dépôt de travail : rangé dans le `.verify/` de la référence, il y
+    # laissait un fichier, que `make refs` disait ensuite « (modifié) » (audit du 01/10/2026).
+    cache = repo / ".verify" / "map" / "refs" / nom
+    return repo_map.main(
+        ["--repo", str(ref.chemin), "--max-lines", str(max_lines), "--cache", str(cache)]
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

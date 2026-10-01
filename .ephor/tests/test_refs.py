@@ -106,6 +106,21 @@ def test_the_map_of_an_unknown_repository_says_which_ones_exist(tmp_path: Path) 
     assert refs.main(["--repo", str(tmp_path), "carte", "--nom", "inconnu"]) == 2
 
 
+def test_la_carte_d_un_depot_de_reference_n_ecrit_rien_chez_lui(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`make map REPO=<nom>` rangeait son cache dans le `.verify/` du dépôt de référence :
+    un fichier y apparaissait, et `make refs` le disait ensuite « (modifié) » (audit du
+    01/10/2026). Il se range chez le dépôt de travail."""
+    source = make_repo(tmp_path / "producteurs")
+    travail = tmp_path / "travail"
+    declare(travail, [{"nom": "producteurs", "chemin": str(source), "pourquoi": "les messages"}])
+    assert refs.main(["--repo", str(travail), "carte", "--nom", "producteurs"]) == 0
+    assert "class Message" in capsys.readouterr().out
+    assert git(source, "status", "--porcelain", "--ignored") == "", "rien d'écrit chez la référence"
+    assert list((travail / ".verify" / "map").rglob("*.txt")), "le cache vit chez le travail"
+
+
 def test_a_detour_designates_the_same_place(tmp_path: Path) -> None:
     """Lien symbolique, `..`, `~`, casse : quatre façons d'écrire le même chemin."""
     source = make_repo(tmp_path / "amont")
