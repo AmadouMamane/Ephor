@@ -1408,6 +1408,9 @@ ECRITURES_EN_ZONE = [
     # redirection qui le suive, reste un nom de fichier.
     "exec 3<> Makefile",
     "cd tasks && touch 2",
+    # Le `cd` d'un sous-shell s'arrête à sa parenthèse (audit du 01/10/2026).
+    "(cd src && make) && rm -f Makefile",
+    "(cd src; ls) ; (cd /tmp) ; sed -i s/a/b/ AGENTS.md",
 ]
 COMMANDES_ORDINAIRES = [
     "git status --short -- .vscode/settings.json && git diff -- .vscode/settings.json",
@@ -1465,6 +1468,8 @@ COMMANDES_ORDINAIRES = [
     "cd tasks && touch /tmp/x 2>/dev/null",
     "cd .ephor && rg x 2>&1 >&- | head",
     "cd tasks && cat x 0<&3 3<&-",
+    "(cd tasks && ls) && echo fini > notes.txt",
+    "(cd .ephor && rg -l x) | wc -l > /tmp/compte",
 ]
 
 

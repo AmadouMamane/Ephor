@@ -924,10 +924,11 @@ def cibles(texte, profondeur=0, base=None):
                 yield litteral, "commande illisible qui nomme une zone de contrôle"
         return
     # Chaque commande, et le séparateur qui la suit : un tube passe son entrée à la suivante.
+    # Une parenthèse se garde même sans commande devant : elle ouvre ou ferme un sous-shell.
     commandes, courante = [], []
     for mot in mots:
         if mot in SEPARATEURS or (mot and set(mot) <= SIGNES_SEPARATEURS):
-            if courante:
+            if courante or "(" in mot or ")" in mot:
                 commandes.append((courante, mot))
             courante = []
             continue
@@ -935,7 +936,19 @@ def cibles(texte, profondeur=0, base=None):
     if courante:
         commandes.append((courante, ""))
     variables, recus = {}, []
+    # Le `cd` d'un sous-shell s'arrête à sa parenthèse : `(cd tasks && ls) && echo x > n.txt`
+    # écrivait tasks/n.txt, et `(cd src && make) && rm -f Makefile` visait src/Makefile
+    # (audit du 01/10/2026). Le séparateur qui PRÉCÈDE chaque commande ouvre ou ferme.
+    pile, avant = [], ""
     for mots, apres in commandes:
+        for signe in avant:
+            if signe == "(":
+                pile.append(base)
+            elif signe == ")" and pile:
+                base = pile.pop()
+        avant = apres
+        if not mots:
+            continue
         # Les documents en ligne de cette commande, et ceux qu'un tube lui passe.
         textes = recus + [
             DOCUMENTS[int(m.group(1))]
