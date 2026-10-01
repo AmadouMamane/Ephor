@@ -1698,6 +1698,8 @@ def test_les_gestes_de_l_operateur_dans_n_importe_quel_ordre(tmp_path: Path, com
         "python3 .ephor/judge.py check --task-id T-1",
         "python3 .ephor/adapters.py check",
         "make map REPO=task-check",
+        # Lire la syntaxe d'un script de l'opérateur ne le lance pas (vu en session, 01/10/2026).
+        "bash -n .ephor/scripts/clore.sh",
     ],
 )
 def test_les_commandes_de_l_agent_passent(tmp_path: Path, commande: str) -> None:

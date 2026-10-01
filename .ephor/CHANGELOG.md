@@ -3,6 +3,75 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.5.1 — 1er octobre 2026
+
+Chaque fonctionnalité de la 1.5.0 évaluée de nouveau : la boucle d'une tâche rejouée de bout
+en bout dans un projet neuf (approbation, dossier de la tâche, juge, revue, fusion,
+fermeture, score), les outils annexes lancés un à un, et trois relectures adverses (juge,
+garde-fous, mesure et installation), menées dans des dépôts jetables. Chaque défaut a été
+rejoué sur la 1.5.0, puis fermé par un test qui échoue sans son correctif. Une version de
+correctifs : rien ne change dans ce que le projet écrit ou règle.
+
+- **La garde du terminal attrape les formes simples qui passaient encore.** Un saut de
+  ligne ne séparait pas deux commandes : `echo x` puis `rm -rf .ephor` sur la ligne
+  suivante, ou `git switch main` puis `git commit` (l'approbation, que le bac à sable de
+  Claude Code ne couvre pas), passaient. Aussi : le reste de la ligne d'un document en ligne
+  (`cat <<EOF > tasks/…/contract.json`, `| tee Makefile`, `| git commit -F -`), les blocs du
+  shell (`if … then rm …`, `for … do sed -i …`, `{ … }`, `!`), les préfixes à options
+  (`sudo -n`, `env -u X`, `timeout 30`, `nice -n 5`), les substitutions entre guillemets ou
+  par accents graves, `python3 <<< "…"`, `sed -ri`, `find -L`, une ligne continuée, et les
+  variables posées dans la commande même (`for f in tasks/*; do …"$f"`, `X=.ephor; rm $X`).
+  Le dossier courant de la session compte (`cd .ephor` à un appel, `sed -i` au suivant),
+  comme `git -C <dossier>` et `git --no-pager` ; les liens symboliques sont suivis ; et du
+  dossier d'une tâche, la copie principale (ses zones, son `main`) est gardée elle aussi. À
+  l'inverse, un autre dépôt n'est plus pris pour celui-ci : `cd /tmp/x && git config …` ou
+  `git -C /tmp/x commit` sur son `main` étaient refusés (vu en session), comme `bash -n`,
+  qui ne lance rien.
+- **Les autres gardes.** Sous `AGENT_STOP`, seul un outil d'édition du dossier écrit
+  `PROGRESS.md` : un appel MCP (GitHub) ou un terminal qui portait `"path": "PROGRESS.md"`
+  passait. Sous Copilot, une recherche qui vise un secret par son motif de fichiers
+  (`grep_search` et `includePattern: "**/.env"`) est refusée. Un lien vers un fichier de
+  zone (`src/lien -> ../Makefile`) ne passe plus la garde d'écriture. Un nom d'outil vide
+  se lit pareil sous jq et sous python3.
+- **`make judge` et `make review` lancés du dossier principal jugent la tâche dans son
+  dossier.** Depuis « une tâche, un dossier », ils y rendaient « rien à juger », la revue
+  vérifiait la branche principale, et ce verdict plus récent refaisait la tâche « en cours »
+  dans `make taches`. Sans dossier à part, le verdict nomme la branche `task/<ID>`.
+- **`make task-ranger` ne commite que ce qu'il range.** Il commitait tout `tasks/` : une
+  retouche pas commitée d'un autre contrat partait sur la branche principale, approuvée sans
+  avoir été relue. Et il refuse de ranger une tâche dont un autre contrat cite les fichiers,
+  au lieu de casser sa preuve en disant « restent valables ».
+- **`make taches` ne dit plus « fusionnée » une branche sans commit** vérifiée sur du
+  travail pas commité ; il reconnaît toujours une fusion en avance rapide.
+- **Le juge ne plante plus**, sur un nom de fichier qui n'est pas de l'UTF-8 ou un contrat
+  qui ne l'est pas : c'est un refus qui le dit, et toute erreur imprévue aussi (le journal
+  gardait « running »). Le test partagé d'une tâche rangée est signalé ; `setup` et `verify`
+  d'une tâche rangée trouvent ses fichiers ; la branche que désigne le serveur (`develop`)
+  sert de base partout ; un lot ne s'appelle pas `tasks` ; la ligne de lancement cite un
+  chemin que le shell interpréterait au collage.
+- **La sortie des sous-agents de Claude Code est dite pour ce qu'elle est : un minimum.**
+  Mesuré avec Claude Code 2.1.286, sur les sous-agents de cette évaluation : 0 à 3 réponses
+  sur 48 à 77 ont leur compte de sortie final ; les autres gardent un `stop_reason` nul et
+  quelques tokens, et la sortie déléguée était sous-estimée d'environ 90 % sans que rien le
+  dise. Le verdict écrit « au moins », `make usage` « ≥ » et « sortie non écrite (N
+  réponses sur M) » ; le plafond s'applique à ce minimum (`.ephor/docs/07`).
+- **La démonstration du juge tourne sans rsync**, absent d'un Linux minimal : la dernière
+  ligne de la recette du projet neuf s'arrêtait à sa première commande.
+- **Installation et mise à jour.** Un `.gitignore` sans saut de ligne final voyait sa
+  dernière ligne collée à la première ajoutée (`dist.verify/`). Un `Makefile` ou des
+  réglages fusionnés au geste 0 étaient « À REPRENDRE » à chaque mise à jour, même
+  inchangés dans Ephor : ils ne le sont plus quand Ephor les livre à l'identique et qu'ils
+  gardent ses cibles et ses hooks. Un rôle dont le projet avait changé le seul `model:`
+  avant la 1.5 recevait bien le nouvel `effort: high`. Une liste YAML dans l'en-tête d'un
+  sous-agent (`tools:` puis `- Read`) ne fait plus échouer `make adapters`, et les virgules
+  finales du JSONC de VS Code ne se retirent plus dans les valeurs.
+- **Et aussi.** `make score` ne plante plus sur une durée mal écrite dans le journal ;
+  l'aide de `usage.py` garde ses exemples lisibles.
+
+Dans un projet équipé : `bootstrap_existing_repo.sh --mettre-a-jour`, depuis cette version,
+puis relancez Claude Code et opencode. Le greffon de Copilot ne change pas : rien à
+réinstaller, son relais appelle les gardes du moteur, que la mise à jour remplace.
+
 ## 1.5.0 — 1er octobre 2026
 
 Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35) : un test partagé par

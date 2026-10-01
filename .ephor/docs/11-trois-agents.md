@@ -225,11 +225,13 @@ traînent dans ce dossier ne tournent plus.
   (trouvé le 30/09/2026, d'après la doc de VS Code, pas encore vu en session). Et un outil au
   nom inconnu qui vise un fichier **avec** un contenu écrit est jugé comme une écriture.
 - **Le terminal** : `shell-guard.sh` lit la commande, nomme ce qu'elle écrit et refuse si
-  c'est une zone de contrôle, formes simples comprises (`cd` puis écriture, script en
-  document en ligne, `find -delete`, `git apply`). **Ce n'est pas une frontière** : un
-  détour par une variable, du base64 ou un script écrit ailleurs passe, et Copilot n'a pas
-  de bac à sable mesuré. La sentinelle le signale en fin de tour ; le juge reste la
-  barrière. Sans python3, il refuse toute commande qui nomme une zone de contrôle.
+  c'est une zone de contrôle, formes simples comprises (`cd` puis écriture, même d'un appel
+  à l'autre, script en document en ligne, `find -delete`, `git apply`, commandes sur
+  plusieurs lignes, blocs `if`/`for`, `git -C`, substitutions, variables posées dans la
+  commande elle-même). **Ce n'est pas une frontière** : un détour par une variable calculée,
+  du base64 ou un script écrit ailleurs passe, et Copilot n'a pas de bac à sable mesuré. La
+  sentinelle le signale en fin de tour ; le juge reste la barrière. Sans python3, il refuse
+  toute commande qui nomme une zone de contrôle.
 - **Une forme d'appel inconnue est refusée** par le relais du greffon. Un lot d'appels
   (`toolCalls` ou `tool_calls`) est éclaté, et chaque appel passe toutes les gardes. Quand
   l'éditeur changera de protocole, le filet se verra tomber au lieu de disparaître.

@@ -625,6 +625,9 @@ def script_lance(nom, args):
         a = args[j]
         if a in {"-c", "-m", "-e"}:
             return None, []
+        # `bash -n x.sh` lit la syntaxe sans rien lancer : ce n'est pas lancer le script.
+        if nom in COQUILLES and re.match(r"^-[a-z]*n[a-z]*$", a):
+            return None, []
         if a in {"-X", "-W", "-O"} and nom.startswith("python"):
             j += 2
             continue

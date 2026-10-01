@@ -82,6 +82,15 @@ Claude Code, chacun écrit son journal à part (`<session>/subagents/`), et Epho
 à la tâche — plafond compris. Avant le 25/09/2026, il ne lisait que le journal principal :
 sur une vraie session, un tiers de la dépense lui échappait.
 
+Une limite, mesurée le 01/10/2026 avec Claude Code 2.1.286 : dans le journal d'un
+sous-agent, presque aucune réponse n'a son compte de sortie final (0 à 3 sur 50, les autres
+gardent un `stop_reason` nul et quelques dizaines de tokens). L'entrée et le cache y sont
+justes ; la sortie, non. Ephor le voit et le dit : la mesure de la tâche devient un
+**minimum** (« au moins » au verdict, « ≥ » dans `make usage`), et `make usage` affiche
+« sortie non écrite » pour ces sous-agents, avec le nombre de réponses concernées. Le
+plafond s'applique à ce minimum, comme sous Copilot : dépassé, il arrête ; pas encore
+atteint, la dépense réelle peut l'être déjà.
+
 ### 2.2 Faire écrire les sorties dans des fichiers
 
 `make verify` n'imprime qu'une ligne par étape et un bloc de statistiques

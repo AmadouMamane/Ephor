@@ -60,9 +60,12 @@ fait la fusion d'une merge request). Les tâches fusionnées sont cachées : `TO
 par fonctionnalité (`tasks/paiement/`, `tasks/auth-sso/`, en minuscules) garde l'arborescence
 lisible. À la création : `LOT=paiement` sur `make task-new` ou `make task-approve`. Pour des
 tâches déjà là : `make task-ranger LOT=paiement ID=PAY-012`, ou `PREFIXE=PAY-` pour toutes
-celles qui commencent ainsi, dans un commit sur la branche principale. Le contrat et la trace
-rouge d'une tâche rangée restent valables : ils parlent de `tasks/<ID>/…`, et le juge le
-traduit vers le vrai dossier. Un identifiant reste unique, rangé ou non.
+celles qui commencent ainsi, dans un commit sur la branche principale qui ne contient que
+les dossiers rangés. Le contrat et la trace rouge d'une tâche rangée restent valables : ils
+parlent de `tasks/<ID>/…`, et le juge le traduit vers le vrai dossier. Une tâche dont un
+AUTRE contrat cite les fichiers ne se range pas : sa preuve deviendrait introuvable (chaque
+contrat a ses propres tests, plus bas). Un identifiant reste unique, rangé ou non ; un lot ne
+s'appelle pas `tasks`.
 
 ## Écrire un bon contrat
 

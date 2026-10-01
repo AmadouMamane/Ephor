@@ -106,7 +106,9 @@ bibliothèque standard, compatible avec le Python 3.9 livré par Apple.
    `make clean` : c'est la matière de `make score` et du rituel de `.ephor/docs/09`. Le rapport
    détaillé, lui, est écrasé à chaque exécution. Une tâche se juge dans son propre dossier :
    `make score`, `make taches` et `make usage` lisent le journal de chaque dossier du dépôt,
-   et `make task-clore` garde celui d'une tâche avant de retirer son dossier.
+   et `make task-clore` garde celui d'une tâche avant de retirer son dossier. Lancés du
+   dossier principal, `make judge` et `make review` vont juger la tâche dans son dossier ;
+   sans dossier à part, le verdict « rien à juger » nomme la branche `task/<ID>`.
 
 ### Les verdicts
 

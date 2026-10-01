@@ -301,7 +301,8 @@ case "$BAC" in
 esac
 # La limite, dite là où l'opérateur regarde : un filet, pas une frontière.
 printf '  [ -- ] terminal : la garde attrape l'"'"'écriture franche et les formes simples (cd, heredoc, find,\n'
-printf '         git apply, formateurs, curl, tar), pas un détour (script écrit ailleurs, variable). La sentinelle\n'
+printf '         git apply, formateurs, curl, tar, blocs, plusieurs lignes), pas un détour (script écrit ailleurs,\n'
+printf '         variable calculée). La sentinelle\n'
 printf '         le signale en fin de tour, le juge refuse le correctif — ce n'"'"'est pas une frontière.\n'
 printf '         La frontière, sous Claude Code, c'"'"'est le bac à sable ; opencode peut l'"'"'avoir par srt (.ephor/docs/11), Copilot non.\n'
 
