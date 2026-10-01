@@ -638,15 +638,25 @@ def verifier_rapport_pytest(
 # Ce qu'un agent ajoute pour faire taire un contrôle au lieu de le satisfaire. Tout
 # silencieux ajouté par le patch est nommé au verdict, et refusé sur une tâche à risque
 # élevé.
+# Les formes courantes, pas seulement celles de pytest : `# ruff: noqa`, un `@skip` importé de
+# unittest ou `self.skipTest` passaient en risque élevé, et VÉRIFIÉ (audit du 01/10/2026).
 SILENCIEUX = (
-    ("noqa", re.compile(r"#\s*noqa\b", re.I)),
+    ("noqa", re.compile(r"#\s*(?:(?:ruff|flake8)\s*:\s*)?noqa\b", re.I)),
     ("type: ignore", re.compile(r"#\s*type:\s*ignore\b")),
+    ("pyright: ignore", re.compile(r"#\s*pyright:\s*ignore\b")),
     ("mypy:", re.compile(r"#\s*mypy:")),
     ("pragma: no cover", re.compile(r"#\s*pragma:\s*no\s*cover", re.I)),
     ("nosec", re.compile(r"#\s*nosec\b")),
     ("pylint: disable", re.compile(r"#\s*pylint:\s*disable")),
-    ("skip", re.compile(r"pytest\.mark\.skip|pytest\.skip\(|unittest\.skip")),
-    ("xfail", re.compile(r"pytest\.mark\.xfail|pytest\.xfail\(")),
+    (
+        "skip",
+        re.compile(
+            r"\bmark\.skip|pytest\.skip\(|pytest\.importorskip\(|unittest\.skip|@skip(?:If|Unless)?\b"
+            r"|\.skipTest\(|\bSkipTest\b|\b(?:it|test|describe)\.skip\(|\bx(?:it|describe|test)\("
+            r"|\bt\.Skip(?:f|Now)?\(|@(?:Disabled|Ignore)\b"
+        ),
+    ),
+    ("xfail", re.compile(r"\bmark\.xfail|pytest\.xfail\(")),
     ("eslint-disable", re.compile(r"eslint-disable")),
     ("ts-ignore", re.compile(r"@ts-(?:ignore|nocheck|expect-error)")),
     ("nolint", re.compile(r"//\s*nolint\b")),

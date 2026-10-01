@@ -1580,6 +1580,33 @@ def test_les_silencieux_sont_reperes_dans_le_patch() -> None:
     assert judge.silencieux_ajoutes(patch) == ["src/a.py:2 type: ignore", "tests/t.py:1 skip"]
 
 
+@pytest.mark.parametrize(
+    ("ligne", "nom"),
+    [
+        ("# ruff: noqa", "noqa"),
+        ("# flake8: noqa: E501", "noqa"),
+        ("x = f()  # pyright: ignore[reportCallIssue]", "pyright: ignore"),
+        ("@skip('plus tard')", "skip"),
+        ("@unittest.skipIf(True, 'x')", "skip"),
+        ("        self.skipTest('plus tard')", "skip"),
+        ("    raise unittest.SkipTest('x')", "skip"),
+        ("@mark.skip", "skip"),
+        ("it.skip('refuse un libellé vide', () => {})", "skip"),
+        ("xit('refuse un libellé vide', () => {})", "skip"),
+        ('\tt.Skip("plus tard")', "skip"),
+        ("@Disabled", "skip"),
+    ],
+)
+def test_les_formes_courantes_de_silencieux_sont_reperees(ligne: str, nom: str) -> None:
+    """En risque élevé, `# ruff: noqa`, un `@skip` importé de unittest ou `self.skipTest`
+    passaient sans être vus, et VÉRIFIÉ (audit du 01/10/2026)."""
+    patch = (
+        b"diff --git a/tests/t.py b/tests/t.py\n--- /dev/null\n+++ b/tests/t.py\n"
+        b"@@ -0,0 +1 @@\n+" + ligne.encode() + b"\n"
+    )
+    assert judge.silencieux_ajoutes(patch) == [f"tests/t.py:1 {nom}"]
+
+
 def test_le_rapport_lie_chaque_fichier_juge_a_son_empreinte(repo: Path, run_judge: Runner) -> None:
     (repo / "src" / "metrics.py").write_text(FIX)
     code, report = run_judge(repo)
