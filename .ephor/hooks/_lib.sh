@@ -72,7 +72,7 @@ _ARGS='((if (.tool_input | type) == "object" then .tool_input else {} end), (if 
 # Champs qui portent un contenu écrit, tous outils confondus. `file_text` et `new_str` sont
 # ceux du moteur de la fenêtre d'agents de VS Code (`create`, `edit`, `str_replace_editor`) :
 # sans eux, un secret écrit par ces outils passait devant le contrôle sans être lu.
-_ECRIT='.content, .new_string, .newString, .new_str, .file_text, .new_source, .patch, .patchText, .diff, .text, .code, (.edits[]?.new_string), (.edits[]?.newString), (.replacements[]? | objects | .newString, .new_string)'
+_ECRIT='.content, .new_string, .newString, .new_str, .file_text, .new_source, .patch, .patchText, .diff, .text, .code, (.edits[]? | objects | .new_string, .newString, .newText), (.replacements[]? | objects | .newString, .new_string)'
 # Champs qui portent un CORRECTIF, et eux seuls : un correctif nomme des fichiers, un
 # contenu ordinaire n'en nomme pas. Confondre les deux faisait refuser l'écriture d'un
 # PROGRESS.md qui citait un diff — l'agent ne pouvait plus résumer son état avant l'arrêt.
@@ -86,7 +86,7 @@ _BRUT='(.toolArgs, .tool_input) | strings'
 # `glob` de la fenêtre d'agents — lue comme une liste, la chaîne ne donnait rien.
 # `replacements` et `files` : le panneau de discussion de VS Code (`multi_replace_string_in_file`,
 # `editFiles`), dont les fichiers visés n'étaient pas lus (trouvé le 30/09/2026).
-_VISE='.file_path, .notebook_path, .path, .filePath, .target_file, .targetFile, (.paths[]?), (.paths | strings), (.edits[]?.file_path), (.edits[]?.filePath), (.replacements[]? | objects | .filePath, .file_path), (.files[]? | strings)'
+_VISE='.file_path, .notebook_path, .path, .filePath, .target_file, .targetFile, .source, .destination, (.paths[]?), (.paths | strings), (.edits[]? | objects | .file_path, .filePath), (.replacements[]? | objects | .filePath, .file_path), (.files[]? | strings)'
 _CHAINES='map(select(type == "string" and . != ""))'
 
 # Le même travail, en python3, quand jq n'est pas là. Une opération NOMMÉE de chaque côté :
@@ -98,7 +98,7 @@ import sys
 
 ECRIT = ("content", "new_string", "newString", "new_str", "file_text", "new_source", "patch", "patchText", "diff", "text", "code")
 CORRECTIF = ("patch", "patchText", "diff", "input")
-VISE = ("file_path", "notebook_path", "path", "filePath", "target_file", "targetFile")
+VISE = ("file_path", "notebook_path", "path", "filePath", "target_file", "targetFile", "source", "destination")
 
 
 def charger(source):
@@ -191,7 +191,7 @@ def cueillir(cles, cles_edits, cles_remplacements=()):
 
 
 if op == "corps":
-    edits = ("new_string", "newString")
+    edits = ("new_string", "newString", "newText")
     print("\n".join(cueillir(ECRIT + ("input",), edits, edits) + brut))
 elif op == "correctif":
     print("\n".join(cueillir(CORRECTIF, ()) + brut))
@@ -391,6 +391,9 @@ ecriture() { # l'appel écrit-il un fichier ? (code de retour)
     createFile | editFiles | str_replace* | */editFiles | */createFile | create) return 0 ;;
     create_file | replace_string_in_file | multi_replace_string_in_file | insert_edit_into_file) return 0 ;;
     edit_notebook_file | create_new_jupyter_notebook) return 0 ;;
+    # Le serveur MCP « filesystem » : `move_file` n'a pas de contenu, `edit_file` le porte
+    # dans `edits[].newText` ; ni l'un ni l'autre n'était vu (audit du 01/10/2026).
+    *write_file | *edit_file | *move_file) return 0 ;;
   esac
   [ -n "$(corps)" ] || return 1
   [ -n "$(correctif)" ] && return 0

@@ -987,6 +987,32 @@ def test_le_panneau_de_copilot_n_ecrit_pas_une_zone(tmp_path: Path, outil: str, 
 
 
 @pytest.mark.parametrize("sans", [False, True], ids=["jq", "python3"])
+def test_les_outils_mcp_de_fichiers_n_ecrivent_pas_une_zone(tmp_path: Path, sans: bool) -> None:
+    """Le serveur MCP « filesystem » écrit avec `edit_file` (`edits[].newText`) et déplace avec
+    `move_file` (`source`, `destination`) : ni l'un ni l'autre n'était lu comme une écriture,
+    et sous Claude Code ni le bac à sable ni les refus Edit ne couvrent MCP (audit du
+    01/10/2026). Un élément de liste qui n'est pas un objet faisait aussi tout taire sous jq."""
+    projet = projet_avec_reglages(tmp_path)
+    chemin = sans_jq(tmp_path) if sans else None
+    zone, permis = projet / "Makefile", projet / "src" / "app.py"
+
+    def appel(outil: str, entree: dict[str, Any]) -> int:
+        charge = {"tool_name": outil, "tool_input": entree}
+        return hook("write-guard.sh", charge, project=projet, path=chemin).returncode
+
+    edits = [{"oldText": "a", "newText": "b"}]
+    assert appel("mcp__filesystem__edit_file", {"path": str(zone), "edits": edits}) == 2
+    assert appel("mcp__filesystem__edit_file", {"path": str(permis), "edits": edits}) == 0
+    vers = str(projet / "tasks" / "T-1" / "contract.json")
+    assert appel("mcp__filesystem__move_file", {"source": "/tmp/x", "destination": vers}) == 2
+    assert appel("mcp__filesystem__move_file", {"source": str(zone), "destination": "/tmp/x"}) == 2
+    assert (
+        appel("mcp__filesystem__move_file", {"source": "/tmp/x", "destination": str(permis)}) == 0
+    )
+    assert appel("Write", {"file_path": str(zone), "content": "x", "edits": [1]}) == 2
+
+
+@pytest.mark.parametrize("sans", [False, True], ids=["jq", "python3"])
 def test_le_panneau_de_copilot_n_ecrit_pas_un_secret(tmp_path: Path, sans: bool) -> None:
     projet = projet_avec_reglages(tmp_path)
     chemin = sans_jq(tmp_path) if sans else None
