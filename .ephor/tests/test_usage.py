@@ -627,3 +627,23 @@ def test_le_hook_de_contexte_parle_a_l_operateur_sans_bloquer(tmp_path: Path) ->
     assert calme.returncode == 0 and calme.stdout == ""
     abime = hook("contexte.sh", {"transcript_path": 3})
     assert abime.returncode == 0 and abime.stdout == ""
+
+
+def test_un_journal_abime_ne_fait_pas_tomber_le_rapport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Un nombre qui n'en est pas un (NaN, infini), ou un appel d'outil dont `input` n'est pas
+    un objet : `make usage` tombait sur une trace, et le rapport entier était perdu (audit du
+    01/10/2026)."""
+    assert usage.nombre(float("nan")) == 0 and usage.nombre(float("inf")) == 0
+    depot = tmp_path / "depot"
+    depot.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    dossier = usage.dossier_claude(depot)
+    sous = dossier / "session" / "subagents"
+    sous.mkdir(parents=True)
+    journal(dossier / "session.jsonl", [REPONSE])
+    journal(sous / "agent-x.jsonl", [bloc("r1", 10, "tool_use", name="Bash", input="ls")])
+    (sous / "agent-x.meta.json").write_text('{"agentType": "scout"}')
+    (profil,) = usage.sous_agents_claude(depot)
+    assert profil["outils"] == {"Bash": 1} and profil["fichiers_lus"] == 0

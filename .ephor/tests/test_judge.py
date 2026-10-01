@@ -2189,3 +2189,14 @@ def test_le_contrat_porte_le_niveau_et_l_effort() -> None:
     for mauvais in ({"niveau": "opus"}, {"effort": "tres-fort"}):
         with pytest.raises(judge.JudgeError):
             judge.parse_contract(contract(**mauvais), "T-001")
+
+
+def test_le_minimum_des_sous_agents_arrive_jusqu_au_verdict(tmp_path: Path) -> None:
+    """`read_usage` laissait tomber `sans_final` : le verdict ne disait jamais « au moins », et
+    la sortie non comptée des sous-agents passait pour un coût complet (audit du 01/10/2026)."""
+    dossier = tmp_path / ".verify" / "usage"
+    dossier.mkdir(parents=True)
+    (dossier / "T-1.json").write_text(json.dumps({"facturables": 1000, "sans_final": 2}))
+    lu = judge.read_usage(tmp_path, "T-1")
+    assert lu is not None and lu["sans_final"] == 2
+    assert "au moins 1" in judge.usage_line(lu, None)

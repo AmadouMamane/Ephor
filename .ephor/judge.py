@@ -2779,6 +2779,9 @@ def read_usage(repo: Path, task_id: str) -> dict[str, Any] | None:
             "requetes_premium",
             "detail_complet",
             "sous_agents",
+            # Le minimum des sous-agents (usage.py) : sans lui, le verdict ne disait jamais
+            # « au moins » (audit du 01/10/2026).
+            "sans_final",
         )
         if cle in mesure
     }

@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -57,7 +58,11 @@ def totalise(compte: dict[str, Any]) -> dict[str, Any]:
 
 def nombre(valeur: Any) -> int:
     """Un compteur lu dans un journal : un nombre, sinon zéro (jamais une exception)."""
-    if isinstance(valeur, bool) or not isinstance(valeur, (int, float)):
+    if (
+        isinstance(valeur, bool)
+        or not isinstance(valeur, (int, float))
+        or not math.isfinite(valeur)
+    ):
         return 0
     return int(valeur)
 
@@ -460,7 +465,8 @@ def profil_claude(journal: Path) -> dict[str, Any]:
             for bloc in contenu if isinstance(contenu, list) else []:
                 if isinstance(bloc, dict) and bloc.get("type") == "tool_use":
                     outils[str(bloc.get("name"))] += 1
-                    cible = (bloc.get("input") or {}).get("file_path")
+                    entree = bloc.get("input")
+                    cible = entree.get("file_path") if isinstance(entree, dict) else None
                     if bloc.get("name") == "Read" and isinstance(cible, str):
                         lus.add(cible)
     return {

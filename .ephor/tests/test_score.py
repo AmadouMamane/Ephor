@@ -157,3 +157,11 @@ def test_le_score_compare_les_niveaux_d_implementation() -> None:
     assert "fort       1 / 1   vérifiée(s) · 30 000 tokens par critère" in texte
     assert "rapide     1 / 1   vérifiée(s) · 10 000 tokens par critère" in texte
     assert "par niveau" not in score.report(JOURNAL), "rien à dire sans niveau"
+
+
+def test_une_duree_qui_n_est_pas_un_nombre_fini_compte_zero() -> None:
+    """`NaN` ou `1e999` dans un journal : `make score` tombait (ValueError, OverflowError),
+    alors que la 1.5.1 annonçait qu'une durée mal écrite ne le faisait plus tomber."""
+    assert score.duree(float("nan")) == 0.0 and score.duree(float("inf")) == 0.0
+    entree = json.loads('{"task_id": "T", "status": "verified_needs_review", "seconds": NaN}')
+    assert "T" in score.report([entree]) or score.report([entree])

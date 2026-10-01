@@ -14,6 +14,7 @@ Bibliothèque standard uniquement, et syntaxe Python 3.9 : ce script se lance av
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,12 @@ def entier(valeur: Any) -> int:
 def duree(valeur: Any) -> float:
     """Une durée lue dans le journal, zéro si ce n'en est pas une : `"12,5"`, écrit à la main
     ou par un autre outil, faisait planter `make score` (audit du 01/10/2026)."""
-    if isinstance(valeur, bool) or not isinstance(valeur, (int, float)):
+    # NaN et l'infini aussi : `round(nan)` et `round(1e999)` faisaient tomber le rapport.
+    if (
+        isinstance(valeur, bool)
+        or not isinstance(valeur, (int, float))
+        or not math.isfinite(valeur)
+    ):
         return 0.0
     return float(valeur)
 
