@@ -1473,6 +1473,16 @@ def test_le_terminal_garde_ses_usages_ordinaires(commande: str, forme: str) -> N
     assert passe.returncode == 0, passe.stderr
 
 
+@pytest.mark.parametrize("forme", ["claude", "copilot"])
+def test_une_tres_longue_commande_est_jugee_quand_meme(forme: str) -> None:
+    """Au-delà de 128 Kio, la commande, passée à python3 par l'environnement, l'empêchait de
+    démarrer (« Argument list too long ») : verdict vide, et tout passait (audit du 01/10/2026).
+    Un gros document en ligne est une forme réelle : des données, une fixture."""
+    refus = au_terminal("rm -rf .ephor; echo '" + "y" * 140_000 + "' > /tmp/gros.txt", forme)
+    assert refus.returncode == 2, refus.stderr[-300:]
+    assert au_terminal("echo '" + "y" * 140_000 + "' > /tmp/gros.txt", forme).returncode == 0
+
+
 def sans_python(tmp_path: Path) -> str:
     """jq, mais pas python3 : la garde lit l'appel, sans pouvoir analyser la commande."""
     if shutil.which("jq") is None:

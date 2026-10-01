@@ -87,7 +87,9 @@ import sys
 import urllib.parse
 
 racine, maison = sys.argv[1], sys.argv[2]
-commande = os.environ["EPHOR_COMMANDE"]
+# Par l'entrée standard, pas par l'environnement : au-delà de 128 Kio, une variable empêchait
+# python3 de démarrer (« Argument list too long »), et tout passait (audit du 01/10/2026).
+commande = sys.stdin.read()
 # Le dossier où la commande tourne (voir COURANT plus haut) ; la racine à défaut.
 COURANT = os.environ.get("EPHOR_COURANT") or racine
 # La branche où l'on est, suivie à travers les `git switch` de la commande : `git switch main
@@ -1159,10 +1161,12 @@ except Exception:  # un défaut de cette analyse ne doit pas tout laisser passer
             print(f"{litteral}\t{litteral}\tcommande que cette garde n'a pas su analyser")
             break
 PY
-VERDICT="$(EPHOR_COMMANDE="$COMMANDE" EPHOR_MOTIFS="$MOTIFS" EPHOR_EXCEPTIONS="$EXCEPTIONS" \
-  EPHOR_MOTEUR="$(dirname "$ZONES_MOTEUR")" EPHOR_COURANT="$COURANT" \
+MOTEUR_DIR="$(dirname "$ZONES_MOTEUR")"
+VERDICT="$(printf '%s' "$COMMANDE" | EPHOR_MOTIFS="$MOTIFS" EPHOR_EXCEPTIONS="$EXCEPTIONS" \
+  EPHOR_MOTEUR="$MOTEUR_DIR" EPHOR_COURANT="$COURANT" \
   EPHOR_BRANCHE="$BRANCHE" EPHOR_PRINCIPALES="$PRINCIPALES" EPHOR_LECTURES="$LECTURES" \
-  python3 -c "$ANALYSE" "$ROOT" "$HOME")"
+  python3 -c "$ANALYSE" "$ROOT" "$HOME")" \
+  || deny "REFUSÉ : la garde du terminal n'a pas pu analyser cette commande (python3 n'a pas abouti). Elle refuse plutôt que de laisser passer sans rien voir. Découpe la commande, ou écris le script dans un fichier hors des zones de contrôle, puis lance-le."
 if [ -n "$VERDICT" ]; then
   IFS="$(printf '\t')" read -r CIBLE MOTIF POURQUOI <<EOF
 $VERDICT
