@@ -476,6 +476,33 @@ def test_les_reglages_d_un_role_survivent_a_la_mise_a_jour(
     assert 'variant: "max"' in derive, "et opencode les reçoit"
 
 
+def test_un_role_regle_par_le_projet_n_est_pas_annonce_remplace_sans_changement(
+    tmp_path: Path,
+) -> None:
+    """Un sous-agent dont le projet a réglé `model:` était annoncé « ↻ remplacé… jamais
+    retouché » à chaque mise à jour, même d'une version à elle-même, alors que rien ne
+    changeait (audit du 01/10/2026)."""
+    cible = projet_equipe(tmp_path / "noderepo")
+    planner = cible / ".claude" / "agents" / "planner.md"
+    planner.write_text(planner.read_text().replace("model: opus", "model: sonnet"))
+    git(cible, "commit", "-qam", "notre planner")
+    sortie = mettre_a_jour(cible, ROOT, "--mettre-a-jour")
+    assert ".claude/agents/planner.md" not in sortie, sortie
+    assert "model: sonnet" in planner.read_text()
+    assert git(cible, "status", "--porcelain") == ""
+
+
+def test_l_installation_ne_double_pas_le_journal_du_projet(tmp_path: Path) -> None:
+    """À l'installation, un PROGRESS.md déjà là recevait un .ephor-new, que doctor proposait
+    ensuite de mettre à sa place : le journal du projet écrasé (audit du 01/10/2026)."""
+    cible = tmp_path / "noderepo"
+    depot_node(cible)
+    (cible / "PROGRESS.md").write_text("# notre journal\n")
+    bootstrap(cible)
+    assert (cible / "PROGRESS.md").read_text() == "# notre journal\n"
+    assert not (cible / "PROGRESS.md.ephor-new").exists()
+
+
 def test_un_reglage_que_l_ancienne_version_n_avait_pas_arrive_quand_meme(tmp_path: Path) -> None:
     """De la 1.0 à la 1.4, l'évaluateur n'avait que `model:`. Un projet qui l'avait passé de
     `opus` à `sonnet` perdait, en passant en 1.5, le nouvel `effort: high` : une ligne absente

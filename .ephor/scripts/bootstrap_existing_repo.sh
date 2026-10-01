@@ -178,13 +178,23 @@ copy() { # copy <relatif>
       # Les réglages du rôle (model, effort), gardés d'une version à l'autre.
       garde="$(mktemp "${TMPDIR:-/tmp}/ephor-role.XXXXXX")" && cp "$rel" "$garde" || garde=""
     fi
-    cp "$src" "$rel"; echo "  ↻ $rel"
+    cp "$src" "$rel"
+    local gardes=0 inchange=0
     if [ -n "$garde" ]; then
-      python3 "$SRC/.ephor/adapters.py" garder-reglages "$garde" "$rel" \
-        && echo "    réglages du rôle gardés (model, effort)"
+      python3 "$SRC/.ephor/adapters.py" garder-reglages "$garde" "$rel" && gardes=1
+      # Ses réglages remis, le fichier peut être celui d'avant : rien n'a changé. Il était
+      # annoncé « ↻ remplacé » à chaque mise à jour, même d'une version à elle-même (audit
+      # du 01/10/2026).
+      cmp -s "$garde" "$rel" && inchange=1
       rm -f "$garde"
     fi
-    if moteur_du_projet "$rel"; then REMPLACES="$REMPLACES $rel"; else HORS_MOTEUR="$HORS_MOTEUR $rel"; fi
+    if [ "$inchange" = 1 ]; then
+      SAME=$((SAME+1))
+    else
+      echo "  ↻ $rel"
+      [ "$gardes" = 1 ] && echo "    réglages du rôle gardés (model, effort)"
+      if moteur_du_projet "$rel"; then REMPLACES="$REMPLACES $rel"; else HORS_MOTEUR="$HORS_MOTEUR $rel"; fi
+    fi
   elif [ "$MAJ" = "1" ] && ! moteur_du_projet "$rel" && [ ! -e "$rel.ephor-new" ] \
     && d_ephor "$rel" && inchange_dans_ephor "$rel"; then
     INCHANGES="$INCHANGES $rel"; KEPT=$((KEPT+1))
@@ -341,8 +351,10 @@ copy Makefile
 copy tasks/README.md
 # L'état du travail et la consigne sont au projet dès le premier jour. Une mise à jour qui y
 # déposait un .ephor-new demandait de « fusionner » le journal du projet avec un modèle vide.
+# À l'installation aussi : un PROGRESS.md déjà là recevait un .ephor-new, que doctor proposait
+# ensuite de mettre à sa place, journal du projet écrasé (audit du 01/10/2026).
 for f in PROGRESS.md STEER.md; do
-  if [ "$MAJ" = "1" ] && [ -e "$f" ]; then continue; fi
+  if [ -e "$f" ]; then continue; fi
   copy "$f"
 done
 touch .gitignore
