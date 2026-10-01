@@ -56,7 +56,8 @@ préférer quand le plan vous convient tel quel ; sinon, `make task-new`, retouc
 état, son risque, son niveau, son objectif. L'état est calculé à partir de git et des
 journaux du juge (ceux de tous les dossiers du dépôt), jamais tenu à la main : approuvée, en cours (sa branche existe), vérifiée, en échec,
 rouge à refaire, fusionnée (un commit de la branche principale nomme `task/<ID>`, comme le
-fait la fusion d'une merge request ; une fusion annulée par `git revert` ne compte plus). Les
+fait la fusion d'une merge request, ou son contenu y est entré tel quel, par squash ; une
+fusion annulée par `git revert` ne compte plus). Les
 tâches fusionnées sont cachées : `TOUT=1` les montre.
 
 **Ranger par fonctionnalité : `tasks/<lot>/<ID>/`.** Avec une centaine de tâches, un dossier

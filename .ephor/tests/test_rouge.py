@@ -1461,6 +1461,28 @@ def test_une_preuve_designee_par_son_nom_de_module_est_protegee(
     assert judge.modules_cites(["{python}", "-m", "src.metrics"]) == []
 
 
+def test_une_fusion_par_squash_est_fusionnee(
+    repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le bouton par défaut de GitHub fusionne par squash : aucun commit ne nomme `task/<ID>`,
+    et le bout de la branche n'entre pas dans main. La tâche restait « vérifiée » pour
+    toujours, et `make task-clore` refusait de la fermer (audit du 01/10/2026)."""
+    (repo / "src" / "metrics.py").write_text(FIX)
+    git(repo, "commit", "-qam", "correctif")
+    assert run_judge(repo)[0] == 0
+
+    def ligne() -> str:
+        capsys.readouterr()
+        assert judge.main(["taches", "--repo", str(repo), "--tout"]) == 0
+        return next(lg for lg in capsys.readouterr().out.splitlines() if " T-001 " in lg)
+
+    assert "vérifiée" in ligne()
+    git(repo, "switch", "-q", "main")
+    git(repo, "merge", "-q", "--squash", "task/T-001")
+    git(repo, "commit", "-qm", "Micro-accuracy sur des lots (#12)")
+    assert "fusionnée" in ligne()
+
+
 def test_une_fusion_annulee_n_est_plus_fusionnee(
     repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
 ) -> None:

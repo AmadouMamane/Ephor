@@ -3996,12 +3996,10 @@ class VueDesTaches:
         if task_id in self.annulees:
             return False
         branche = self.branches.get(task_id)
-        if (
-            branche is None
-            or branche not in self.entrees
-            or self.verdicts.get(task_id) != "verified_needs_review"
-        ):
+        if branche is None or self.verdicts.get(task_id) != "verified_needs_review":
             return False
+        if branche not in self.entrees:
+            return self.contenu_entre(branche)
         base = self.bases.get(task_id)
         if not base:
             return True
@@ -4010,6 +4008,21 @@ class VueDesTaches:
         except JudgeError:
             return True  # le bout de la branche n'était pas sur la base : son travail est entré
         return False
+
+    def contenu_entre(self, branche: str) -> bool:
+        """Une fusion par squash, le bouton par défaut de GitHub : aucun commit ne nomme
+        `task/<ID>`, le bout de la branche n'entre pas dans la branche principale. Son contenu,
+        lui, y est : chaque fichier que la branche change y a le contenu de son bout. La tâche
+        restait « vérifiée » pour toujours, et `make task-clore` refusait (audit du 01/10/2026)."""
+        try:
+            depart = git(self.repo, "merge-base", self.commit, branche).decode().strip()
+            sortie = git(self.repo, "diff", "--name-only", "-z", depart, branche)
+            noms = [n.decode("utf-8", "replace") for n in sortie.split(b"\0") if n]
+            if not noms:
+                return False
+            return not git(self.repo, "diff", "--name-only", branche, self.commit, "--", *noms)
+        except JudgeError:
+            return False
 
 
 def etat_de_tache(repo: Path, vue: VueDesTaches, task_id: str, contrat: Contract) -> str:
