@@ -56,6 +56,11 @@ RACINE_AVANT="$(ls -A 2>/dev/null | LC_ALL=C sort)"
 # La version en place, lue AVANT de poser la nouvelle : une mise à jour dit d'où elle part.
 version_de() { sed -n '1s/ —.*//p' "$1" 2>/dev/null || true; }
 VERSION_AVANT="$(version_de .ephor/VERSION)"
+# Ce que la version en place livrait hors du moteur (« actuelle » de SON empreintes.txt), lu
+# avant de le remplacer : un fichier retouché ici, qu'Ephor livre à l'identique, n'a rien à
+# reprendre (voir inchange_dans_ephor).
+ANCIENNES="$(awk '$3 == "actuelle" { print $1 " " $2 }' .ephor/empreintes.txt 2>/dev/null || true)"
+INCHANGES=""
 A_UN_COMMIT=0
 if git rev-parse --verify -q HEAD >/dev/null 2>&1; then A_UN_COMMIT=1; fi
 
@@ -101,6 +106,45 @@ reglages_seuls() { # reglages_seuls <relatif> : un sous-agent qui ne diffère d'
   h="$(python3 "$SRC/.ephor/adapters.py" sans-reglages "$1" 2>/dev/null)" || return 1
   [ -n "$h" ] && grep -qxF "$h $1 sans-reglages" "$EMPREINTES"
 }
+inchange_dans_ephor() { # inchange_dans_ephor <relatif> : Ephor livre-t-il ce fichier tel que
+  # la version en place le livrait ? Alors une retouche du projet (le Makefile et les réglages
+  # fusionnés au geste 0) a déjà tout ce qu'Ephor y met : rien à reprendre. Avant, chaque mise
+  # à jour les disait « À REPRENDRE », .ephor-new compris, même inchangés (01/10/2026).
+  local ancienne
+  ancienne="$(printf '%s\n' "$ANCIENNES" | awk -v p="$1" '$2 == p { print $1; exit }')"
+  [ -n "$ancienne" ] && [ "$ancienne" = "$(empreinte "$SRC/$1" 2>/dev/null)" ] && contenu_d_ephor_present "$1"
+}
+contenu_d_ephor_present() { # contenu_d_ephor_present <relatif> : la retouche du projet garde-t-elle
+  # ce qu'Ephor y met ? Toutes ses cibles pour le Makefile, tous ses hooks pour les réglages de
+  # Claude Code. Inchangé dans Ephor ne suffit pas : des réglages d'avant la 1.4, qui nomment
+  # chaque garde, n'ont pas les points d'entrée. Pour tout autre fichier, on ne sait pas dire.
+  case "$1" in Makefile | .claude/settings.json) ;; *) return 1 ;; esac
+  python3 - "$SRC/$1" "$1" <<'PY' 2>/dev/null
+import json
+import re
+import sys
+
+
+def contenu(chemin):
+    with open(chemin, encoding="utf-8") as fichier:
+        texte = fichier.read()
+    if chemin.endswith(".json"):
+        vus = set()
+        for evenement, blocs in (json.loads(texte).get("hooks") or {}).items():
+            for bloc in blocs if isinstance(blocs, list) else []:
+                for hook in (bloc.get("hooks") or []) if isinstance(bloc, dict) else []:
+                    commande = hook.get("command", "") if isinstance(hook, dict) else ""
+                    vus |= {(evenement, n) for n in re.findall(r"\.ephor/hooks/([\w.-]+\.sh)", str(commande))}
+        return vus
+    return set(re.findall(r"^([A-Za-z0-9_.-]+)\s*:(?!=)", texte, re.M))
+
+
+try:
+    sys.exit(0 if contenu(sys.argv[1]) <= contenu(sys.argv[2]) else 1)
+except (OSError, ValueError, AttributeError):
+    sys.exit(1)
+PY
+}
 intact_depuis_le_commit() { # le contenu exact du dernier commit ?
   local ancien
   ancien="$(git rev-parse -q --verify "HEAD:./$1" 2>/dev/null)" || return 1
@@ -141,6 +185,9 @@ copy() { # copy <relatif>
       rm -f "$garde"
     fi
     if moteur_du_projet "$rel"; then REMPLACES="$REMPLACES $rel"; else HORS_MOTEUR="$HORS_MOTEUR $rel"; fi
+  elif [ "$MAJ" = "1" ] && ! moteur_du_projet "$rel" && [ ! -e "$rel.ephor-new" ] \
+    && d_ephor "$rel" && inchange_dans_ephor "$rel"; then
+    INCHANGES="$INCHANGES $rel"; KEPT=$((KEPT+1))
   else
     cp "$src" "$rel.ephor-new"; SIDE=$((SIDE+1)); COTE="$COTE $rel"
     if [ "$MAJ" = "1" ] && moteur_du_projet "$rel"; then
@@ -288,6 +335,9 @@ for f in PROGRESS.md STEER.md; do
   copy "$f"
 done
 touch .gitignore
+# Sans saut de ligne final, la première ligne ajoutée se collait à la dernière du projet :
+# `dist` devenait `dist.verify/`, et ni l'un ni l'autre n'était plus ignoré (01/10/2026).
+if [ -s .gitignore ] && [ -n "$(tail -c 1 .gitignore)" ]; then printf '\n' >> .gitignore; fi
 # Le cache compilé de Python, sous .ephor/ seulement : non ignoré, le juge le prenait pour
 # une retouche de ses propres fichiers et refusait toute tâche (dépôt Node, typiquement).
 # Les réglages locaux de Claude Code sont propres au poste : non ignorés, un `git add -A` de
@@ -552,6 +602,10 @@ if [ "$MAJ" = "1" ]; then
   fi
   if [ "$RETIRES" -gt 0 ]; then
     echo "  $RETIRES .ephor-new d'un passage précédent retiré(s) : leur fichier est maintenant à jour."
+  fi
+  if [ -n "$INCHANGES" ]; then
+    echo "  Retouché(s) dans ce projet, inchangé(s) dans cette version d'Ephor : rien à reprendre."
+    echo "     $INCHANGES"
   fi
   # Ce qu'Ephor pose hors du moteur et que le projet a retouché : le laisser en .ephor-new
   # sans le dire, c'était une mise à jour qui s'annonçait faite et laissait tourner

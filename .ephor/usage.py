@@ -912,7 +912,10 @@ def base_opencode() -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
-    analyseur = argparse.ArgumentParser(description=__doc__)
+    # Le texte tel qu'écrit : replié en un paragraphe, ses exemples d'usage étaient illisibles.
+    analyseur = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sous = analyseur.add_subparsers(dest="commande", required=True)
     claude = sous.add_parser("claude", help="journal de session de Claude Code")
     claude.add_argument("journal", type=Path)
@@ -920,7 +923,9 @@ def main(argv: list[str] | None = None) -> int:
     cop = sous.add_parser("copilot", help="journal events.jsonl d'une session Copilot")
     cop.add_argument("journal", type=Path)
     cop.add_argument("--etat", type=Path, help="mesure précédente, pour ne relire que la suite")
-    raf = sous.add_parser("rafraichir", help="relit les journaux Copilot d'une mesure")
+    raf = sous.add_parser(
+        "rafraichir", help="relit les journaux d'une mesure (Claude Code, Copilot)"
+    )
     raf.add_argument("--etat", type=Path, required=True)
     rem = sous.add_parser("remplissage", help="contexte occupé, journal de Claude Code")
     rem.add_argument("journal", type=Path)

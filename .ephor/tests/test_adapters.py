@@ -284,6 +284,24 @@ def test_le_lecteur_d_entetes_refuse_ce_qu_il_ne_sait_pas_lire(tmp_path: Path) -
         adapters.entete(fichier)
 
 
+def test_une_liste_yaml_dans_l_entete_d_un_sous_agent_se_lit(tmp_path: Path) -> None:
+    """`tools:` suivi de `  - Read`, que Claude Code accepte : refusée, elle faisait échouer
+    `make adapters` en entier, et l'installation d'Ephor sur ce dépôt (audit du 01/10/2026)."""
+    fichier = tmp_path / "agent.md"
+    fichier.write_text("---\nname: x\ntools:\n  - Read\n  - 'Grep'\nmodel: opus\n---\ncorps\n")
+    meta, corps = adapters.entete(fichier)
+    assert adapters.liste(meta["tools"]) == ["Read", "Grep"] and meta["model"] == "opus"
+    assert corps == "\ncorps\n"
+    assert adapters.liste("[Read, Grep]") == ["Read", "Grep"]
+
+
+def test_une_virgule_dans_une_valeur_vs_code_reste(tmp_path: Path) -> None:
+    """Les virgules finales du JSONC se retiraient aussi DANS les valeurs du projet."""
+    existant = '{\n  "files.exclude": {"**/x,}": true},\n  "a": "b, ]",\n}'
+    fusion = json.loads(adapters.sans_commentaires(adapters.fichier_vscode(REGLAGES, existant)))
+    assert fusion["files.exclude"] == {"**/x,}": True} and fusion["a"] == "b, ]"
+
+
 def test_les_reglages_vs_code_du_projet_sont_conserves() -> None:
     existant = (
         '{\n  // une préférence d\'équipe\n  "python.analysis.typeCheckingMode": "strict",\n}'

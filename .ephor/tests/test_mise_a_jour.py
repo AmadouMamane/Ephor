@@ -441,6 +441,22 @@ def test_les_reglages_d_un_role_survivent_a_la_mise_a_jour(
     assert 'variant: "max"' in derive, "et opencode les reçoit"
 
 
+def test_un_reglage_que_l_ancienne_version_n_avait_pas_arrive_quand_meme(tmp_path: Path) -> None:
+    """De la 1.0 à la 1.4, l'évaluateur n'avait que `model:`. Un projet qui l'avait passé de
+    `opus` à `sonnet` perdait, en passant en 1.5, le nouvel `effort: high` : une ligne absente
+    de l'ancien fichier était lue comme retirée par le projet (audit du 01/10/2026)."""
+    import adapters
+
+    ancien = tmp_path / "ancien.md"
+    ancien.write_text("---\nname: evaluator\nmodel: sonnet\n---\nConsigne d'avant.\n")
+    nouveau = tmp_path / "evaluator.md"
+    nouveau.write_text("---\nname: evaluator\nmodel: opus\neffort: high\n---\nConsigne.\n")
+    assert adapters.main(["garder-reglages", str(ancien), str(nouveau)]) == 0
+    assert (
+        nouveau.read_text() == "---\nname: evaluator\nmodel: sonnet\neffort: high\n---\nConsigne.\n"
+    )
+
+
 def test_une_retouche_du_projet_hors_du_moteur_reste_et_se_donne_a_reprendre(
     tmp_path: Path, version_suivante: Path
 ) -> None:
@@ -471,6 +487,32 @@ def test_une_retouche_du_projet_hors_du_moteur_reste_et_se_donne_a_reprendre(
     assert (cible / planner).read_bytes() == (version_suivante / planner).read_bytes(), (
         "ce que le projet n'a pas retouché est remplacé quand même"
     )
+
+
+def test_une_retouche_d_un_fichier_qu_ephor_ne_change_pas_n_est_pas_a_reprendre(
+    tmp_path: Path, version_suivante: Path
+) -> None:
+    """Les réglages d'un projet existant sont fusionnés au geste 0 : ce n'est plus aucune
+    version livrée. Chaque mise à jour les disait « À REPRENDRE », avec un `.ephor-new` que
+    `make doctor` signalait ensuite, même quand Ephor ne les avait pas changés (audit du
+    01/10/2026). La version qu'Ephor livre est maintenant comparée à celle en place."""
+    cible = projet_equipe(tmp_path / "noderepo")
+    reglages = cible / ".claude" / "settings.json"
+    propres = json.loads(reglages.read_text(encoding="utf-8"))
+    propres["permissions"]["allow"].append("Bash(npm test *)")
+    reglages.write_text(json.dumps(propres, indent=2) + "\n", encoding="utf-8")
+    git(cible, "commit", "-qam", "nos réglages")
+
+    sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
+
+    bilan = sortie[sortie.index("MISE À JOUR :") :]
+    assert "À REPRENDRE" not in bilan, bilan
+    assert not (cible / ".claude" / "settings.json.ephor-new").exists()
+    assert ".claude/settings.json" in bilan and "inchangé" in bilan, "et il le dit"
+    # Mais si un .ephor-new attend encore d'être repris, il reste à reprendre.
+    (cible / ".claude" / "settings.json.ephor-new").write_text("{}\n", encoding="utf-8")
+    sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
+    assert "À REPRENDRE" in sortie[sortie.index("MISE À JOUR :") :]
 
 
 def test_les_versions_actuelles_ont_leur_empreinte() -> None:

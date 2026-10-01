@@ -25,6 +25,14 @@ def entier(valeur: Any) -> int:
     return valeur if isinstance(valeur, int) and not isinstance(valeur, bool) else 0
 
 
+def duree(valeur: Any) -> float:
+    """Une durée lue dans le journal, zéro si ce n'en est pas une : `"12,5"`, écrit à la main
+    ou par un autre outil, faisait planter `make score` (audit du 01/10/2026)."""
+    if isinstance(valeur, bool) or not isinstance(valeur, (int, float)):
+        return 0.0
+    return float(valeur)
+
+
 VERIFIED = "verified_needs_review"
 # Tout n'est pas un échec de l'agent : un contrat refusé et un dépôt inchangé disent
 # autre chose, et les confondre fausserait la tendance qu'on regarde.
@@ -135,7 +143,7 @@ def report(entries: list[dict[str, Any]]) -> str:
     for task in tasks:
         runs = [entry for entry in entries if tache(entry) == task]
         ok = sum(1 for entry in runs if entry.get("status") == VERIFIED)
-        seconds = sum(float(entry.get("seconds") or 0) for entry in runs)
+        seconds = sum(duree(entry.get("seconds")) for entry in runs)
         lines.append(
             f"    {task:<14}{len(runs):>3} jugement(s){ok:>4} vérifié(s){round(seconds):>9} s"
         )

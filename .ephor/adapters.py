@@ -85,19 +85,41 @@ def entete(chemin: Path) -> tuple[dict[str, str], str]:
     if fin == -1:
         raise ValueError(f"{chemin} : entête YAML non fermée")
     meta: dict[str, str] = {}
+    derniere = ""
     for ligne in texte[4:fin].splitlines():
         if not ligne.strip() or ligne.lstrip().startswith("#"):
             continue
+        # Une liste YAML en blocs, sous une clé sans valeur (`tools:` puis `  - Read`), que
+        # Claude Code accepte : refusée, elle faisait échouer `make adapters` en entier, et
+        # l'installation sur un dépôt qui avait un tel sous-agent (audit du 01/10/2026).
+        element = re.match(r"^\s+-\s+(.*)$", ligne)
+        if element and derniere and (not meta[derniere] or meta[derniere].endswith(",")):
+            meta[derniere] = (
+                meta[derniere] + " " + element.group(1).strip().strip("'\"") + ","
+            ).lstrip()
+            continue
+        if derniere:
+            meta[derniere] = meta[derniere].rstrip(",")
         cle, separateur, valeur = ligne.partition(":")
         if not separateur or cle != cle.strip() or not cle.strip():
             raise ValueError(f"{chemin} : ligne d'entête non supportée : {ligne!r}")
-        meta[cle.strip()] = valeur.strip()
+        derniere = cle.strip()
+        meta[derniere] = valeur.strip()
+    if derniere:
+        meta[derniere] = meta[derniere].rstrip(",")
     return meta, texte[fin + 4 :]
 
 
 def liste(valeur: str) -> list[str]:
-    """`tools: Read, Grep, Glob` -> ['Read', 'Grep', 'Glob']."""
-    return [element.strip() for element in valeur.replace(",", " ").split() if element.strip()]
+    """`tools: Read, Grep, Glob` -> ['Read', 'Grep', 'Glob'] ; `[Read, Grep]` aussi."""
+    valeur = valeur.strip()
+    if valeur.startswith("[") and valeur.endswith("]"):
+        valeur = valeur[1:-1]
+    return [
+        element.strip().strip("'\"")
+        for element in valeur.replace(",", " ").split()
+        if element.strip().strip("'\"")
+    ]
 
 
 # ----------------------------------------------------------------- permissions
@@ -428,7 +450,36 @@ def sans_commentaires(texte: str) -> str:
             continue
         sortie.append(c)
         i += 1
-    return re.sub(r",(\s*[}\]])", r"\1", "".join(sortie))
+    return sans_virgules_finales("".join(sortie))
+
+
+def sans_virgules_finales(texte: str) -> str:
+    """Les virgules finales, hors chaînes : une expression régulière les retirait aussi DANS
+    une valeur (`"a, ]"` devenait `"a ]"` dans .vscode/settings.json, 01/10/2026)."""
+    sortie: list[str] = []
+    i, n, chaine = 0, len(texte), False
+    while i < n:
+        c = texte[i]
+        if chaine:
+            sortie.append(c)
+            if c == "\\" and i + 1 < n:
+                sortie.append(texte[i + 1])
+                i += 2
+                continue
+            chaine = c != '"'
+        elif c == '"':
+            chaine = True
+            sortie.append(c)
+        elif c == ",":
+            suite = i + 1
+            while suite < n and texte[suite] in " \t\r\n":
+                suite += 1
+            if suite >= n or texte[suite] not in "}]":
+                sortie.append(c)
+        else:
+            sortie.append(c)
+        i += 1
+    return "".join(sortie)
 
 
 def fichier_vscode(reglages: dict[str, object], existant: str | None) -> str:
@@ -675,10 +726,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if commande == "garder-reglages" and len(arguments) == 3:
         ancien, nouveau = (Path(chemin) for chemin in arguments[1:])
-        garde = reglages_de(ancien.read_text(encoding="utf-8"))
-        nouveau.write_text(
-            avec_reglages(nouveau.read_text(encoding="utf-8"), garde), encoding="utf-8"
-        )
+        texte = nouveau.read_text(encoding="utf-8")
+        # Les réglages du projet par-dessus ceux de la nouvelle version : une ligne que
+        # l'ancienne n'avait pas (`effort:`, arrivé en 1.5.0) n'a pas été retirée par le
+        # projet. Un `model:` changé en 1.4.0 faisait perdre `effort: high` (01/10/2026).
+        garde = {**reglages_de(texte), **reglages_de(ancien.read_text(encoding="utf-8"))}
+        nouveau.write_text(avec_reglages(texte, garde), encoding="utf-8")
         return 0
     if commande == "write":
         return ecrire()

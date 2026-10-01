@@ -117,6 +117,18 @@ def test_bootstrap_is_idempotent_and_never_overwrites(tmp_path: Path) -> None:
     assert pose.returncode == 0, pose.stdout + pose.stderr
 
 
+def test_un_gitignore_sans_saut_de_ligne_final_garde_sa_derniere_ligne(tmp_path: Path) -> None:
+    """La première ligne ajoutée se collait à la dernière du projet : `dist` devenait
+    `dist.verify/`, et ni l'un ni l'autre n'était plus ignoré (audit du 01/10/2026)."""
+    cible = tmp_path / "existant"
+    cible.mkdir()
+    (cible / ".gitignore").write_text("node_modules/\ndist")
+    git(cible, "init", "-q", "-b", "main")
+    bootstrap(cible)
+    lignes = (cible / ".gitignore").read_text().splitlines()
+    assert lignes[:3] == ["node_modules/", "dist", ".verify/"], lignes
+
+
 def test_verify_strict_turns_missing_tools_into_failure(tmp_path: Path) -> None:
     (tmp_path / ".ephor" / "projet").mkdir(parents=True)
     shutil.copy(ROOT / ".ephor" / "projet" / "verify.sh", tmp_path / ".ephor" / "projet")

@@ -121,6 +121,13 @@ def test_une_tache_rejugee_ne_fait_pas_baisser_le_debit(tmp_path: Path) -> None:
     assert "✗✗✓✓" in text, "les jugements restent visibles, en tendance"
 
 
+def test_une_duree_mal_ecrite_ne_fait_pas_planter_le_score(tmp_path: Path) -> None:
+    """`"seconds": "12,5"` (écrit à la main, ou par un autre outil) : `float()` faisait
+    planter `make score` en entier (audit du 01/10/2026)."""
+    write_journal(tmp_path, [{**JOURNAL[2], "seconds": "12,5"}, {**JOURNAL[1], "seconds": True}])
+    assert "2 jugement(s)" in score.report(score.read_journal(tmp_path))
+
+
 def test_un_identifiant_abime_ne_fausse_pas_le_detail(tmp_path: Path) -> None:
     write_journal(tmp_path, [{**JOURNAL[2], "task_id": 5}])
     assert "5" + " " * 15 + "1 jugement(s)   1 vérifié(s)" in score.report(
