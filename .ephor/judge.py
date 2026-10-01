@@ -1407,7 +1407,17 @@ def base_d_approbation(repo: Path, base: str) -> bool:
     """Une base où un contrat commité vaut approbation : la branche principale, ou une
     branche du serveur (la CI juge contre la branche cible, `origin/<cible>`)."""
     nom = base[len("refs/heads/") :] if base.startswith("refs/heads/") else base
-    return nom in principales(repo) or base.startswith(("origin/", "refs/remotes/"))
+    if nom in principales(repo):
+        return True
+    # Une branche du serveur, sauf celle d'une tâche : `origin/task/T-001`, la branche de
+    # l'agent poussée puis rapportée par un fetch, faisait lire « approuvé » le contrat qu'il
+    # s'y était écrit (audit du 01/10/2026).
+    distante = re.fullmatch(r"(?:refs/remotes/)?[^/]+/(.+)", base)
+    return (
+        base.startswith(("origin/", "refs/remotes/"))
+        and distante is not None
+        and not distante.group(1).startswith("task/")
+    )
 
 
 def pas_encore_sur_le_serveur(

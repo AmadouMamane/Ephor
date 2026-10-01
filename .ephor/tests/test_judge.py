@@ -254,6 +254,11 @@ def test_une_base_choisie_a_la_main_n_approuve_rien(repo: Path, run_judge: Runne
     assert report["status"] != "rejected", "une branche du serveur reste une base : la CI"
     code, report = run_judge(repo, "--base", "main")
     assert report["status"] != "rejected"
+    # La branche de l'agent, poussée puis rapportée par un fetch, n'est pas une base non plus.
+    for base in ("origin/task/T-001", "refs/remotes/origin/task/T-001"):
+        git(repo, "update-ref", "refs/remotes/origin/task/T-001", "task/T-001")
+        code, report = run_judge(repo, "--base", base)
+        assert code == 2 and any("base choisie à la main" in r for r in report["reasons"]), base
 
 
 def test_contract_created_only_on_the_branch_is_rejected(repo: Path, tmp_path: Path) -> None:
