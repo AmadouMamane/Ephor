@@ -1006,6 +1006,35 @@ def test_une_tache_s_ouvre_dans_son_propre_dossier(tmp_path: Path) -> None:
     assert rangee.returncode == 0, rangee.stdout + rangee.stderr
 
 
+def test_la_ligne_de_lancement_cite_un_chemin_que_le_shell_interpreterait(tmp_path: Path) -> None:
+    """`cd "{dossier}"` : un `$` ou un accent grave du chemin s'exécutait au collage de la
+    ligne, dans le terminal de l'opérateur (audit du 01/10/2026)."""
+    cible = tmp_path / "dep$HOME`id`"
+    cible.mkdir()
+    git(cible, "init", "-q", "-b", "main")
+    git(cible, "config", "user.email", "test@example.invalid")
+    git(cible, "config", "user.name", "Ephor test")
+    bootstrap(cible)
+    (cible / "tasks" / "FEAT-001").mkdir(parents=True)
+    (cible / "tasks" / "FEAT-001" / "contract.json").write_text('{"risk": "faible"}\n')
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "FEAT-001 approuvé")
+    env = _uv_factice(tmp_path / "bin", "exit 0\n")
+    env |= {"GIT_CONFIG_GLOBAL": os.devnull, "XDG_CONFIG_HOME": str(tmp_path / "xdg")}
+    sortie = subprocess.run(
+        ["bash", ".ephor/scripts/worktree.sh", "FEAT-001"],
+        cwd=cible,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    ).stdout
+    dossier = (tmp_path / "dep$HOME`id`-FEAT-001").resolve()
+    ligne = next(lg for lg in sortie.splitlines() if "Claude Code :" in lg)
+    assert f"cd '{dossier}' && claude" in ligne, ligne
+
+
 @pytest.mark.parametrize("variable", ["CLAUDECODE", "OPENCODE", "AI_AGENT", "COPILOT_AGENT"])
 def test_un_geste_de_l_operateur_refuse_sous_un_agent(
     tmp_path: Path, variable: str, monkeypatch: pytest.MonkeyPatch

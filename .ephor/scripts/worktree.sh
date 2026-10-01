@@ -20,7 +20,9 @@ if ! printf '%s' "$ID" | grep -Eq '^[A-Z][A-Z0-9-]{2,50}$'; then
   exit 2
 fi
 PRINCIPALE=""
-for branche in main master; do
+# La branche que désigne le serveur d'abord (develop…), comme le juge.
+DESIGNEE="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+for branche in ${DESIGNEE#origin/} main master; do
   git rev-parse --verify -q "refs/heads/$branche" >/dev/null && { PRINCIPALE="$branche"; break; }
 done
 [ -n "$PRINCIPALE" ] || { echo "REFUS : branche principale introuvable (main, master)"; exit 2; }
@@ -87,6 +89,7 @@ CONTRAT="$(git show "$PRINCIPALE:$DOSSIER/contract.json" 2>/dev/null)"
 python3 - "$CONTRAT" "$DIR" "$ID" <<'LANCEMENT' 2>/dev/null || echo "  Claude Code : cd \"$DIR\" && claude \"/feature $ID\""
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -95,7 +98,10 @@ try:
 except ValueError:
     contrat = {}
 dossier_tache, tache = sys.argv[2], sys.argv[3]
-aller = f'cd "{dossier_tache}" && '
+# Entre guillemets doubles, un `$`, un accent grave ou un guillemet du chemin s'exécutaient
+# au collage de la ligne (audit du 01/10/2026) : ces chemins-là sont cités à la façon du shell.
+cite = shlex.quote(dossier_tache) if any(c in dossier_tache for c in '$`"\\!') else f'"{dossier_tache}"'
+aller = f"cd {cite} && "
 niveau, effort = contrat.get("niveau"), contrat.get("effort")
 niveau = niveau if niveau in ("rapide", "standard", "fort") else None
 effort = effort if effort in ("low", "medium", "high", "xhigh", "max") else None

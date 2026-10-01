@@ -37,7 +37,9 @@ fi
 # Sans BASE, les mêmes candidats que le juge, dans le même ordre : `main` seul faisait dire
 # « l'approbation manque » sur un dépôt en `master`, où le juge trouvait le contrat.
 if [ -z "${BASE:-}" ]; then
-  for REF in main master origin/main origin/master; do
+  DESIGNEE="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  DESIGNEE="${DESIGNEE#origin/}"
+  for REF in ${DESIGNEE:+"$DESIGNEE" "origin/$DESIGNEE"} main master origin/main origin/master; do
     if git rev-parse --verify -q "$REF^{commit}" >/dev/null 2>&1; then BASE="$REF"; break; fi
   done
 fi

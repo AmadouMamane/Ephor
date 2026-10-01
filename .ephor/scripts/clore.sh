@@ -17,7 +17,9 @@ if ! printf '%s' "$ID" | grep -Eq '^[A-Z][A-Z0-9-]{2,50}$'; then
   exit 2
 fi
 PRINCIPALE=""
-for branche in main master; do
+# La branche que désigne le serveur d'abord (develop…), comme le juge.
+DESIGNEE="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+for branche in ${DESIGNEE#origin/} main master; do
   git rev-parse --verify -q "refs/heads/$branche" >/dev/null && { PRINCIPALE="$branche"; break; }
 done
 [ -n "$PRINCIPALE" ] || { echo "REFUS : branche principale introuvable (main, master)"; exit 2; }

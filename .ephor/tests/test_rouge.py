@@ -1300,3 +1300,145 @@ def test_un_critere_junit_mal_forme_est_refuse(changement: dict[str, Any], motif
     with pytest.raises(judge.JudgeError) as refus:
         judge.parse_contract(contract(id="T-001", criteria=[critere]), "T-001")
     assert any(motif in message for message in refus.value.messages), refus.value.messages
+
+
+# ------------------------------------------------------ audit du juge du 01/10/2026
+
+
+def deux_taches_approuvees(repo: Path, partage: bool = False) -> None:
+    """T-001 (la fixture) et T-002, toutes deux approuvées sur main, avec leur trace rouge."""
+    tache_qui_partage(repo, partage=partage)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "T-002 approuvé")
+    trace_rouge(repo, "T-002")
+
+
+def test_le_rangement_ne_commite_que_les_dossiers_ranges(repo: Path) -> None:
+    """`git commit -- tasks` emportait la retouche pas commitée d'un AUTRE contrat : approuvée
+    par le commit du rangement sans avoir été relue."""
+    deux_taches_approuvees(repo)
+    contrat = repo / "tasks" / "T-002" / "contract.json"
+    retouche = contrat.read_text().replace('"src/"', '"src/", "docs/"')
+    contrat.write_text(retouche)
+    assert ranger(repo, "metriques", "T-001") == 0
+    fichiers = git(repo, "show", "--name-only", "--format=", "HEAD").split()
+    assert all(f.startswith(("tasks/T-001/", "tasks/metriques/T-001/")) for f in fichiers), fichiers
+    assert git(repo, "status", "--porcelain", "--", "tasks/T-002").strip(), "toujours pas commitée"
+
+
+def test_le_rangement_refuse_de_casser_le_contrat_d_une_autre_tache(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-002 lance le test de T-001 : ranger T-001 rendait sa preuve introuvable, alors que le
+    message disait « contrats et contrôles rouges restent valables »."""
+    deux_taches_approuvees(repo, partage=True)
+    avant = git(repo, "rev-parse", "HEAD")
+    assert ranger(repo, "metriques", "T-001") == 2
+    assert "le contrat de T-002 cite les fichiers de T-001" in capsys.readouterr().out
+    assert git(repo, "rev-parse", "HEAD") == avant and (repo / "tasks" / "T-001").is_dir()
+
+
+def test_un_lot_ne_s_appelle_pas_tasks_et_un_identifiant_n_a_pas_de_saut_de_ligne(
+    repo: Path,
+) -> None:
+    git(repo, "switch", "-q", "main")
+    assert ranger(repo, "tasks", "T-001") == 2
+    assert judge.ID_PATTERN.match("FEAT-1\n") is None and judge.ID_PATTERN.match("FEAT-1")
+    assert judge.LOT_PATTERN.match("paiement\n") is None and judge.LOT_PATTERN.match("tasksx")
+
+
+def test_une_branche_sans_commit_n_est_pas_fusionnee(
+    repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le juge rend VÉRIFIÉ sur du travail pas commité (« commitez-le tel quel ») ; une branche
+    sans commit à elle est « entrée » dans main : `make taches` la disait fusionnée, et la
+    cachait, alors que main ne contenait que son contrat."""
+    (repo / "src" / "metrics.py").write_text(FIX)
+    assert run_judge(repo)[0] == 0
+
+    def ligne() -> str:
+        capsys.readouterr()
+        assert judge.main(["taches", "--repo", str(repo), "--tout"]) == 0
+        return next(lg for lg in capsys.readouterr().out.splitlines() if " T-001 " in lg)
+
+    assert "vérifiée" in ligne()
+    git(repo, "commit", "-qam", "correctif")
+    git(repo, "switch", "-q", "main")
+    git(repo, "merge", "-q", "--ff-only", "task/T-001")
+    assert "fusionnée" in ligne(), "commitée puis entrée dans main en avance rapide"
+
+
+def test_un_nom_de_fichier_qui_n_est_pas_de_l_utf8_est_un_refus(
+    repo: Path, run_judge: Runner
+) -> None:
+    """Un `UnicodeDecodeError` faisait planter le juge : « VERDICT : running », et le journal
+    gardait ce statut, qui refaisait la tâche « en cours » dans `make taches`."""
+    (repo / "src" / "metrics.py").write_text(FIX)
+    (repo / os.fsdecode(b"src/caf\xe9.txt")).write_text("x")
+    code, report = run_judge(repo)
+    assert code == 2 and report["status"] == "rejected", report
+    assert "pas de l'UTF-8" in report["reasons"][0]
+    journal = (repo / ".verify" / "journal.jsonl").read_text().splitlines()
+    assert json.loads(journal[-1])["status"] == "rejected"
+
+
+def test_un_contrat_qui_n_est_pas_en_utf8_est_refuse_sans_planter(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    contrat = repo / "tasks" / "T-001" / "contract.json"
+    contrat.write_bytes(contrat.read_text().replace("micro", "é").encode("latin-1"))
+    assert judge.main(["validate", "--task-id", "T-001", "--repo", str(repo)]) == 2
+    assert "n'est pas en UTF-8" in capsys.readouterr().out
+
+
+def test_le_test_partage_d_une_tache_rangee_est_signale(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rangée, la tâche comparait ses preuves sous leur nom canonique (`tasks/<ID>/…`) à celles
+    des autres sous leur vrai chemin : son test partagé n'était jamais signalé."""
+    deux_taches_approuvees(repo)
+    assert ranger(repo, "metriques", "T-001") == 0
+    contrat = repo / "tasks" / "T-002" / "contract.json"
+    lu = json.loads(contrat.read_text())
+    lu["criteria"].insert(
+        0,
+        {
+            "id": "C1",
+            "description": "lots",
+            "check": ["{python}", "tasks/metriques/T-001/check_c1.py"],
+        },
+    )
+    contrat.write_text(json.dumps(lu, indent=2) + "\n")
+    git(repo, "commit", "-qam", "T-002 lance le test de T-001")
+    capsys.readouterr()
+    rouge = ["rouge", "--task-id", "T-001", "--repo", str(repo), "--workdir", str(tmp_path / "r")]
+    assert judge.main(rouge) == 0
+    sortie = capsys.readouterr().out
+    assert "tasks/metriques/T-001/check_c1.py : aussi une preuve de T-002" in sortie
+
+
+def test_l_installation_d_une_tache_rangee_trouve_ses_fichiers(tmp_path: Path) -> None:
+    dossier = tmp_path / "tasks" / "metriques" / "T-001"
+    dossier.mkdir(parents=True)
+    donnees = contract(
+        setup=["uv", "pip", "install", "-r", "tasks/T-001/requirements.txt"],
+        verify=["bash", "tasks/T-001/verifie.sh"],
+    )
+    (dossier / "contract.json").write_text(json.dumps(donnees))
+    lu = judge.load_contract(dossier / "contract.json", "T-001")
+    assert lu.setup == ("uv", "pip", "install", "-r", "tasks/metriques/T-001/requirements.txt")
+    assert lu.verify == ("bash", "tasks/metriques/T-001/verifie.sh")
+
+
+def test_la_branche_que_designe_le_serveur_sert_de_base(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`origin/HEAD` sur `develop` : le juge acceptait d'y approuver et d'y ranger, mais
+    `make taches`, `make task-check` sans ID et `make judge` disaient « base introuvable »."""
+    git(repo, "branch", "-m", "main", "develop")
+    sommet = git(repo, "rev-parse", "develop").strip()
+    git(repo, "update-ref", "refs/remotes/origin/develop", sommet)
+    git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+    assert judge.resolve_base(repo, None)[0] == "develop"
+    assert judge.main(["taches", "--repo", str(repo)]) == 0
+    assert " T-001 " in capsys.readouterr().out

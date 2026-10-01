@@ -46,11 +46,13 @@ from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
 SCHEMA_VERSION = 1
-ID_PATTERN = re.compile(r"^[A-Z][A-Z0-9-]{2,50}$")
+# `\Z`, pas `$` : `$` accepte un saut de ligne final, et `FEAT-1\n` devenait un dossier.
+ID_PATTERN = re.compile(r"^[A-Z][A-Z0-9-]{2,50}\Z")
 # Un lot de tâches, pour les ranger par fonctionnalité : `tasks/<lot>/<ID>/` (#35). En
 # minuscules, là où un identifiant de tâche est en majuscules : les deux ne se confondent pas.
-LOT_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
-CRITERION_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,20}$")
+# Jamais `tasks` : `tasks/tasks/<ID>/` se lisait comme `tasks/<ID>/` en traduisant les chemins.
+LOT_PATTERN = re.compile(r"^(?!tasks\Z)[a-z0-9][a-z0-9_-]{0,40}\Z")
+CRITERION_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,20}\Z")
 RISKS = ("faible", "modere", "eleve")
 DEFAULT_TIMEOUT = 900
 DEFAULT_IMAGE = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
@@ -1237,7 +1239,15 @@ def _range(contract: Contract, dossier: str) -> Contract:
         )
         for critere in contract.criteria
     )
-    return replace(contract, criteria=criteres, dossier=dossier)
+    # L'installation et la vérification aussi : `uv pip install -r tasks/<ID>/requirements.txt`
+    # restait tel quel, et ne trouvait plus son fichier (audit du 01/10/2026).
+    setup = (
+        tuple(relocalise(jeton, contract.id, dossier) for jeton in contract.setup)
+        if contract.setup is not None
+        else None
+    )
+    verify = tuple(relocalise(jeton, contract.id, dossier) for jeton in contract.verify)
+    return replace(contract, criteria=criteres, setup=setup, verify=verify, dossier=dossier)
 
 
 def dossier_du_contrat(path: Path) -> str:
@@ -1256,6 +1266,8 @@ def load_contract(path: Path, expected_id: str | None = None) -> Contract:
         raise JudgeError(f"contrat introuvable : {path}") from exc
     except json.JSONDecodeError as exc:
         raise JudgeError(f"contrat illisible (JSON) : {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise JudgeError(f"contrat illisible : {path.name} n'est pas en UTF-8") from exc
     return parse_contract(data, expected_id, dossier_du_contrat(path))
 
 
@@ -1364,12 +1376,20 @@ def resolve_task(repo: Path, task_id: str | None, task_path: str | None) -> tupl
     return path, lieu.name
 
 
+def branche_du_serveur(repo: Path) -> str | None:
+    """La branche principale que désigne le serveur (`origin/HEAD`), au dernier fetch."""
+    with suppress(JudgeError):
+        distante = git(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+        return distante.decode().strip().split("/", 1)[-1] or None
+    return None
+
+
 def principales(repo: Path) -> set[str]:
     """Les branches où l'approbation se lit : main, master, et celle que le serveur désigne."""
     noms = {"main", "master"}
-    with suppress(JudgeError):
-        distante = git(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
-        noms.add(distante.decode().strip().split("/", 1)[-1])
+    distante = branche_du_serveur(repo)
+    if distante:
+        noms.add(distante)
     return noms
 
 
@@ -1414,7 +1434,12 @@ def resolve_base(repo: Path, base: str | None) -> tuple[str, str]:
             f"branche principale ({', '.join(sorted(principales(repo)))}) ; pour juger contre "
             "une autre branche du serveur, passez origin/<branche>"
         )
-    candidates = [base] if base else ["main", "master", "origin/main", "origin/master"]
+    # La branche que le serveur désigne d'abord : `principales` l'acceptait pour approuver et
+    # ranger, et `make taches`, `make task-check` ou `make judge` ne la cherchaient pas
+    # (« base introuvable » sur un dépôt en `develop`, audit du 01/10/2026).
+    distante = branche_du_serveur(repo)
+    designee = [distante, f"origin/{distante}"] if distante not in (None, "main", "master") else []
+    candidates = [base] if base else [*designee, "main", "master", "origin/main", "origin/master"]
     for ref in candidates:
         try:
             commit = git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
@@ -1474,8 +1499,21 @@ def snapshot(
 
 
 def chemins_z(sortie: bytes) -> list[str]:
-    """Les chemins d'une sortie `git … -z`, triés et sans doublon."""
-    return sorted({item.decode("utf-8", errors="strict") for item in sortie.split(b"\0") if item})
+    """Les chemins d'une sortie `git … -z`, triés et sans doublon. Un nom qui n'est pas de
+    l'UTF-8 faisait planter le juge, et le journal gardait « running » (audit du 01/10/2026) :
+    c'est un refus, qui dit lequel."""
+    chemins = set()
+    for item in sortie.split(b"\0"):
+        if not item:
+            continue
+        try:
+            chemins.add(item.decode("utf-8", errors="strict"))
+        except UnicodeDecodeError as exc:
+            lisible = item.decode("utf-8", errors="replace")
+            raise JudgeError(
+                f"nom de fichier qui n'est pas de l'UTF-8 : {lisible!r} ; renommez-le"
+            ) from exc
+    return sorted(chemins)
 
 
 def exists_at(repo: Path, commit: str, path: str) -> bool:
@@ -3366,6 +3404,13 @@ def cmd_check(args: argparse.Namespace) -> int:
             lines.append(f"  REFUS {message}")
         junit.append({"name": "recevabilité", "ok": False, "detail": "; ".join(exc.messages)})
         return 2
+    except Exception as exc:  # un défaut du juge n'est jamais un verdict « running »
+        message = f"erreur interne du juge ({type(exc).__name__} : {exc}) ; rien n'est vérifié"
+        report["status"] = "rejected"
+        report["reasons"] = [message]
+        lines.append(f"  REFUS {message}")
+        junit.append({"name": "recevabilité", "ok": False, "detail": message})
+        return 2
     finally:
         if copy_created and not args.keep:
             remove_copy(copy)
@@ -3602,7 +3647,15 @@ def cmd_rouge(args: argparse.Namespace) -> int:
         arbre = git(copy, "write-tree").decode().strip()
         refus = recevabilite(copy, arbre, contract)
         empreintes = preuves_rouges(copy, arbre, contract, task_id)
-        partages = preuves_partagees(copy, arbre, contract, task_id, set(empreintes))
+        # Les preuves sous leur VRAI chemin, comme celles des autres tâches : sous leur nom
+        # canonique, une tâche rangée ne voyait jamais son test partagé (audit du 01/10/2026).
+        partages = preuves_partagees(
+            copy,
+            arbre,
+            contract,
+            task_id,
+            {relocalise(nom, task_id, contract.ou) for nom in empreintes},
+        )
         if not refus:
             if runtime.kind != "local":
                 ensure_image(runtime, logs / "pull.log")
@@ -3692,18 +3745,21 @@ ETATS_DU_JUGE = {
 }
 
 
-def derniers_verdicts(repo: Path) -> dict[str, str]:
-    """Le dernier verdict de chaque tâche, dans les journaux des jugements de TOUS les dossiers
-    du dépôt. Une tâche se juge dans son dossier (#32), et son verdict y reste : lu dans le seul
-    dossier principal, une tâche vérifiée y restait « en cours » (mesuré le 30/09/2026)."""
+def derniers_verdicts(repo: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Le dernier verdict de chaque tâche, et le commit de base de ce jugement, dans les
+    journaux des jugements de TOUS les dossiers du dépôt. Une tâche se juge dans son dossier
+    (#32), et son verdict y reste : lu dans le seul dossier principal, une tâche vérifiée y
+    restait « en cours » (mesuré le 30/09/2026)."""
     sys.dont_write_bytecode = True  # rien de compilé dans le moteur, une zone
     from usage import journal_des_jugements
 
     verdicts: dict[str, str] = {}
+    bases: dict[str, str] = {}
     for entree in journal_des_jugements(repo):
         if isinstance(entree.get("task_id"), str):
             verdicts[entree["task_id"]] = str(entree.get("status") or "")
-    return verdicts
+            bases[entree["task_id"]] = str(entree.get("base_commit") or "")
+    return verdicts, bases
 
 
 def taches_nommees(repo: Path, ref: str) -> set[str]:
@@ -3755,38 +3811,55 @@ class VueDesTaches:
     principale figée à un commit, les tâches nommées par ses commits, les branches de tâche et
     celles qui y sont entrées, et le dernier verdict de chacune."""
 
+    repo: Path
     ref: str
     commit: str
     nommees: set[str]
     entrees: set[str]
     branches: dict[str, str]
     verdicts: dict[str, str]
+    bases: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def lire(cls, repo: Path) -> VueDesTaches:
         ref, _ = resolve_base(repo, None)
         commit = git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").decode().strip()
+        verdicts, bases = derniers_verdicts(repo)
         return cls(
+            repo=repo,
             ref=ref,
             commit=commit,
             nommees=taches_nommees(repo, commit),
             entrees=branches_entrees(repo, commit),
             branches=branches_de_tache(repo),
-            verdicts=derniers_verdicts(repo),
+            verdicts=verdicts,
+            bases=bases,
         )
 
     def fusionnee(self, task_id: str) -> bool:
         """Un commit de la branche principale nomme `task/<ID>` (le commit de fusion d'une merge
         request le fait), ou la branche, jugée VÉRIFIÉE, y est entrée. Une branche sans travail
-        est aussi « dans » la branche principale : sans verdict, elle est en cours."""
+        est aussi « dans » la branche principale : sans verdict, elle est en cours ; et avec un
+        verdict rendu sur du travail pas encore commité, elle n'y est entrée que si son bout
+        n'était pas déjà sur la base de ce verdict (audit du 01/10/2026 : « fusionnée » et
+        cachée, la branche n'ayant aucun commit)."""
         if task_id in self.nommees:
             return True
         branche = self.branches.get(task_id)
-        return (
-            branche is not None
-            and branche in self.entrees
-            and self.verdicts.get(task_id) == "verified_needs_review"
-        )
+        if (
+            branche is None
+            or branche not in self.entrees
+            or self.verdicts.get(task_id) != "verified_needs_review"
+        ):
+            return False
+        base = self.bases.get(task_id)
+        if not base:
+            return True
+        try:
+            git(self.repo, "merge-base", "--is-ancestor", branche, base)
+        except JudgeError:
+            return True  # le bout de la branche n'était pas sur la base : son travail est entré
+        return False
 
 
 def etat_de_tache(repo: Path, vue: VueDesTaches, task_id: str, contrat: Contract) -> str:
@@ -3924,6 +3997,30 @@ def cmd_ranger(args: argparse.Namespace) -> int:
             " d'abord"
         )
         return 2
+    # Le contrat d'une AUTRE tâche qui cite les fichiers d'une tâche à ranger : déplacés, sa
+    # preuve devenait introuvable, et son contrôle rouge à refaire sans issue — alors que le
+    # message disait « restent valables » (audit du 01/10/2026). Les tests d'un contrat ne se
+    # partagent pas (tasks/README.md) : on refuse avant de rien déplacer.
+    deplacees = {tache for tache, _ in a_ranger}
+    liees = []
+    for autre, dossier in sorted(taches.items()):
+        if autre in deplacees:
+            continue
+        with suppress(OSError):
+            texte = (repo / dossier / "contract.json").read_text(encoding="utf-8", errors="replace")
+            liees += [
+                (autre, tache)
+                for tache in sorted(deplacees)
+                if re.search(rf"tasks/(?:[a-z0-9][a-z0-9_-]*/)?{re.escape(tache)}/", texte)
+            ]
+    if liees:
+        for autre, tache in liees:
+            print(
+                f"REFUS : le contrat de {autre} cite les fichiers de {tache} : ranger {tache}"
+                f" casserait sa preuve. Recopiez dans tasks/…/{autre}/ ce qu'il lui prend, puis"
+                " relancez (chaque contrat a ses propres tests : tasks/README.md)."
+            )
+        return 2
     for tache, dossier in a_ranger:
         (repo / "tasks" / args.lot).mkdir(parents=True, exist_ok=True)
         fait = subprocess.run(
@@ -3937,6 +4034,12 @@ def cmd_ranger(args: argparse.Namespace) -> int:
             print(f"git mv {dossier} a échoué : {(fait.stdout + fait.stderr).strip()}")
             return 1
     noms = ", ".join(tache for tache, _ in a_ranger)
+    # Les seuls dossiers déplacés, avant et après : `-- tasks` emportait toute retouche pas
+    # commitée d'un AUTRE contrat, approuvée par ce commit sans avoir été relue (audit du
+    # 01/10/2026).
+    deplaces = [
+        chemin for tache, dossier in a_ranger for chemin in (dossier, f"tasks/{args.lot}/{tache}")
+    ]
     fait = subprocess.run(
         [
             "git",
@@ -3947,7 +4050,7 @@ def cmd_ranger(args: argparse.Namespace) -> int:
             "-m",
             f"Tâches rangées dans tasks/{args.lot}/ : {noms}",
             "--",
-            "tasks",
+            *deplaces,
         ],
         capture_output=True,
         text=True,
