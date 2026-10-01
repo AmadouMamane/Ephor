@@ -1437,6 +1437,10 @@ ECRITURES_EN_ZONE = [
     "perl -e 'open(F, \">Makefile\"); print F 1'",
     "python3 -c \"from pathlib import Path; Path(f'{R}/.ephor/x.py').write_text(1)\"",
     'rm -rf "$ROOT/tasks"',
+    # Un script qui lance le shell : ses chaînes sont des commandes (relecture de la 1.5.2).
+    "python3 -c \"import os; open('/tmp/x', 'w'); os.system('echo x > Makefile')\"",
+    "python3 -c \"import subprocess; subprocess.run('rm -rf .ephor', shell=True)\"",
+    "node -e \"require('child_process').execSync('sed -i s/a/b/ AGENTS.md')\"",
 ]
 COMMANDES_ORDINAIRES = [
     "git status --short -- .vscode/settings.json && git diff -- .vscode/settings.json",
@@ -1507,6 +1511,7 @@ COMMANDES_ORDINAIRES = [
     'uv run pytest -q > "$TMPDIR/tasks.log" 2>&1',
     'cp src/a.py "$TMPDIR/tasks_backup.py"',
     'rm -rf "$TMPDIR/tasks-cache"',
+    "python3 -c \"import os; os.system('ls tasks'); print('l\\'opérateur lit le Makefile')\"",
 ]
 
 

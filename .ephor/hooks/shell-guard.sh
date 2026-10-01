@@ -381,14 +381,28 @@ def scripts_en_ligne(mots):
     return textes
 
 
-def script_qui_ecrit(script, pourquoi="script en ligne qui écrit", base=None):
+# Ce qui, dans un script, lance une commande du shell : ses chaînes sont alors des commandes.
+LANCE_UN_SHELL = re.compile(
+    r"os\.system|os\.popen|subprocess\.|\bPopen\(|execSync|execFileSync|spawnSync|child_process"
+    r"|\bsystem\(|\bqx[(/{]"
+)
+
+
+def script_qui_ecrit(script, pourquoi="script en ligne qui écrit", base=None, profondeur=0):
     """Les zones qu'un script d'interprète nomme, s'il écrit. Lancé hors du dépôt (`cd
     /ailleurs && python3 - <<EOF`), un nom relatif y désigne un fichier d'ailleurs : seul un
     chemin qui nomme le dépôt, ou une zone du poste, compte alors."""
+    chaines = [m.group(0)[1:-1] for m in CHAINE.finditer(script)]
+    # Un script qui lance le shell : `os.system("echo x > Makefile")`, `subprocess.run("rm
+    # -rf .ephor", shell=True)`. Ses chaînes sont lues comme des commandes du terminal ; une
+    # chaîne qui ne se lit pas comme une commande (de la prose) ne dit rien.
+    if LANCE_UN_SHELL.search(script) and profondeur < 3:
+        for chaine in chaines:
+            for cible, _ in cibles(chaine, profondeur + 1, base, illisible=False):
+                yield cible, pourquoi + " (commande lancée)"
     if not ECRIT.search(script):
         return
     dehors = not dans_le_depot(base)
-    chaines = [m.group(0)[1:-1] for m in CHAINE.finditer(script)]
     for litteral in LITTERAUX:
         # `open(F, ">Makefile")` : le mode de perl, collé au nom, en tête de chaîne.
         if any(nomme(c, litteral, r"(?:^[+<>|]*\s*|/)") for c in chaines) and (
@@ -874,7 +888,7 @@ def heredocs(texte):
 def document(nom, args, corps, base, ici, profondeur):
     """Ce qu'écrit un texte donné à un programme sur son entrée (`<<EOF`, `<<<`, un tube)."""
     if nom.rstrip("0123456789.") in INTERPRETES:
-        yield from script_qui_ecrit(corps, "script en document en ligne qui écrit", base)
+        yield from script_qui_ecrit(corps, "script en document en ligne qui écrit", base, profondeur)
     elif nom in COQUILLES and profondeur < 3:
         yield from cibles(corps, profondeur + 1, base)
     elif (nom == "git" and git_sous_commande(args)[0] in ("apply", "am")) or nom == "patch":
@@ -1051,7 +1065,7 @@ def find_atteints(tape, absolu, args):
                 break
 
 
-def cibles(texte, profondeur=0, base=None):
+def cibles(texte, profondeur=0, base=None, illisible=True):
     """(cible, pourquoi) pour chaque écriture qu'on sait lire dans une commande.
 
     `base` est le dossier courant, suivi à travers les `cd` : `cd .ephor && sed -i x judge.py`
@@ -1085,8 +1099,9 @@ def cibles(texte, profondeur=0, base=None):
         lexeur.commenters = ""
         mots = list(lexeur)
     except ValueError:
-        # Guillemets déséquilibrés : on ne sait pas lire. Une zone nommée suffit alors.
-        for litteral in LITTERAUX:
+        # Guillemets déséquilibrés : on ne sait pas lire. Une zone nommée suffit alors (sauf
+        # pour une chaîne d'un script, qui peut n'être que de la prose : voir script_qui_ecrit).
+        for litteral in LITTERAUX if illisible else ():
             if litteral in texte:
                 yield litteral, "commande illisible qui nomme une zone de contrôle"
         return
@@ -1342,7 +1357,7 @@ def cibles(texte, profondeur=0, base=None):
                 yield from cibles(texte_interne, profondeur + 1, base)
         elif nom.rstrip("0123456789.") in INTERPRETES:
             for script in scripts_en_ligne(args):
-                yield from script_qui_ecrit(script, base=base)
+                yield from script_qui_ecrit(script, base=base, profondeur=profondeur)
 
 
 try:
