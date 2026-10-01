@@ -53,6 +53,10 @@ ID_PATTERN = re.compile(r"^[A-Z][A-Z0-9-]{2,50}\Z")
 # Jamais `tasks` : `tasks/tasks/<ID>/` se lisait comme `tasks/<ID>/` en traduisant les chemins.
 LOT_PATTERN = re.compile(r"^(?!tasks\Z)[a-z0-9][a-z0-9_-]{0,40}\Z")
 CRITERION_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,20}\Z")
+# Les étapes du juge écrivent leur journal sous ces noms : un critère `verify` écrasait celui
+# de la vérification, et le FAIL de l'une pointait vers la sortie de l'autre (audit du
+# 01/10/2026). Comparés sans la casse : un disque de Mac ne la distingue pas.
+NOMS_D_ETAPE = ("pull", "setup", "verify")
 RISKS = ("faible", "modere", "eleve")
 DEFAULT_TIMEOUT = 900
 DEFAULT_IMAGE = "ghcr.io/astral-sh/uv:python3.12-bookworm-slim"
@@ -1144,9 +1148,14 @@ def parse_contract(data: Any, expected_id: str | None = None, dossier: str = "")
             if not isinstance(cid, str) or not CRITERION_ID.match(cid):
                 errors.append(f"{label} : id invalide")
                 continue
-            if cid in seen:
-                errors.append(f"{label} : id {cid} en double")
-            seen.add(cid)
+            if cid.lower() in NOMS_D_ETAPE:
+                errors.append(
+                    f"{label} : id {cid} réservé, c'est le nom d'une étape du juge"
+                    f" ({', '.join(NOMS_D_ETAPE)})"
+                )
+            if cid.lower() in seen:
+                errors.append(f"{label} : id {cid} en double (la casse ne compte pas)")
+            seen.add(cid.lower())
             if not isinstance(description, str) or len(description) < 3:
                 errors.append(f"{label} : description trop courte")
             check = _argv(item["check"], f"{cid}.check", errors)

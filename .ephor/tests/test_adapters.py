@@ -305,7 +305,7 @@ def test_les_hooks_du_projet_ne_deviennent_pas_des_commandes_cassees_sous_copilo
         {"matcher": "Bash", "hooks": [{"type": "command", "command": "npm run lint:staged"}]}
     )
     hooks["Stop"].append(
-        {"hooks": [{"type": "command", "command": '"$CLAUDE_PROJECT_DIR"/scripts/notifier.sh'}]}
+        {"hooks": [{"type": "command", "command": '"$CLAUDE_PROJECT_DIR"/outils/notifier.sh'}]}
     )
     attendus = adapters.gardes_copilot(json.loads((ROOT / ".claude" / "settings.json").read_text()))
     assert adapters.gardes_copilot(reglages) == attendus, "seules les gardes d'Ephor sont relayées"
@@ -313,7 +313,7 @@ def test_les_hooks_du_projet_ne_deviennent_pas_des_commandes_cassees_sous_copilo
     assert "notifier.sh" not in adapters.greffon_copilot(reglages)
     assert adapters.hooks_du_projet(reglages) == [
         "PreToolUse : npm run lint:staged",
-        'Stop : "$CLAUDE_PROJECT_DIR"/scripts/notifier.sh',
+        'Stop : "$CLAUDE_PROJECT_DIR"/outils/notifier.sh',
     ]
 
 

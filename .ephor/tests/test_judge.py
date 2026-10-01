@@ -2200,3 +2200,23 @@ def test_le_minimum_des_sous_agents_arrive_jusqu_au_verdict(tmp_path: Path) -> N
     lu = judge.read_usage(tmp_path, "T-1")
     assert lu is not None and lu["sans_final"] == 2
     assert "au moins 1" in judge.usage_line(lu, None)
+
+
+@pytest.mark.parametrize("nom", ["verify", "setup", "Pull"])
+def test_un_critere_ne_prend_pas_le_nom_d_une_etape_du_juge(tmp_path: Path, nom: str) -> None:
+    """Un critère nommé `verify` écrivait son journal sur celui de la vérification : le FAIL de
+    l'une pointait vers la sortie de l'autre (audit du 01/10/2026). Et `C1`, `c1` se confondent
+    sur un disque insensible à la casse (macOS)."""
+    dossier = tmp_path / "tasks" / "T-001"
+    dossier.mkdir(parents=True)
+    criteres = [{"id": nom, "description": "un critère", "check": ["true"]}]
+    (dossier / "contract.json").write_text(json.dumps(contract(criteria=criteres)))
+    with pytest.raises(judge.JudgeError, match="réservé"):
+        judge.load_contract(dossier / "contract.json", "T-001")
+    doubles = [
+        {"id": "C1", "description": "un critère", "check": ["true"]},
+        {"id": "c1", "description": "un autre", "check": ["true"]},
+    ]
+    (dossier / "contract.json").write_text(json.dumps(contract(criteria=doubles)))
+    with pytest.raises(judge.JudgeError, match="double"):
+        judge.load_contract(dossier / "contract.json", "T-001")

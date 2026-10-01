@@ -74,7 +74,9 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,20}$"
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,20}$",
+            "not": {"enum": ["pull", "setup", "verify"]},
+            "description": "Unique sans tenir compte de la casse ; pull, setup et verify sont les noms des étapes du juge."
           },
           "description": {
             "type": "string",
