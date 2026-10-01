@@ -227,8 +227,9 @@ traînent dans ce dossier ne tournent plus.
   (trouvé le 30/09/2026, d'après la doc de VS Code, pas encore vu en session). Et un outil au
   nom inconnu qui vise un fichier **avec** un contenu écrit est jugé comme une écriture.
 - **Le terminal** : `shell-guard.sh` lit la commande, nomme ce qu'elle écrit et refuse si
-  c'est une zone de contrôle, formes simples comprises (`cd` puis écriture, même d'un appel
-  à l'autre, script en document en ligne, `find -delete`, `git apply`, commandes sur
+  c'est une zone de contrôle, formes simples comprises (`cd` puis écriture dans la même
+  commande — d'un appel à l'autre, non : Copilot ne donne pas le dossier courant de son
+  terminal, quand Claude Code et opencode le donnent —, script en document en ligne, `find -delete`, `git apply`, commandes sur
   plusieurs lignes, blocs `if`/`for`, `git -C`, substitutions, variables posées dans la
   commande elle-même). **Ce n'est pas une frontière** : un détour par une variable calculée,
   du base64 ou un script écrit ailleurs passe, et Copilot n'a pas de bac à sable mesuré. La
