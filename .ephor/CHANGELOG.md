@@ -9,7 +9,7 @@ Chaque fonctionnalité de la 1.5.1 évaluée de nouveau, par trois relectures ad
 dans des dépôts jetables (juge et boucle de tâche, garde-fous, installation et outils), et,
 pour la première fois dans ce conteneur, le juge sous Docker : la démonstration y rend ses
 quatre verdicts justes. Chaque défaut a été rejoué, puis fermé par un test qui échoue sans
-son correctif (991 tests d'Ephor avant, 1078 après). Les tickets #36, #37 et #38 sont fermés.
+son correctif (991 tests d'Ephor avant, 1086 après). Les tickets #36, #37 et #38 sont fermés.
 
 - **Le juge lit l'approbation d'aujourd'hui.** Il lisait contrat, preuves et contrôle rouge
   au point de départ de la branche : une preuve resserrée ensuite sur la branche principale
