@@ -110,16 +110,22 @@ def test_un_commit_de_l_agent_ne_cache_pas_le_changement(tmp_path: Path) -> None
     assert "Makefile (modifié)" in (repo / "AGENT_STOP").read_text(encoding="utf-8")
 
 
+def sans_jq_pour_la_sentinelle(tmp_path: Path) -> str:
+    """Sans jq, mais avec ce que la sentinelle et le point de reprise emploient en plus."""
+    chemin = sans_jq(tmp_path)
+    for outil in ("mkdir", "mktemp", "awk", "wc", "rm"):
+        vrai = subprocess.run(["which", outil], capture_output=True, text=True).stdout.strip()
+        if vrai and not (Path(chemin) / outil).exists():
+            (Path(chemin) / outil).symlink_to(vrai)
+    return chemin
+
+
 @pytest.mark.parametrize("sans", [False, True], ids=["jq", "python3"])
 def test_la_forme_de_copilot_et_le_poste_sans_jq(tmp_path: Path, sans: bool) -> None:
     """Le greffon relaie la charge telle que Copilot l'écrit : `sessionId`, `cwd`. Il pose
     aussi le dépôt dans l'environnement, comme ici."""
     repo = depot_surveille(tmp_path)
-    chemin = sans_jq(tmp_path) if sans else None
-    for outil in ("mkdir", "mktemp", "awk", "wc", "rm"):
-        vrai = subprocess.run(["which", outil], capture_output=True, text=True).stdout.strip()
-        if chemin and vrai and not (Path(chemin) / outil).exists():
-            (Path(chemin) / outil).symlink_to(vrai)
+    chemin = sans_jq_pour_la_sentinelle(tmp_path) if sans else None
     charge = {"sessionId": "c1", "cwd": str(repo)}
     assert hook("steer.sh", {**charge, "prompt": "x"}, project=repo, path=chemin).returncode == 0
     (repo / "Makefile").write_text("verify:\n\t@true\n")
@@ -146,9 +152,13 @@ def depot_equipe(tmp_path: Path) -> Path:
     return repo
 
 
-def son_hook(repo: Path, nom: str, **charge: str) -> subprocess.CompletedProcess[str]:
+def son_hook(
+    repo: Path, nom: str, path: str | None = None, **charge: str
+) -> subprocess.CompletedProcess[str]:
     """Le hook DU dépôt, comme l'outil le lance."""
     env = dict(os.environ, CLAUDE_PROJECT_DIR=str(repo))
+    if path is not None:
+        env["PATH"] = path
     return subprocess.run(
         [str(repo / ".ephor" / "hooks" / nom)],
         input=json.dumps({"session_id": "s1", **charge}),
@@ -228,6 +238,35 @@ def test_les_reglages_locaux_qui_coupent_les_hooks_sont_vus(tmp_path: Path) -> N
     local.write_text('{"disableAllHooks": true}')
     assert son_hook(repo, "checkpoint.sh").returncode == 1
     assert "settings.local.json : disableAllHooks" in (repo / "AGENT_STOP").read_text()
+
+
+@pytest.mark.parametrize("sans", [False, True], ids=["jq", "python3"])
+def test_une_dependance_glissee_dans_le_paquet_d_opencode_est_vue(
+    tmp_path: Path, sans: bool
+) -> None:
+    """opencode écrit lui-même .opencode/package.json : le fichier est exclu de la comparaison.
+    Mais il installe, au démarrage suivant, ce que ce fichier liste : une dépendance ou un
+    script ajouté par un détour s'exécuterait chez l'opérateur (ticket #38)."""
+    repo = depot_equipe(tmp_path)
+    chemin = sans_jq_pour_la_sentinelle(tmp_path) if sans else None
+    paquet = repo / ".opencode" / "package.json"
+    paquet.parent.mkdir()
+    son_hook(repo, "steer.sh", path=chemin, prompt="x")
+    paquet.write_text('{"dependencies": {"@opencode-ai/plugin": "1.18.33"}}')
+    (repo / ".opencode" / "bun.lock").write_text("{}")
+    fin = son_hook(repo, "checkpoint.sh", path=chemin)
+    assert fin.returncode == 0, "ce qu'opencode y écrit lui-même : " + fin.stderr
+    son_hook(repo, "steer.sh", path=chemin, prompt="x")
+    paquet.write_text('{"dependencies": {"@opencode-ai/plugin": "1.19.0", "outil": "^1.0 || ^2"}}')
+    assert son_hook(repo, "checkpoint.sh", path=chemin).returncode == 1
+    assert ".opencode/package.json : outil@^1.0_||_^2" in (repo / "AGENT_STOP").read_text()
+    (repo / "AGENT_STOP").unlink()
+    son_hook(repo, "steer.sh", path=chemin, prompt="x")
+    paquet.write_text(
+        '{"dependencies": {"outil": "^1.0 || ^2"}, "scripts": {"postinstall": "sh x"}}'
+    )
+    assert son_hook(repo, "checkpoint.sh", path=chemin).returncode == 1
+    assert "script:postinstall" in (repo / "AGENT_STOP").read_text()
 
 
 def test_la_configuration_git_changee_pendant_le_tour_est_vue(tmp_path: Path) -> None:

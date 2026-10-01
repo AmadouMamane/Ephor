@@ -17,6 +17,8 @@
 #     l'écrit lui-même quand l'opérateur clique « ne plus demander » : il est lu, pas
 #     comparé — ce qui compte, c'est qu'il coupe les hooks ou les permissions ;
 #   - le dossier git : sa configuration (hors branches), ses hooks, ses exclusions ;
+#   - ce qu'opencode installera au démarrage suivant : .opencode/package.json, qu'il écrit
+#     lui-même, n'est pas comparé ; ses dépendances et ses scripts, si (ticket #38) ;
 #   - le tour INTERROMPU : Claude Code ne lance pas le hook de fin de tour quand on
 #     interrompt l'agent (2.1.282). Un tour jamais contrôlé l'est au début du suivant ;
 #   - l'HISTOIRE, pas seulement le disque (audit du 29/09/2026) : un commit créé pendant le
@@ -174,6 +176,42 @@ print(" ".join(d))' "$LOCAL" 2>/dev/null
   fi
 }
 
+# opencode écrit lui-même .opencode/package.json (exclu plus haut) quand il installe les
+# dépendances de son greffon, et installe au démarrage suivant ce que ce fichier liste. Une
+# dépendance ou un script ajouté par un détour s'exécuterait donc chez l'opérateur (ticket
+# #38) : on en lit la liste, hors `@opencode-ai/plugin`, le seul paquet qu'opencode y met.
+# Une entrée par mot, les blancs d'une version (`^1 || ^2`) changés en `_`.
+PAQUET_OPENCODE="$ROOT/.opencode/package.json"
+paquets_opencode() {
+  [ -f "$PAQUET_OPENCODE" ] || return 0
+  if jq_ok; then
+    jq -r '[ (.dependencies, .devDependencies, .optionalDependencies, .peerDependencies
+              | objects | to_entries[] | select(.key != "@opencode-ai/plugin")
+              | "\(.key)@\(.value)"),
+             (.scripts | objects | to_entries[] | "script:\(.key)=\(.value)") ]
+           | map(gsub("\\s"; "_")) | join(" ")' "$PAQUET_OPENCODE" 2>/dev/null || printf 'illisible'
+  else
+    python3 -c 'import json, re, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fichier:
+        p = json.load(fichier)
+except Exception:
+    p = None
+if not isinstance(p, dict):
+    print("illisible")
+    sys.exit(0)
+e = []
+for cle in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+    d = p.get(cle)
+    if isinstance(d, dict):
+        e += [f"{n}@{v}" for n, v in d.items() if n != "@opencode-ai/plugin"]
+s = p.get("scripts")
+if isinstance(s, dict):
+    e += [f"script:{n}={v}" for n, v in s.items()]
+print(" ".join(re.sub(r"\s", "_", x) for x in e))' "$PAQUET_OPENCODE" 2>/dev/null
+  fi
+}
+
 # Les zones de ce contrôle : celles du moteur, celles de la photo, celles des réglages
 # d'aujourd'hui. Une zone retirée pendant le tour reste regardée, et son retrait se voit.
 SPECS=()
@@ -203,6 +241,9 @@ photographier() { # photographier <état> : la référence du prochain contrôle
   {
     printf 'arbre %s\nhead %s\netat %s\ngit %s\nlocal %s\n' "$tree" \
       "$(git rev-parse -q --verify HEAD 2>/dev/null)" "$1" "$(etat_git)" "$(drapeaux)"
+    # « lu » d'abord : une photo de la version d'avant n'a pas cette ligne, et tout y
+    # passerait pour nouveau.
+    printf 'opencode lu %s\n' "$(paquets_opencode)"
     printf 'spec %s\n' "${SPECS[@]}"
     # Ce qui existait au début du tour : un commit que rien de tout ceci n'atteint a été créé
     # pendant le tour.
@@ -251,7 +292,8 @@ commits_du_tour() { # les zones que touchent les commits créés pendant le tour
 
 controler() { # controler <quand> : compare à la photo ; alerte et rend 1 si une zone a changé
   local avant maintenant reference tete_avant tete changes liste total raison nouveaux drapeau
-  local deplacees nom sha actuel remedes
+  local deplacees nom sha actuel remedes paquet
+  local -a paquets=()
   avant="$(lue arbre)"
   if [ -z "$avant" ] || ! git cat-file -e "$avant^{tree}" 2>/dev/null; then
     return 0  # pas de photo pour ce tour (hook branché en cours de session) : on commence ici
@@ -296,6 +338,17 @@ PRINCIPALES
   done
   if [ -n "$nouveaux" ]; then
     changes="${changes:+$changes$'\n'}M"$'\t'".claude/settings.local.json :$nouveaux"
+  fi
+  nouveaux=""
+  if [ -n "$(lue opencode)" ]; then
+    # `read -a`, pas `for x in $(…)` : une version `*` se développerait en noms de fichiers.
+    read -r -a paquets <<< "$(paquets_opencode)"
+    for paquet in "${paquets[@]}"; do
+      case " $(lue opencode) " in *" $paquet "*) ;; *) nouveaux="$nouveaux $paquet" ;; esac
+    done
+  fi
+  if [ -n "$nouveaux" ]; then
+    changes="${changes:+$changes$'\n'}M"$'\t'".opencode/package.json :$nouveaux"
   fi
   [ -n "$changes" ] || return 0
   liste="$(printf '%s\n' "$changes" | head -n 8 | awk -F '\t' '

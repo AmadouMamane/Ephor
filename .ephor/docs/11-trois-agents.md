@@ -127,8 +127,10 @@ des skills à entretenir.
   Code, Copilot (vue « agents » et greffon), et opencode depuis 1.1.5, par son greffon (le
   message de l'opérateur ouvre le tour, la session redevenue inactive le ferme). Avant, un
   script qui écrivait dans `tasks/` n'y était vu par personne (constaté le 29/09/2026).
-  Elle lit ses zones dans le moteur, voit les fichiers ignorés par git, le dossier git, et
-  un réglage local qui coupe les hooks ou le bac à sable. Claude Code ne lance pas la fin de
+  Elle lit ses zones dans le moteur, voit les fichiers ignorés par git, le dossier git, un
+  réglage local qui coupe les hooks ou le bac à sable, et une dépendance ou un script ajouté
+  à `.opencode/package.json`, qu'opencode installerait au démarrage suivant (le fichier, qu'il
+  écrit lui-même, n'est pas comparé ; ses fichiers de verrou non plus). Claude Code ne lance pas la fin de
   tour quand on interrompt l'agent (mesuré le 25/09/2026) : un tour jamais contrôlé l'est
   au début du suivant, et la demande est refusée si une zone a changé. Elle constate après
   coup, et un agent qui veut la faire taire y arrive encore ; le juge reste la barrière.
