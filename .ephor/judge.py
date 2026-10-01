@@ -3762,16 +3762,35 @@ def derniers_verdicts(repo: Path) -> tuple[dict[str, str], dict[str, str]]:
     return verdicts, bases
 
 
-def taches_nommees(repo: Path, ref: str) -> set[str]:
-    """Les tâches qu'un commit de cette branche nomme `task/<ID>`, comme le fait le commit de
-    fusion d'une merge request. Une lecture de l'histoire pour toutes les tâches, au lieu d'une
-    par tâche : cent tâches, et autant de parcours de toute l'histoire."""
+def taches_nommees(repo: Path, ref: str) -> tuple[set[str], set[str]]:
+    """(fusionnées, annulées) : les tâches qu'un commit de cette branche nomme `task/<ID>`,
+    comme le fait le commit de fusion d'une merge request. Une lecture de l'histoire pour toutes
+    les tâches, au lieu d'une par tâche : cent tâches, et autant de parcours de toute l'histoire.
+
+    Le DERNIER commit qui nomme la tâche décide. L'annulation d'une fusion la nomme aussi :
+    `Revert "Merge branch 'task/X' into 'main'"`, ou, par le bouton de GitHub, la fusion d'une
+    branche `revert-12-task/X`. Lue comme une fusion, elle laissait la tâche « fusionnée » pour
+    toujours, cachée de `make taches` et fermée par `make task-clore` (ticket #36). Une
+    annulation d'annulation refait une fusion : on compte les `Revert "` et les `revert-<n>-`.
+    """
     try:
-        messages = git(repo, "log", "--format=%B%x00", "--fixed-strings", "--grep=task/", ref)
+        messages = git(
+            repo, "log", "--reverse", "--format=%B%x00", "--fixed-strings", "--grep=task/", ref
+        )
     except JudgeError:
-        return set()
-    return set(
-        re.findall(r"task/([A-Z][A-Z0-9-]{2,50})(?![A-Z0-9-])", messages.decode("utf-8", "replace"))
+        return set(), set()
+    fusionnee: dict[str, bool] = {}
+    for message in messages.decode("utf-8", "replace").split("\x00"):
+        sujet, annulations = message.strip(), 0
+        while sujet.startswith('Revert "'):
+            sujet, annulations = sujet[len('Revert "') :], annulations + 1
+        for branche, tache in re.findall(
+            r"((?:revert-\d+-)*)task/([A-Z][A-Z0-9-]{2,50})(?![A-Z0-9-])", message
+        ):
+            fusionnee[tache] = (annulations + branche.count("revert-")) % 2 == 0
+    return (
+        {tache for tache, oui in fusionnee.items() if oui},
+        {tache for tache, oui in fusionnee.items() if not oui},
     )
 
 
@@ -3819,17 +3838,20 @@ class VueDesTaches:
     branches: dict[str, str]
     verdicts: dict[str, str]
     bases: dict[str, str] = field(default_factory=dict)
+    annulees: set[str] = field(default_factory=set)
 
     @classmethod
     def lire(cls, repo: Path) -> VueDesTaches:
         ref, _ = resolve_base(repo, None)
         commit = git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").decode().strip()
         verdicts, bases = derniers_verdicts(repo)
+        nommees, annulees = taches_nommees(repo, commit)
         return cls(
             repo=repo,
             ref=ref,
             commit=commit,
-            nommees=taches_nommees(repo, commit),
+            nommees=nommees,
+            annulees=annulees,
             entrees=branches_entrees(repo, commit),
             branches=branches_de_tache(repo),
             verdicts=verdicts,
@@ -3842,9 +3864,12 @@ class VueDesTaches:
         est aussi « dans » la branche principale : sans verdict, elle est en cours ; et avec un
         verdict rendu sur du travail pas encore commité, elle n'y est entrée que si son bout
         n'était pas déjà sur la base de ce verdict (audit du 01/10/2026 : « fusionnée » et
-        cachée, la branche n'ayant aucun commit)."""
+        cachée, la branche n'ayant aucun commit). Une fusion annulée ne compte plus : son
+        travail est encore dans l'histoire, plus dans le code."""
         if task_id in self.nommees:
             return True
+        if task_id in self.annulees:
+            return False
         branche = self.branches.get(task_id)
         if (
             branche is None

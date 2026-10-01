@@ -1368,6 +1368,39 @@ def test_une_branche_sans_commit_n_est_pas_fusionnee(
     assert "fusionnée" in ligne(), "commitée puis entrée dans main en avance rapide"
 
 
+def test_une_fusion_annulee_n_est_plus_fusionnee(
+    repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Le commit qui annule la fusion nomme lui aussi `task/<ID>` : la tâche restait
+    « fusionnée » pour toujours, cachée de `make taches`, et `make task-clore` la fermait."""
+    (repo / "src" / "metrics.py").write_text(FIX)
+    git(repo, "commit", "-qam", "correctif")
+    assert run_judge(repo)[0] == 0
+
+    def ligne() -> str:
+        capsys.readouterr()
+        assert judge.main(["taches", "--repo", str(repo), "--tout"]) == 0
+        return next(lg for lg in capsys.readouterr().out.splitlines() if " T-001 " in lg)
+
+    git(repo, "switch", "-q", "main")
+    git(repo, "merge", "-q", "--no-ff", "-m", "Merge branch 'task/T-001' into 'main'", "task/T-001")
+    assert "fusionnée" in ligne()
+    git(repo, "revert", "-m", "1", "--no-edit", "HEAD")
+    assert "fusionnée" not in ligne() and "vérifiée" in ligne(), "annulée : de nouveau à fusionner"
+    git(repo, "revert", "--no-edit", "HEAD")
+    assert "fusionnée" in ligne(), "l'annulation annulée : fusionnée de nouveau"
+    # Le bouton « Revert » de GitHub passe par une branche `revert-<n>-task/<ID>`.
+    git(
+        repo,
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "Merge pull request #13 from o/revert-12-task/T-001",
+    )
+    assert "fusionnée" not in ligne()
+
+
 def test_un_nom_de_fichier_qui_n_est_pas_de_l_utf8_est_un_refus(
     repo: Path, run_judge: Runner
 ) -> None:
