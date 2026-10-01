@@ -14,9 +14,10 @@ make adapters                     # régénère les fichiers des deux autres out
 python3 .ephor/adapters.py check  # échoue si un fichier dérivé a dérivé
 ```
 
-Dans le dépôt d'Ephor, `make ephor-test` fait ce contrôle avec tous les autres. Dans un
-projet équipé, les tests d'Ephor ne sont pas copiés : `make ephor-test` y dirait
-« `.ephor/tests` absent », et c'est normal.
+Dans le dépôt d'Ephor, et dans un projet né de son archive, `make ephor-test` fait ce
+contrôle avec tous les autres. Dans un projet équipé par le script d'installation, les tests
+d'Ephor ne sont pas copiés : `make ephor-test` y dit « `.ephor/tests` absent » sans rien
+lancer, et c'est normal.
 
 | Vous écrivez | Ce qui en est dérivé |
 |---|---|
@@ -263,7 +264,7 @@ traînent dans ce dossier ne tournent plus.
   Code). C'est le comportement des moteurs, pas un choix d'Ephor. Le greffon de Copilot et
   celui d'opencode arrêtent une garde muette au bout de 20 s et refusent, bien avant ce
   délai ; restent les hooks du dépôt (vue « agents ») et Claude Code. Mesuré : une commande
-  de 2 Mo est jugée en 0,5 s, loin des délais (10 à 30 s) ; le risque est faible, et le juge
+  de 2 Mo en mots courts est jugée en moins de 2 s, et un seul mot de plus de 512 Kio est refusé d'emblée, loin des délais (10 à 30 s) ; le risque est faible, et le juge
   reste la barrière.
 - **Copilot refuse souvent de lui-même**, avant d'appeler le moindre outil. C'est
   appréciable et ce n'est pas une garantie ; surtout, ça brouille les essais : pour éprouver

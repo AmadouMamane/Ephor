@@ -63,7 +63,8 @@ fi
 # non : rien n'est lancé. Lu par le juge de la copie de l'opérateur, pas par celui de la tâche.
 if [ "$(git branch --show-current 2>/dev/null)" = "task/$TASK" ]; then
   DEPART="$(git merge-base HEAD "$BASE" 2>/dev/null || true)"
-  RETOUCHEES="$( { [ -z "$DEPART" ] || git diff --name-only "$DEPART" --; git ls-files --others --exclude-standard; } 2>/dev/null \
+  # Et ce que `git update-index --skip-worktree|--assume-unchanged` cache à `git diff`.
+  RETOUCHEES="$( { [ -z "$DEPART" ] || git diff --name-only "$DEPART" --; git ls-files --others --exclude-standard; git ls-files -v | sed -n 's/^[Sh] //p'; } 2>/dev/null \
     | python3 -B -c 'import sys
 sys.path.insert(0, sys.argv[1])
 import judge
@@ -76,6 +77,17 @@ for ligne in sys.stdin:
     exit 1
   fi
 fi
+# GNU make lit GNUmakefile puis makefile AVANT Makefile : posé dans le dossier de la tâche,
+# même hors de git (.git/info/exclude), l'un ou l'autre détournait les étapes de la revue
+# (« ok » en 0 s, relecture du 01/10/2026). Le disque, pas git ; et le Makefile de VOTRE copie.
+for DETOUR in GNUmakefile makefile; do
+  if [ -e "$DETOUR" ]; then
+    echo "REFUS : $PWD/$DETOUR existe : GNU make le lirait à la place du Makefile, et la revue" >&2
+    echo "lancerait ce que l'agent y a mis. Retirez-le (git status --ignored) avant de relancer." >&2
+    exit 1
+  fi
+done
+MAKE_SUR() { make --no-print-directory -f "$PRINCIPAL/Makefile" "$@"; }
 
 # Le chemin passe en ARGUMENT, jamais dans le texte du programme : il contient
 # l'identifiant de tâche, c'est-à-dire un nom de branche que l'agent choisit. Collé dans
@@ -104,8 +116,9 @@ etape() { # etape <nom> <commande...> : lancée quoi qu'il soit arrivé avant, e
   sortie="$(mktemp)"
   if "$@" 2>&1 | tee "$sortie"; [ "${PIPESTATUS[0]}" -eq 0 ]; then
     # « GREEN PARTIEL… ce n'est pas une validation », dit verify.sh lui-même : la revue la
-    # comptait verte (audit du 01/10/2026).
-    if grep -q 'GREEN PARTIEL' "$sortie"; then
+    # comptait verte (audit du 01/10/2026). Et le « PARTIEL — pas contrôlé : gitleaks » de
+    # `make sec`, en risque élevé, l'était encore (relecture du 01/10/2026).
+    if grep -qE 'GREEN PARTIEL|^  PARTIEL — pas contrôlé' "$sortie"; then
       ECHECS="${ECHECS:+$ECHECS, }$nom (partielle)"
     else
       VERTES=$((VERTES + 1))
@@ -126,15 +139,15 @@ case "$RISK" in
   modere)
     echo "-> Risque modéré : vérification complète + échantillon de régression."
     etape "vérification" bash .ephor/projet/verify.sh
-    etape "échantillon de régression (test-fast)" make test-fast
+    etape "échantillon de régression (test-fast)" MAKE_SUR test-fast
     etape "juge" make --no-print-directory -C "$PRINCIPAL" judge TASK="$TASK"
     CONSEIL="CONSEIL : sur un risque modéré, faites relire le patch par le sous-agent evaluator."
     ;;
   eleve)
     echo "-> Risque élevé : vérification stricte + sécurité + mutations."
     etape "vérification stricte" env VERIFY_STRICT=1 bash .ephor/projet/verify.sh
-    etape "secrets et fuites de données (make sec)" make sec
-    etape "score de mutation (make mutants)" make mutants
+    etape "secrets et fuites de données (make sec)" MAKE_SUR sec
+    etape "score de mutation (make mutants)" MAKE_SUR mutants
     etape "juge" make --no-print-directory -C "$PRINCIPAL" judge TASK="$TASK"
     CONSEIL="CONSEIL : sur un risque élevé, la revue humaine est obligatoire avant la fusion."
     ;;

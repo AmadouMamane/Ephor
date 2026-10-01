@@ -40,12 +40,19 @@ BODY="$(corps)"
 # Une valeur entre guillemets derrière `password`, `token`, `secret`… n'est un secret que si
 # elle n'a pas d'espace : « Le mot de passe doit contenir au moins 12 caractères » est un
 # texte d'interface, et il était refusé comme un mot de passe (vu à l'audit du 29/09/2026).
-PATTERNS='(AKIA[0-9A-Z]{16})|(gh[pousr]_[A-Za-z0-9]{36})|(glpat-[A-Za-z0-9_-]{20,})|(-----BEGIN [A-Z ]*PRIVATE KEY-----)|(xox[baprs]-[A-Za-z0-9-]{10,})|(AIza[0-9A-Za-z_-]{35})|("?(api[_-]?key|secret|password|passwd|token)"?[[:space:]]*[:=][[:space:]]*"[^"[:space:]]{20,}")'
+# Entre guillemets ou entre apostrophes : `password = 'abc…'` passait, `"abc…"` non.
+PATTERNS='(AKIA[0-9A-Z]{16})|(gh[pousr]_[A-Za-z0-9]{36})|(glpat-[A-Za-z0-9_-]{20,})|(-----BEGIN [A-Z ]*PRIVATE KEY-----)|(xox[baprs]-[A-Za-z0-9-]{10,})|(AIza[0-9A-Za-z_-]{35})|("?(api[_-]?key|secret|password|passwd|token)"?[[:space:]]*[:=][[:space:]]*("[^"[:space:]]{20,}"|'"'"'[^'"'"'[:space:]]{20,}'"'"'))'
 # Forme « variable d'environnement » sans guillemets : DB_PASSWORD=valeur (noms en majuscules).
 # La valeur doit ressembler à un secret (lettres, chiffres, + / = _ -) ET faire au moins
 # vingt caractères : une URL, un appel de fonction, un attribut (`settings.x`) ou une
 # constante comme `PASSWORD_HASH_ALGORITHM=pbkdf2_sha256` ne déclenchent pas l'alerte.
 ENV_STYLE='(^|[^A-Za-z0-9_])[A-Z0-9_]*(PASSWORD|PASSWD|SECRET|TOKEN|API_KEY)[A-Z0-9_]*[[:space:]]*=[[:space:]]*[A-Za-z0-9_+/=-]{20,}([[:space:]]|$)'
+# Un NOM lisible n'est pas un secret : `AUTH_TOKEN_HEADER_NAME=X-Auth-Token-For-Service-Calls`,
+# `TOKEN_PERMISSIONS=contents-read_pull-requests-write` étaient refusés (relecture du
+# 01/10/2026). Une valeur tirée au hasard porte un chiffre, ou un signe de base64 (+ / =).
+env_style() {
+  printf '%s' "$BODY" | grep -oE "$ENV_STYLE" | sed -E 's/^[^=]*=[[:space:]]*//' | grep -qE '[0-9+/=]'
+}
 # Clés d'API en « sk- » (OpenAI, Anthropic, et les passerelles qui les imitent). Le motif
 # n'avait ni début de mot ni casse : tout identifiant en tirets qui passe par « …sk- » —
 # risk-, task-, desk-, disk- — était refusé comme une clé, et `risk-` est partout dans une
@@ -59,7 +66,7 @@ cle_sk() { printf '%s' "$BODY" | grep -oE "$CLE_SK" | grep -q '[0-9]'; }
 # contenu dépassait la mémoire d'un tuyau (16 Ko sur Mac). Mesuré à l'audit du 29/09/2026 :
 # une clé AWS en tête d'un fichier de 21 Ko passait. Ici, seul le verdict de `grep` compte.
 set +o pipefail
-if printf '%s' "$BODY" | grep -qiE "$PATTERNS" || printf '%s' "$BODY" | grep -qE "$ENV_STYLE" || cle_sk; then
+if printf '%s' "$BODY" | grep -qiE "$PATTERNS" || env_style || cle_sk; then
   echo "REFUSÉ : le contenu ressemble à un secret en clair (clé API, jeton, clé privée ou mot de passe). Utilise une variable d'environnement et .env.example, jamais une valeur littérale. Faux positif ? Dis-le à l'opérateur au lieu de contourner." >&2
   exit 2
 fi

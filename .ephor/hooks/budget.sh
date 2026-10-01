@@ -39,7 +39,7 @@ FACTURABLES="$(printf '%s' "$MESURE" | scalaire - facturables)"
 case "$BUDGET" in *[!0-9]*) exit 0 ;; esac
 case "$FACTURABLES" in ''|*[!0-9]*) exit 0 ;; esac
 [ "$FACTURABLES" -le "$BUDGET" ] && exit 0
-[ -f "$ROOT/AGENT_STOP" ] && exit 0
+{ [ -e "$ROOT/AGENT_STOP" ] || [ -L "$ROOT/AGENT_STOP" ]; } && exit 0  # déjà arrêté, quelle que soit la forme
 printf 'budget de la tâche %s dépassé (%s tokens facturables pour %s autorisés). Il faut relever le budget dans le contrat, sur la branche principale, ou découper la tâche ; puis `make resume`.\n' \
   "$ID" "$FACTURABLES" "$BUDGET" > "$ROOT/AGENT_STOP"
 echo "Budget dépassé : $FACTURABLES > $BUDGET. AGENT_STOP posé." >&2

@@ -417,3 +417,18 @@ def test_la_consigne_ecrite_pendant_le_tour_ne_la_declenche_pas(tmp_path: Path) 
     resultat = fin(repo)
     assert resultat.returncode == 0, resultat.stderr
     assert not (repo / "AGENT_STOP").exists()
+
+
+@pytest.mark.parametrize("option", ["--skip-worktree", "--assume-unchanged"])
+def test_une_zone_cachee_a_git_diff_par_update_index_est_vue(tmp_path: Path, option: str) -> None:
+    """`git update-index --skip-worktree Makefile` puis une retouche : `git diff` et `git status`
+    ne montraient plus rien, et la sentinelle, qui lit `git diff`, laissait passer la zone
+    modifiée (relecture adverse du 01/10/2026). Elle relit les fichiers marqués."""
+    repo = depot_surveille(tmp_path)
+    assert debut(repo).returncode == 0
+    git(repo, "update-index", option, "Makefile")
+    (repo / "Makefile").write_text("verify:\n\t@true\n")
+    assert git(repo, "status", "--short").strip() == "", "git ne voit rien : c'est le piège"
+    resultat = fin(repo)
+    assert resultat.returncode == 1, resultat.stderr
+    assert "Makefile (modifié)" in (repo / "AGENT_STOP").read_text(encoding="utf-8")

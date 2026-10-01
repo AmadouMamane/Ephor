@@ -97,6 +97,10 @@ racine, maison = sys.argv[1], sys.argv[2]
 # Par l'entrée standard, pas par l'environnement : au-delà de 128 Kio, une variable empêchait
 # python3 de démarrer (« Argument list too long »), et tout passait (audit du 01/10/2026).
 commande = sys.stdin.read()
+# Un seul mot très long rend shlex quadratique : 1 Mo, 25 s ; 2 Mo, deux minutes, jusqu'au
+# veilleur (relecture du 01/10/2026). Au-delà d'une borne, refus immédiat, avec le geste à faire.
+LIMITE = 512 * 1024
+TROP_LONGUE = "::trop longue::"
 # Le dossier où la commande tourne (voir COURANT plus haut) ; la racine à défaut.
 COURANT = os.environ.get("EPHOR_COURANT") or racine
 # La branche où l'on est, suivie à travers les `git switch` de la commande : `git switch main
@@ -106,6 +110,14 @@ PRINCIPALES = set(os.environ.get("EPHOR_PRINCIPALES", "").split())
 # Ce qui écrit l'histoire de la branche courante.
 HISTOIRE = {"commit", "merge", "cherry-pick", "revert", "am", "rebase", "pull"}
 PRINCIPALE = "::branche principale::"
+# Le bouton d'arrêt de l'opérateur : un dossier ou un lien posé sous ce nom à l'avance
+# empêchait `make stop`, le plafond de tokens et la sentinelle de l'écrire (relecture du
+# 01/10/2026). L'agent ne le remplace par rien d'autre qu'un fichier.
+BOUTON = "::bouton d'arrêt::"
+BOUTON_POURQUOI = {"mkdir", "mkfifo", "ln", "mv", "cp", "rsync", "install"}
+# Les worktrees qu'une commande crée avant d'y commiter : `git worktree add -f /tmp/wt main &&
+# git -C /tmp/wt commit` passait, le dossier n'existant pas encore quand on lisait sa branche.
+WORKTREES = {}
 # Les gestes de l'opérateur. Les règles de permissions ne les refusaient que dans un ordre de
 # mots : `make ID=X task-check` passait par la règle générale `make *` (audit du 29/09/2026).
 OPERATEUR = "::geste de l'opérateur::"
@@ -210,7 +222,7 @@ REDIRIGE = {">", ">>", ">|", "&>", "&>>", ">&", "<>"}
 REDIRECTIONS = REDIRIGE | {"<", "<&", "<<<"}
 # Un descripteur dupliqué ou fermé n'est pas un fichier : `2>&1`, `>&-`, `0<&3`.
 DESCRIPTEUR = re.compile(r"[0-9]+|-")
-TOUS_ECRITS = {"rm", "rmdir", "unlink", "truncate", "touch", "chmod", "chown", "shred", "tee"}
+TOUS_ECRITS = {"rm", "rmdir", "unlink", "truncate", "touch", "chmod", "chown", "shred", "tee", "mkdir", "mkfifo"}
 DERNIER_ECRIT = {"cp", "install", "ln", "rsync"}
 INTERPRETES = {"python", "python3", "node", "nodejs", "bun", "deno", "perl", "ruby"}
 COQUILLES = {"bash", "sh", "zsh", "dash", "ksh"}
@@ -477,6 +489,15 @@ def correctif_lu(chemin, base):
 
 
 CONFIG_ECRIT = {"--unset", "--unset-all", "--add", "--replace-all", "--rename-section", "--remove-section", "-e", "--edit"}
+# Les clés de git qui exécutent un programme ou détournent une commande : posées dans la
+# configuration du poste, elles tournent chez l'opérateur, dans tous ses dépôts.
+CLE_GIT_SENSIBLE = re.compile(
+    r"^(?:core\.(?:hookspath|fsmonitor|editor|pager|sshcommand|askpass|gitproxy|alternaterefscommand)"
+    r"|alias\.|credential\.(?:.*\.)?helper|diff\..*\.(?:textconv|command)|merge\..*\.driver"
+    r"|filter\..*\.(?:clean|smudge|process)|include\.path|includeif\.|gpg\.(?:.*\.)?program"
+    r"|sequence\.editor|url\..*\.insteadof|http\.(?:.*\.)?proxy|uploadpack\.|receive\.|protocol\.)",
+    re.I,
+)
 CONFIG_LIT = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list", "--get-color", "--get-colorbool", "--blob"}
 CONFIG_VALEUR = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value"}
 
@@ -496,11 +517,18 @@ def git_config(args, defaut):
     """Le fichier qu'un `git config` ÉCRIT, ou rien pour une lecture. Par défaut .git/config,
     où un hook ou un moniteur de fichiers se plante : git les lance ensuite lui-même."""
     cible, positionnels, ecrit, lit, j = defaut, [], False, False, 0
+    global_sensible = False
     while j < len(args):
         a = args[j]
         nom_option = a.split("=", 1)[0]
-        if nom_option in {"--global", "--system"}:
-            return None  # hors du dépôt : ni zone, ni affaire de cette garde
+        if nom_option == "--global":
+            # Le fichier du poste. `user.name` y est un usage ordinaire ; `core.hooksPath` y lance
+            # du code au prochain commit de l'opérateur, dans tous ses dépôts : seules les clés
+            # qui exécutent ou détournent sont une zone (relecture du 01/10/2026).
+            cible = "~/.gitconfig"
+            global_sensible = True
+        elif nom_option == "--system":
+            return None  # /etc : hors de portée sans droits, et pas une zone
         if nom_option == "--worktree" and defaut:
             cible = defaut + ".worktree"
         ecrit = ecrit or nom_option in CONFIG_ECRIT
@@ -517,6 +545,13 @@ def git_config(args, defaut):
         j += 1
     # Depuis git 2.46, une sous-commande : `git config set x y`, `git config get x`.
     sous = positionnels[0] if positionnels else ""
+    if global_sensible:
+        cles = positionnels[1:] if sous in {"set", "unset", "get", "list", "edit"} else positionnels
+        if sous in {"get", "list"} or lit:
+            return None
+        if sous == "edit" or (ecrit and not cles):
+            return cible  # l'éditeur ouvre tout le fichier, dont les clés sensibles
+        return cible if any(CLE_GIT_SENSIBLE.match(c) for c in cles[:1]) else None
     if sous in {"set", "unset", "rename-section", "remove-section", "edit"}:
         return cible
     if sous in {"get", "list"} or lit:
@@ -545,6 +580,13 @@ def branche_apres(sous, args):
         creees = valeurs(args, "cC", {"--create", "--force-create"})
     elif sous == "checkout":
         creees = valeurs(args, "bB", set())
+    elif sous == "symbolic-ref":
+        # `git symbolic-ref HEAD refs/heads/main && git commit` : un `switch` qui ne dit pas
+        # son nom (relecture du 01/10/2026).
+        noms = [a for a in args if not a.startswith("-")]
+        if len(noms) >= 2 and noms[0] == "HEAD":
+            return noms[1][len("refs/heads/") :] if noms[1].startswith("refs/heads/") else noms[1]
+        return None
     else:
         return None
     if creees:
@@ -587,6 +629,9 @@ def principale_deplacee(sous, args):
         "update-ref": {"-m"},
         "rebase": {"--onto", "-x", "--exec", "-s", "--strategy", "-X", "--strategy-option"},
         "branch": {"-u", "--set-upstream-to"},
+        "filter-branch": {"--env-filter", "--tree-filter", "--index-filter", "--parent-filter",
+                          "--msg-filter", "--commit-filter", "--tag-name-filter",
+                          "--subdirectory-filter", "--state-branch", "-d"},
     }.get(sous, set())
     positionnels, j = [], 0
     while j < len(args):
@@ -645,6 +690,18 @@ def principale_deplacee(sous, args):
                 return BRANCHE["courante"]
     elif sous == "rebase" and len(positionnels) >= 2 and principale_visee(positionnels[1]):
         return principale_visee(positionnels[1])
+    elif sous == "symbolic-ref" and positionnels and principale_visee(positionnels[0]):
+        # `symbolic-ref refs/heads/main refs/heads/x` fait pointer main ailleurs.
+        return principale_visee(positionnels[0])
+    elif sous == "filter-branch":
+        # Réécrit l'histoire des branches nommées, de toutes (`--all`), ou de la courante.
+        for a in positionnels:
+            if principale_visee(a):
+                return principale_visee(a)
+        if "--all" in args and PRINCIPALES:
+            return sorted(PRINCIPALES)[0]
+        if not positionnels and BRANCHE["courante"] in PRINCIPALES:
+            return BRANCHE["courante"]
     return None
 
 
@@ -802,6 +859,37 @@ def chemins_lus(nom, args):
         j += 1
 
 
+# Un script en ligne qui lit l'environnement : tout (`dict(os.environ)`), ou une variable au
+# nom secret. `python3 -c "import os; print(os.environ['DB_PASSWORD'])"` passait là où
+# `printenv DB_PASSWORD` était refusé (relecture du 01/10/2026).
+ENV_TOUT = re.compile(
+    r"dict\(\s*os\.environ|os\.environ\.(?:items|keys|values|copy)\(|print\(\s*os\.environ\s*\)|"
+    r"JSON\.stringify\(\s*process\.env\s*\)|console\.log\(\s*process\.env\s*\)|%ENV\b|ENV\.to_h|ENV\.each"
+)
+ENV_SECRET = re.compile(
+    r"(?:os\.environ(?:\.get)?\s*[\[(]|getenv\s*\(|process\.env\s*[.\[]|\bENV\s*[\[.]|\$ENV\{)"
+    r"\s*['\"]?[A-Za-z_]*(?:TOKEN|SECRET|PASSW|KEY|CREDENTIAL|AUTH)",
+    re.I,
+)
+PROC_ENVIRON = re.compile(r"/proc/(?:self|thread-self|[0-9]+)/environ$")
+# Ce qui copie ou encode un fichier sans le « lire » aux yeux de la garde : `cp .env /tmp/e`
+# puis `cat /tmp/e` montrait le secret (relecture du 01/10/2026). La source est avant la
+# destination pour les premiers ; les autres prennent tous leurs arguments.
+COPIEURS_FIN = {"cp", "install", "rsync", "scp", "mv"}
+COPIEURS = {"tar", "gzip", "bzip2", "xz", "zstd", "zip", "xxd", "od", "hexdump", "strings", "openssl", "base32", "split", "uuencode"}
+
+
+def sources_copiees(nom, args):
+    """Les fichiers qu'une commande copie, archive ou encode ailleurs."""
+    if nom in COPIEURS_FIN:
+        return [a for a in args if not a.startswith("-")][:-1]
+    if nom == "dd":
+        return [a[3:] for a in args if a.startswith("if=")]
+    if nom in COPIEURS:
+        return [a for a in args if not a.startswith("-")]
+    return []
+
+
 def gestes_et_lectures(nom, args, ici):
     """Les gestes de l'opérateur, dans n'importe quel ordre de mots, et ce qui montre un
     secret : un fichier refusé à la lecture, ou tout l'environnement (jetons compris)."""
@@ -830,11 +918,24 @@ def gestes_et_lectures(nom, args, ici):
         or (nom == "set" and not args)
     ):
         yield SECRET + "tout l'environnement", nom
+    if nom.rstrip("0123456789.") in INTERPRETES:
+        for script in scripts_en_ligne(args):
+            if ENV_TOUT.search(script) or ENV_SECRET.search(script):
+                yield SECRET + "une variable secrète de l'environnement, lue par un script", nom
+                break
     for chemin in chemins_lus(nom, args):
         if chemin.startswith("-") or "://" in chemin:
             continue
+        if PROC_ENVIRON.search(chemin):
+            yield SECRET + "tout l'environnement (" + chemin + ")", nom
+            continue
         if any(lecture_refusee(resolu(vu)) for vu in deplie(ici(chemin))):
             yield SECRET + chemin, nom
+    for chemin in sources_copiees(nom, args):
+        if "://" in chemin:
+            continue
+        if any(lecture_refusee(resolu(vu)) for vu in deplie(ici(chemin))):
+            yield SECRET + chemin + " (copié ou encodé ailleurs)", nom
 
 
 def agent_retire(mots):
@@ -926,6 +1027,9 @@ def sed_en_place(option):
 
 def branche_du_dossier(dossier):
     """La branche d'un autre dossier du même dépôt (la copie principale, vue d'une tâche)."""
+    prevue = WORKTREES.get(os.path.realpath(dossier)) if dossier else None
+    if prevue is not None:
+        return prevue
     try:
         fait = subprocess.run(
             ["git", "-c", "core.fsmonitor=false", "-C", dossier, "branch", "--show-current"],
@@ -1093,6 +1197,10 @@ def cibles(texte, profondeur=0, base=None, illisible=True):
             interne = trouvee.group(1) if trouvee.group(1) is not None else trouvee.group(2)
             if interne and interne.strip():
                 yield from cibles(interne, profondeur + 1, base)
+    # Le mot que laisse une substitution : `> $(pwd)/Makefile` perdait son `/Makefile`, shlex
+    # coupant sur les parenthèses, et `` `pwd`/Makefile `` n'était pas lu comme une variable
+    # (relecture du 01/10/2026). Son résultat est inconnu : une variable, lue par son texte.
+    texte = SUBSTITUTION.sub("$EPHORSUBST", texte)
     try:
         # Le saut de ligne SÉPARE deux commandes, comme `;` : lu comme un blanc, `echo x` puis
         # `rm -rf .ephor` sur la ligne suivante faisaient une seule commande, `echo`, et la
@@ -1299,7 +1407,22 @@ def cibles(texte, profondeur=0, base=None, illisible=True):
             # L'histoire de NOTRE dépôt seulement, copie principale comprise vue du dossier
             # d'une tâche ; un autre dépôt sur `main` n'est pas une approbation.
             chez_nous = dans_le_depot(base_g)
-            voisin = not chez_nous and depot_commun(base_g) is not None and depot_commun(base_g) == depot_commun(racine)
+            voisin = not chez_nous and (
+                (depot_commun(base_g) is not None and depot_commun(base_g) == depot_commun(racine))
+                or (base_g is not None and os.path.realpath(base_g) in WORKTREES)
+            )
+            if (chez_nous or voisin) and sous_g == "worktree" and reste_g[:1] == ["add"]:
+                noms_wt, j = [], 1
+                while j < len(reste_g):
+                    if reste_g[j] in {"-b", "-B", "--reason"}:
+                        j += 2
+                        continue
+                    if not reste_g[j].startswith("-"):
+                        noms_wt.append(reste_g[j])
+                    j += 1
+                if noms_wt and not noms_wt[0].startswith(("$", "~")):
+                    branche_wt = valeurs(reste_g, "bB", set()) or noms_wt[1:2] or [os.path.basename(noms_wt[0])]
+                    WORKTREES[os.path.realpath(ici_g(noms_wt[0]))] = branche_wt[0]
             if chez_nous or voisin:
                 ici_branche = BRANCHE["courante"]
                 if voisin:
@@ -1328,6 +1451,17 @@ def cibles(texte, profondeur=0, base=None, illisible=True):
                 # Comme `git restore .` : tout fichier suivi et modifié revient en arrière.
                 for fichier in git_atteints("restore", ["."], base_g or racine):
                     yield fichier, "git " + sous_g
+            elif sous_g == "update-index" and (chez_nous or voisin):
+                # `--skip-worktree` ou `--assume-unchanged` cachent une zone modifiée à `git
+                # diff`, donc à la sentinelle et à la revue (relecture du 01/10/2026).
+                if {"--assume-unchanged", "--skip-worktree", "--add", "--remove", "--force-remove",
+                    "--replace", "--cacheinfo", "--index-info", "--stdin"} & set(reste_g) \
+                        or any(a.startswith("--chmod") for a in reste_g):
+                    if {"--stdin", "--index-info"} & set(reste_g):
+                        yield os.path.join(racine, ".git", "index"), "git update-index"
+                    for a in reste_g:
+                        if not a.startswith("-"):
+                            yield ici_g(a), "git update-index"
             elif sous_g == "config":
                 fichier = git_config(reste_g, config_de(base_g))
                 if fichier:
@@ -1364,6 +1498,9 @@ def cibles(texte, profondeur=0, base=None, illisible=True):
                 yield from script_qui_ecrit(script, base=base, profondeur=profondeur)
 
 
+if len(commande) > LIMITE:
+    print(f"{len(commande) // 1024} Kio\t{TROP_LONGUE}\tcommande trop longue")
+    sys.exit(0)
 try:
     for cible, pourquoi in cibles(commande, base=COURANT):
         speciale = next(
@@ -1371,6 +1508,9 @@ try:
         )
         if speciale:
             print(f"{cible[len(speciale):]}\t{speciale}\t{pourquoi}")
+            break
+        if pourquoi in BOUTON_POURQUOI and os.path.realpath(resolu(cible)) == os.path.join(racine, "AGENT_STOP"):
+            print(f"AGENT_STOP\t{BOUTON}\t{pourquoi}")
             break
         atteinte = next(((c, m) for c in deplie(cible) for m in [zone(c)] if m), None)
         if atteinte:
@@ -1401,6 +1541,10 @@ EOF
       deny "REFUSÉ : cette commande retire $CIBLE de l'environnement, ce qui dit qu'un agent tourne. Les gestes de l'opérateur le lisent pour se refuser à l'agent : le retirer, c'est les contourner. Demande le geste à l'opérateur." ;;
     "::lecture d'un secret::")
       deny "REFUSÉ : cette commande ($POURQUOI) montrerait $CIBLE, refusé à la lecture par les réglages du dépôt : un secret lu entre dans le prompt, donc chez le fournisseur du modèle. Utilise une variable d'environnement sans l'afficher, ou demande à l'opérateur." ;;
+    "::bouton d'arrêt::")
+      deny "REFUSÉ : $CIBLE est le bouton d'arrêt de l'opérateur ($POURQUOI le remplacerait par un dossier ou un lien). L'agent ne le touche pas, sous aucune forme : l'opérateur le pose (make stop) et le lève (make resume)." ;;
+    "::trop longue::")
+      deny "REFUSÉ : commande de $CIBLE, trop longue pour que la garde du terminal la lise (512 Kio au plus). Écris ce contenu dans un fichier hors des zones de contrôle avec l'outil d'édition, puis lance-le." ;;
   esac
   deny "REFUSÉ : cette commande écrit dans $CIBLE ($POURQUOI), zone de contrôle « $MOTIF ». Écrire par le terminal ce que l'édition refuse, c'est contourner le garde-fou — et le juge refuserait de toute façon le correctif. Si le changement est vraiment nécessaire, c'est l'opérateur qui le fait, à la main."
 fi

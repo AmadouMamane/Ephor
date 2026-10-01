@@ -119,7 +119,10 @@ arbre() { # arbre <pathspec>... : HEAD, plus les zones telles qu'elles sont sur 
   # `--remove` retire de l'arbre ce qui n'est plus sur le disque.
   if GIT_INDEX_FILE="$tmp/index" git read-tree HEAD 2>/dev/null \
     && { git diff --name-only -z HEAD -- "$@" "${EXCLUS[@]}" 2>/dev/null
-         git ls-files -z -o -- "$@" "${EXCLUS[@]}" 2>/dev/null; } \
+         git ls-files -z -o -- "$@" "${EXCLUS[@]}" 2>/dev/null
+         # Un fichier marqué skip-worktree ou assume-unchanged (`git update-index`) échappe à
+         # `git diff` : relu depuis le disque (relecture du 01/10/2026).
+         git ls-files -v -z -- "$@" "${EXCLUS[@]}" 2>/dev/null | tr '\0' '\n' | sed -n 's/^[Sh] //p' | tr '\n' '\0'; } \
        | GIT_INDEX_FILE="$tmp/index" git update-index -z --add --remove --stdin 2>/dev/null; then
     resultat="$(GIT_INDEX_FILE="$tmp/index" git write-tree 2>/dev/null)"
   fi

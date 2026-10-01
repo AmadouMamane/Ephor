@@ -2432,3 +2432,155 @@ def test_une_recherche_de_copilot_ne_vise_pas_un_secret(tmp_path: Path) -> None:
     ):
         passe = hook("read-guard.sh", charge_copilot("grep_search", args, projet), project=projet)
         assert passe.returncode == 0, args
+
+
+# ------------------------------------------------- relecture adverse de la 1.5.2 (01/10/2026)
+
+
+def _tache_relecture(tmp_path: Path) -> Path:
+    """Un dépôt sur sa branche de tâche, avec les réglages d'Ephor et un .env à protéger."""
+    repo = tmp_path / "depot"
+    (repo / ".claude").mkdir(parents=True)
+    (repo / ".claude" / "settings.json").write_text(
+        (ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("A = 1\n")
+    (repo / "Makefile").write_text("verify:\n\t@true\n")
+    (repo / ".env").write_text("DB_PASSWORD=valeur-de-test\n")
+    git(repo, "init", "-q", "-b", "main")
+    git(repo, "config", "user.email", "t@example.invalid")
+    git(repo, "config", "user.name", "t")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base")
+    git(repo, "switch", "-qc", "task/T-1")
+    return repo
+
+
+def _terminal(repo: Path, commande: str) -> subprocess.CompletedProcess[str]:
+    charge = {"tool_name": "Bash", "tool_input": {"command": commande}}
+    return hook("avant-outil.sh", charge, cwd=repo, project=repo)
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        "echo x > $(pwd)/Makefile",
+        "echo x > `pwd`/Makefile",
+        "tee $(pwd)/Makefile < /dev/null",
+        "git symbolic-ref HEAD refs/heads/main && git commit --allow-empty -m x",
+        "git symbolic-ref refs/heads/main refs/heads/task/T-1",
+        "git filter-branch --index-filter x main",
+        "git update-index --skip-worktree Makefile",
+        "git update-index --assume-unchanged .claude/settings.json",
+        "mkdir AGENT_STOP",
+        "ln -s /dev/null AGENT_STOP",
+        "mkdir -p tasks/x/y",
+        "python3 -c \"import os; print(os.environ['DB_PASSWORD'])\"",
+        "node -e 'console.log(process.env.API_TOKEN)'",
+        "python3 -c 'import os, json; print(json.dumps(dict(os.environ)))'",
+        "cat /proc/self/environ",
+        "cp .env /tmp/e",
+        "dd if=.env of=/tmp/e",
+        "tar cf /tmp/e.tar .env",
+        "openssl base64 -in .env",
+        "git config --global core.hooksPath /tmp/evil",
+        'echo "[core] hooksPath=/tmp/evil" >> ~/.gitconfig',
+        "echo x >> ~/.bashrc",
+        "git worktree add -f /tmp/wt-relecture main && git -C /tmp/wt-relecture commit -m x",
+    ],
+)
+def test_la_garde_du_terminal_ferme_les_detours_de_la_relecture(
+    tmp_path: Path, commande: str
+) -> None:
+    """Chaque forme a été rejouée passante sur la 1.5.2 (relecture adverse du 01/10/2026) : une
+    substitution non citée dans le chemin d'une redirection, `symbolic-ref` et `filter-branch`
+    sur main, `update-index` qui cache une zone, un dossier ou un lien sous AGENT_STOP, un
+    script qui lit un secret dans l'environnement, une copie ou un encodage d'un fichier
+    refusé à la lecture, les points d'exécution différée du poste, un worktree créé puis
+    commité dans la même commande."""
+    repo = _tache_relecture(tmp_path)
+    resultat = _terminal(repo, commande)
+    assert resultat.returncode == 2, (commande, resultat.stderr)
+
+
+@pytest.mark.parametrize(
+    "commande",
+    [
+        'echo "$(pwd)"',
+        "ls $(pwd)/src",
+        "echo x > $(pwd)/src/a.py",
+        "git update-index --really-refresh",
+        "git update-index --skip-worktree src/a.py",
+        "mkdir -p .verify/x",
+        "python3 -c \"import os; print(os.environ['HOME'])\"",
+        "cp src/a.py /tmp/a.py",
+        "git config --global --get user.name",
+        "git worktree add -f /tmp/wt-relecture-2 task/T-1 && git -C /tmp/wt-relecture-2 status",
+        "make verify",
+        'git add src/ && git commit -m "x"',
+    ],
+)
+def test_la_garde_du_terminal_laisse_le_travail_ordinaire(tmp_path: Path, commande: str) -> None:
+    repo = _tache_relecture(tmp_path)
+    resultat = _terminal(repo, commande)
+    assert resultat.returncode == 0, (commande, resultat.stderr)
+
+
+def test_une_commande_demesuree_est_refusee_tout_de_suite(tmp_path: Path) -> None:
+    """Un seul mot d'un mégaoctet tenait shlex vingt-cinq secondes (quadratique), deux mégaoctets
+    deux minutes : chaque appel d'outil stallait. Au-delà d'une borne, refus immédiat."""
+    repo = _tache_relecture(tmp_path)
+    depart = time.monotonic()
+    resultat = _terminal(repo, "echo " + "a" * (600 * 1024))
+    assert resultat.returncode == 2
+    assert "512 Kio" in resultat.stderr
+    assert time.monotonic() - depart < 10
+
+
+def test_un_dossier_ou_un_lien_sous_agent_stop_arrete_aussi(tmp_path: Path) -> None:
+    """`mkdir AGENT_STOP` posé à l'avance neutralisait le bouton : `[ -f ]` ne le voyait pas, et
+    ni `make stop`, ni le plafond de tokens, ni la sentinelle ne pouvaient plus l'écrire."""
+    appel = {"tool_name": "Bash", "tool_input": {"command": "ls"}}
+    (tmp_path / "AGENT_STOP").mkdir()
+    resultat = hook("kill-switch.sh", appel, project=tmp_path)
+    assert resultat.returncode == 2
+    assert "pas un fichier ordinaire" in resultat.stderr
+    (tmp_path / "AGENT_STOP").rmdir()
+    (tmp_path / "AGENT_STOP").symlink_to("/dev/null")
+    assert hook("kill-switch.sh", appel, project=tmp_path).returncode == 2
+
+
+@pytest.mark.parametrize(
+    "contenu",
+    [
+        "AUTH_TOKEN_HEADER_NAME=X-Auth-Token-For-Service-Calls\n",
+        "TOKEN_PERMISSIONS=contents-read_pull-requests-write\n",
+        "JWT_TOKEN_LOCATION=headers_cookies_query_string_json\n",
+    ],
+)
+def test_une_constante_au_nom_lisible_n_est_pas_un_secret(contenu: str) -> None:
+    """Un NOM derrière `TOKEN=` (des mots, sans chiffre) était refusé comme un secret."""
+    assert hook("block-secrets.sh", {"tool_input": {"content": contenu}}).returncode == 0
+
+
+@pytest.mark.parametrize(
+    "contenu",
+    [
+        "password = 'single_quoted_very_long_secret_value_42'\n",
+        "password: 'yaml_single_quoted_secret_value_42'\n",
+        "DB_PASSWORD=Zk8s9Qw2Lm4Np7Rt1Vx3Yb6Cd0Ef5Gh\n",
+    ],
+)
+def test_un_secret_entre_apostrophes_ou_tire_au_hasard_est_vu(contenu: str) -> None:
+    assert hook("block-secrets.sh", {"tool_input": {"content": contenu}}).returncode == 2
+
+
+def test_des_arguments_en_chaine_json_sous_tool_input_sont_lus(tmp_path: Path) -> None:
+    """`toolArgs` en chaîne JSON était relu, `tool_input` non : la même écriture passait."""
+    repo = _tache_relecture(tmp_path)
+    charge = {
+        "tool_name": "Write",
+        "tool_input": json.dumps({"file_path": "Makefile", "content": "x"}),
+    }
+    assert hook("avant-outil.sh", charge, cwd=repo, project=repo).returncode == 2

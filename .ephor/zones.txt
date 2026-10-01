@@ -50,6 +50,17 @@ STEER.md
 ~/Library/Application Support/Code - Insiders/
 ~/.config/Code/
 ~/.config/Code - Insiders/
+# Les points d'exécution différée du poste : un `core.hooksPath` global lance du code au prochain
+# commit de l'opérateur, dans tous ses dépôts ; un rc de shell, à sa prochaine fenêtre ; une clé
+# dans authorized_keys ouvre le poste. Écrivables par Write et par le terminal avant la 1.5.3.
+~/.gitconfig
+~/.config/git/
+~/.ssh/
+~/.bashrc
+~/.bash_profile
+~/.zshrc
+~/.zprofile
+~/.profile
 # Ce que Claude Code demande à l'agent d'écrire lui-même : sa mémoire, ses plans.
 !~/.claude/projects/*/memory/
 !~/.claude/plans/
