@@ -70,6 +70,7 @@ PY
   # et le juge refusait la tâche (.claude/ est une zone).
   if [ -f "$DIR/.claude/settings.local.json" ] \
     && ! git -C "$DIR" check-ignore -q .claude/settings.local.json 2>/dev/null; then
+    mkdir -p "$COMMUN/info"  # absent d'un dépôt créé sans modèle (git init --template=)
     printf '%s\n' "/.claude/settings.local.json" >> "$COMMUN/info/exclude"
   fi
 fi

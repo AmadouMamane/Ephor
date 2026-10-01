@@ -187,3 +187,25 @@ def test_sans_jeton_il_le_dit(
 )
 def test_le_projet_se_deduit_du_remote(remote: str, attendu: tuple[str, str]) -> None:
     assert gitlab_check.lire_remote(remote) == attendu
+
+
+def test_une_coupure_pendant_la_lecture_est_dite_sans_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un délai dépassé ou une connexion coupée PENDANT la lecture n'est pas une URLError :
+    `make gitlab-check` tombait sur une trace Python (audit du 01/10/2026)."""
+
+    class Coupee:
+        def __enter__(self) -> Coupee:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(gitlab_check.urllib.request, "urlopen", lambda *a, **k: Coupee())
+    api = gitlab_check.Api("https://gitlab.interne", "jeton-factice")
+    with pytest.raises(SystemExit, match="coupé la réponse"):
+        api.get("/projects/1")

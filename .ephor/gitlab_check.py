@@ -103,6 +103,11 @@ class Api:
                 f"erreur : {self.base} injoignable ({exc.reason}). Derrière un proxy : "
                 "HTTPS_PROXY. Certificat refusé : SSL_CERT_FILE vers l'autorité de l'entreprise."
             ) from exc
+        except OSError as exc:  # délai dépassé, connexion coupée PENDANT la lecture
+            raise SystemExit(
+                f"erreur : {self.base} a coupé la réponse en route ({exc}). Relancez ; derrière"
+                " un proxy, vérifiez HTTPS_PROXY."
+            ) from exc
 
 
 def ci_hors_des_branches(projet: dict[str, Any]) -> Constat:
