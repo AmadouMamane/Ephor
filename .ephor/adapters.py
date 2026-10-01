@@ -86,8 +86,26 @@ def entete(chemin: Path) -> tuple[dict[str, str], str]:
         raise ValueError(f"{chemin} : entête YAML non fermée")
     meta: dict[str, str] = {}
     derniere = ""
+    # Un texte en bloc (`description: >-` ou `|`, puis des lignes en retrait), que Claude Code
+    # accepte : refusé, il faisait tomber `make adapters`, donc l'installation (audit du
+    # 01/10/2026). `>` replie les lignes en une seule, `|` garde les sauts de ligne.
+    bloc: str | None = None
     for ligne in texte[4:fin].splitlines():
+        if bloc is not None:
+            if not ligne.strip() or ligne[:1] in " \t":
+                morceau = ligne.strip()
+                separateur = "\n" if bloc == "|" or not morceau else " "
+                deja = meta[derniere]
+                meta[derniere] = deja + separateur + morceau if deja else morceau
+                continue
+            meta[derniere] = meta[derniere].strip()
+            bloc = None
         if not ligne.strip() or ligne.lstrip().startswith("#"):
+            continue
+        # La suite d'une valeur sur plusieurs lignes, sans indicateur : du YAML valide aussi.
+        suite = ligne[:1] in " \t" and not ligne.lstrip().startswith("-")
+        if suite and derniere and meta[derniere]:
+            meta[derniere] += " " + ligne.strip()
             continue
         # Une liste YAML en blocs, sous une clé sans valeur (`tools:` puis `  - Read`), que
         # Claude Code accepte : refusée, elle faisait échouer `make adapters` en entier, et
@@ -105,8 +123,11 @@ def entete(chemin: Path) -> tuple[dict[str, str], str]:
             raise ValueError(f"{chemin} : ligne d'entête non supportée : {ligne!r}")
         derniere = cle.strip()
         meta[derniere] = valeur.strip()
+        indicateur = re.fullmatch(r"([>|])[-+]?[0-9]?", meta[derniere])
+        if indicateur:
+            bloc, meta[derniere] = indicateur.group(1), ""
     if derniere:
-        meta[derniere] = meta[derniere].rstrip(",")
+        meta[derniere] = meta[derniere].strip().rstrip(",")
     return meta, texte[fin + 4 :]
 
 
@@ -188,14 +209,28 @@ def permissions(reglages: dict[str, object]) -> dict[str, object]:
     return sortie
 
 
-def config_opencode(reglages: dict[str, object]) -> str:
-    config = {
-        "$schema": "https://opencode.ai/config.json",
-        "share": "disabled",
-        "autoupdate": False,
-        "tool_output": {"max_lines": 600, "max_bytes": 51200},
-        "permission": permissions(reglages),
-    }
+def config_opencode(reglages: dict[str, object], existant: str | None = None) -> str:
+    """Nos clés, plus les vôtres. Un projet qui travaillait déjà sous opencode y perdait son
+    modèle et ses serveurs MCP : le fichier était remplacé, sans .ephor-new (audit du
+    01/10/2026). Ses permissions, elles, dérivent de .claude/settings.json, comme partout."""
+    config: dict[str, object] = {}
+    if existant is not None and existant.strip():
+        try:
+            lu = json.loads(sans_commentaires(existant))
+        except ValueError as erreur:
+            message = f".opencode/opencode.json illisible ({erreur}) : corrigez-le à la main"
+            raise ValueError(message) from erreur
+        if isinstance(lu, dict):
+            config = lu
+    config.update(
+        {
+            "$schema": "https://opencode.ai/config.json",
+            "share": "disabled",
+            "autoupdate": False,
+            "tool_output": {"max_lines": 600, "max_bytes": 51200},
+            "permission": permissions(reglages),
+        }
+    )
     return json.dumps(config, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -301,18 +336,39 @@ def expression(motif: str) -> str:
 def gardes_copilot(reglages: dict[str, object]) -> dict[str, list[tuple[str, int]]]:
     """Événement -> [(point d'entrée, délai)], lus dans `.claude/settings.json` : les mêmes
     que Claude Code (ADR 0011). Copilot n'a pas d'après-outil qu'on sache exploiter."""
+    sortie: dict[str, list[tuple[str, int]]] = {}
+    for evenement, commande, delai in hooks_declares(reglages):
+        trouve = GARDE_D_EPHOR.search(commande)
+        if trouve:
+            sortie.setdefault(evenement, []).append((trouve.group(1), delai))
+    return sortie
+
+
+# Un hook d'Ephor : `"${CLAUDE_PROJECT_DIR}/.ephor/hooks/avant-outil.sh"`. Les hooks du projet
+# (`npm run lint:staged`) devenaient `bash .ephor/hooks/npm run lint:staged` sous Copilot :
+# une commande cassée, sautée en silence par le relais (audit du 01/10/2026).
+GARDE_D_EPHOR = re.compile(r"\.ephor/hooks/([\w.-]+\.sh)\b")
+
+
+def hooks_declares(reglages: dict[str, object]) -> Iterator[tuple[str, str, int]]:
+    """(événement, commande, délai) de chaque hook que Copilot sait relayer."""
     hooks = reglages.get("hooks", {})
     assert isinstance(hooks, dict)
-    sortie: dict[str, list[tuple[str, int]]] = {}
     for evenement in EVENEMENTS_COPILOT:
         groupes = hooks.get(evenement, [])
         assert isinstance(groupes, list)
         for groupe in groupes:
             for hook in groupe.get("hooks", []):
-                script = str(hook.get("command", "")).strip('"').rsplit("/", 1)[-1]
-                if script:
-                    sortie.setdefault(evenement, []).append((script, int(hook.get("timeout", 10))))
-    return sortie
+                yield evenement, str(hook.get("command", "")), int(hook.get("timeout", 10))
+
+
+def hooks_du_projet(reglages: dict[str, object]) -> list[str]:
+    """Les hooks du projet, qui ne sont pas d'Ephor : Copilot ne les relaie pas, et on le dit."""
+    return [
+        f"{evenement} : {commande}"
+        for evenement, commande, _ in hooks_declares(reglages)
+        if commande.strip() and not GARDE_D_EPHOR.search(commande)
+    ]
 
 
 def hooks_copilot(reglages: dict[str, object]) -> str:
@@ -513,7 +569,12 @@ def relatif(chemin: Path) -> str:
 def fichiers() -> dict[str, str]:
     """Chemin relatif -> contenu attendu."""
     reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    rendus = {".opencode/opencode.json": config_opencode(reglages)}
+    config = ROOT / ".opencode" / "opencode.json"
+    rendus = {
+        ".opencode/opencode.json": config_opencode(
+            reglages, config.read_text(encoding="utf-8") if config.exists() else None
+        )
+    }
     for source in sorted((ROOT / ".claude" / "agents").glob("*.md")):
         meta, corps = entete(source)
         rendus[f".opencode/agents/{source.stem}.md"] = agent_opencode(source, meta, corps)
@@ -547,6 +608,14 @@ def perimes(attendus: dict[str, str]) -> Iterator[str]:
             yield nom
 
 
+def a_vous(nom: str, cible: Path) -> bool:
+    """Un fichier d'opencode écrit par le projet, pas par nous : un sous-agent ou une commande
+    sans la marque du générateur. Remplacé, il était perdu s'il n'était pas suivi par git."""
+    if not (nom.startswith(".opencode/") and nom.endswith(".md")) or not cible.exists():
+        return False
+    return MARQUE not in cible.read_text(encoding="utf-8", errors="ignore")
+
+
 def ecrire() -> int:
     # Geste de l'opérateur : refusé quand un agent le lance, détours compris (operateur.py).
     sys.dont_write_bytecode = True  # rien de compilé dans le moteur, une zone
@@ -565,6 +634,12 @@ def ecrire() -> int:
         cible = ROOT / nom
         if cible.exists() and cible.read_text(encoding="utf-8") == contenu:
             continue
+        if a_vous(nom, cible):
+            # Un sous-agent ou une commande d'opencode du projet, sans notre marque : il n'est
+            # pas remplacé, la version d'Ephor arrive à côté, comme partout ailleurs.
+            cible.with_name(cible.name + ".ephor-new").write_text(contenu, encoding="utf-8")
+            print(f"  à côté   {nom}.ephor-new : {nom} est à vous, à fusionner à la main")
+            continue
         cible.parent.mkdir(parents=True, exist_ok=True)
         cible.write_text(contenu, encoding="utf-8")
         print("  écrit    " + nom)
@@ -573,6 +648,9 @@ def ecrire() -> int:
         (ROOT / nom).unlink()
         print("  supprimé " + nom)
         ecrits += 1
+    reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    for hook in hooks_du_projet(reglages):
+        print(f"  note     hook du projet, pas relayé sous Copilot (Claude Code seul) : {hook}")
     print(f"adaptateurs : {len(attendus)} fichier(s) à jour, {ecrits} modifié(s)")
     return 0
 

@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 import adapters
-from conftest import ROOT, git
+from conftest import ROOT, bootstrap, depot_node, git
 from test_hooks import depot_de_tache, sans_jq
 
 REGLAGES: dict[str, Any] = {
@@ -293,6 +293,44 @@ def test_une_liste_yaml_dans_l_entete_d_un_sous_agent_se_lit(tmp_path: Path) -> 
     assert adapters.liste(meta["tools"]) == ["Read", "Grep"] and meta["model"] == "opus"
     assert corps == "\ncorps\n"
     assert adapters.liste("[Read, Grep]") == ["Read", "Grep"]
+
+
+def test_les_hooks_du_projet_ne_deviennent_pas_des_commandes_cassees_sous_copilot() -> None:
+    """Geste 0 fait comme la doc le dit, « gardez vos règles, ajoutez les siennes » : le hook du
+    projet `npm run lint:staged` devenait `bash .ephor/hooks/npm run lint:staged`, une commande
+    cassée que le relais sautait en silence (audit du 01/10/2026)."""
+    reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    hooks = reglages["hooks"]
+    hooks["PreToolUse"].append(
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": "npm run lint:staged"}]}
+    )
+    hooks["Stop"].append(
+        {"hooks": [{"type": "command", "command": '"$CLAUDE_PROJECT_DIR"/scripts/notifier.sh'}]}
+    )
+    attendus = adapters.gardes_copilot(json.loads((ROOT / ".claude" / "settings.json").read_text()))
+    assert adapters.gardes_copilot(reglages) == attendus, "seules les gardes d'Ephor sont relayées"
+    assert "npm run" not in adapters.hooks_copilot(reglages)
+    assert "notifier.sh" not in adapters.greffon_copilot(reglages)
+    assert adapters.hooks_du_projet(reglages) == [
+        "PreToolUse : npm run lint:staged",
+        'Stop : "$CLAUDE_PROJECT_DIR"/scripts/notifier.sh',
+    ]
+
+
+def test_un_texte_en_bloc_dans_l_entete_se_lit(tmp_path: Path) -> None:
+    """`description: >-` sur plusieurs lignes, du YAML que Claude Code accepte : la ligne était
+    « non supportée », `make adapters` tombait, et l'installation avec (audit du 01/10/2026)."""
+    fichier = tmp_path / "SKILL.md"
+    fichier.write_text(
+        "---\nname: deploy\ndescription: >-\n  Déploie le service\n  en recette.\n"
+        "notes: |\n  un\n  deux\nsuite: une valeur\n  sur deux lignes\n---\ncorps\n",
+        encoding="utf-8",
+    )
+    meta, corps = adapters.entete(fichier)
+    assert meta["description"] == "Déploie le service en recette."
+    assert meta["notes"] == "un\ndeux"
+    assert meta["suite"] == "une valeur sur deux lignes" and meta["name"] == "deploy"
+    assert corps == "\ncorps\n"
 
 
 def test_une_virgule_dans_une_valeur_vs_code_reste(tmp_path: Path) -> None:
@@ -1393,3 +1431,31 @@ def test_les_roles_recoivent_leurs_modeles_sous_opencode(
     (config.parent / "opencode.jsonc").write_text("// mes réglages\n{}\n")
     assert adapters.main(["modeles", "FORT=p/fort"]) == 1, "un JSONC n'est pas réécrit"
     assert '"planner"' in capsys.readouterr().out
+
+
+def test_l_installation_n_ecrase_pas_la_configuration_opencode_du_projet(tmp_path: Path) -> None:
+    """Un projet qui travaille déjà sous opencode : son modèle, son serveur MCP, son sous-agent
+    et sa commande étaient remplacés par ceux d'Ephor, sans .ephor-new ni un mot du bilan, et
+    perdus s'ils n'étaient pas suivis par git (audit du 01/10/2026)."""
+    cible = tmp_path / "projet"
+    depot_node(cible)
+    dossier = cible / ".opencode"
+    (dossier / "agents").mkdir(parents=True)
+    (dossier / "commands").mkdir()
+    mcp = {"docs": {"type": "remote", "url": "https://mcp.exemple.invalid"}}
+    (dossier / "opencode.json").write_text(json.dumps({"model": "maison/fort", "mcp": mcp}))
+    (dossier / "agents" / "reviewer.md").write_text("---\ndescription: le nôtre\n---\nRelis.\n")
+    (dossier / "commands" / "verify.md").write_text("---\ndescription: la nôtre\n---\nnpm test\n")
+
+    sortie = bootstrap(cible)
+
+    config = json.loads((dossier / "opencode.json").read_text(encoding="utf-8"))
+    assert config["model"] == "maison/fort" and config["mcp"] == mcp, "ses clés à lui restent"
+    assert config["permission"]["bash"], "les permissions d'Ephor y sont"
+    for nom in ("agents/reviewer.md", "commands/verify.md"):
+        assert (
+            "le nôtre" in (dossier / nom).read_text() or "la nôtre" in (dossier / nom).read_text()
+        )
+        assert adapters.MARQUE in (dossier / f"{nom}.ephor-new").read_text(encoding="utf-8")
+        assert f".opencode/{nom}" in sortie
+    assert adapters.MARQUE in (dossier / "agents" / "planner.md").read_text(encoding="utf-8")
