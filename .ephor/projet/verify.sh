@@ -50,7 +50,13 @@ step() { # step <nom> <exécutable> <commande...>
 echo "verify @ $(git rev-parse --short HEAD 2>/dev/null || echo 'no-git') $(date -u +%H:%M:%SZ)"
 
 if [ -n "$R" ] && [ ! -d .venv ]; then
-  echo "  environnement absent — lancez 'make setup' (ou 'make doctor' si setup échoue)"
+  # Sans pyproject.toml, `make setup` refuse : le conseil tournait en rond dans un projet Node
+  # ou Go, la boucle que doctor avait déjà corrigée chez lui (audit du 01/10/2026).
+  if [ -f pyproject.toml ]; then
+    echo "  environnement absent — lancez 'make setup' (ou 'make doctor' si setup échoue)"
+  else
+    echo "  projet sans pyproject.toml — adaptez ce fichier (.ephor/projet/verify.sh) à ses commandes"
+  fi
 fi
 
 step fmt    ruff         ruff format --check .

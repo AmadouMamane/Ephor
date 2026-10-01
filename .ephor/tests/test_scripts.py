@@ -143,6 +143,10 @@ def test_verify_strict_turns_missing_tools_into_failure(tmp_path: Path) -> None:
         env=souple,
     )
     assert lax.returncode == 0 and "GREEN PARTIEL" in lax.stdout
+    # Sans pyproject.toml, `make setup` refuse : ne pas y renvoyer (audit du 01/10/2026).
+    assert "make setup" not in lax.stdout
+    if shutil.which("uv"):
+        assert "sans pyproject.toml" in lax.stdout
     strict = subprocess.run(
         ["bash", ".ephor/projet/verify.sh"],
         cwd=tmp_path,
