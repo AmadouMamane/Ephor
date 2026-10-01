@@ -39,7 +39,8 @@ MOTIFS = (
     "tasks/README.md",
     ".claude/settings.json",
     ".claude/agents/*.md",
-    ".claude/skills/*/SKILL.md",
+    # Toute la skill, pas seulement son SKILL.md (#37) : `*` de fnmatch traverse les dossiers.
+    ".claude/skills/*",
     ".opencode/plugins/*.js",
 )
 ENTETE = """\

@@ -323,7 +323,18 @@ chmod +x .ephor/projet/*.sh 2>/dev/null || true
 echo "[3/6] Claude Code : réglages, sous-agents, skills"
 copy .claude/settings.json
 for f in "$SRC"/.claude/agents/*.md; do copy ".claude/agents/$(basename "$f")"; done
-for d in "$SRC"/.claude/skills/*/; do copy ".claude/skills/$(basename "$d")/SKILL.md"; done
+# Toute la skill, pas seulement son SKILL.md : une skill qui gagnait un fichier à côté
+# (référence, script) arrivait incomplète (#37). Ses fichiers suivis, comme pour le moteur.
+skills() {
+  if [ -n "$(git -C "$SRC" ls-files .ephor/judge.py 2>/dev/null)" ]; then
+    git -C "$SRC" ls-files .claude/skills
+  else
+    (cd "$SRC" && find .claude/skills -type f ! -name .DS_Store ! -name '*.ephor-new' -print)
+  fi | LC_ALL=C sort
+}
+while IFS= read -r f; do
+  if [ -n "$f" ] && [ -f "$SRC/$f" ]; then copy "$f"; fi
+done < <(skills)
 
 echo "[4/6] interface de travail : Makefile, contrats, état, consigne"
 copy Makefile
@@ -361,6 +372,20 @@ echo "[6/6] adaptateurs opencode et Copilot, dérivés du .claude/ de CE dépôt
 copy .opencode/plugins/ephor.js
 python3 .ephor/adapters.py write || echo "  (à relancer à la main : python3 .ephor/adapters.py write)"
 chmod +x .ephor/greffon-copilot/hooks/relais.sh 2>/dev/null || true
+
+# Ce qu'Ephor posait hors du moteur et ne pose plus : un sous-agent, une skill, une commande.
+# Resté en place, les agents le chargeaient toujours, et `make adapters` le dérivait encore
+# vers opencode, sans un mot du bilan (#37). La liste « actuelle » de la version en place,
+# lue avant la mise à jour, contre celle de la nouvelle. Rien n'est retiré : on le nomme.
+HORS_SUIVIS=""; HORS_LIBRES=""
+if [ "$MAJ" = "1" ] && [ -n "$ANCIENNES" ]; then
+  NOUVELLES="$(awk '$3 == "actuelle" { print $2 }' "$EMPREINTES" 2>/dev/null || true)"
+  while IFS=' ' read -r _ f; do
+    { [ -n "$f" ] && [ -e "$f" ]; } || continue
+    printf '%s\n' "$NOUVELLES" | grep -qxF -- "$f" && continue
+    if suivi "$f"; then HORS_SUIVIS="$HORS_SUIVIS $f"; else HORS_LIBRES="$HORS_LIBRES $f"; fi
+  done <<< "$ANCIENNES"
+fi
 
 echo
 echo "Détection de la pile (à valider à la main) :"
@@ -644,6 +669,12 @@ if [ "$MAJ" = "1" ]; then
   if [ -n "$OBSOLETES" ]; then
     echo "  Plus dans cette version d'Ephor, et plus rien ne les lit :"
     echo "      git rm$OBSOLETES"
+  fi
+  if [ -n "$HORS_SUIVIS$HORS_LIBRES" ]; then
+    echo "  Plus livré(s) par cette version d'Ephor, hors du moteur, et ENCORE chargé(s) par les"
+    echo "  agents tant qu'ils restent (gardez-les seulement s'ils sont devenus les vôtres) :"
+    [ -n "$HORS_SUIVIS" ] && echo "      git rm$HORS_SUIVIS && make adapters"
+    [ -n "$HORS_LIBRES" ] && echo "      rm$HORS_LIBRES && make adapters      # pas suivis par git"
   fi
   # Le greffon posé sur chaque poste est une COPIE : le relais et la liste des garde-fous
   # qu'il appelle ne suivent pas le dépôt tout seuls.

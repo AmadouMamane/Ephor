@@ -200,6 +200,40 @@ def test_un_projet_ne_de_l_archive_suit_aussi_les_tests_d_ephor(
     assert not (installe / ".ephor" / "scripts" / "demo_judge.sh").exists()
 
 
+def test_ce_qu_ephor_ne_livre_plus_hors_du_moteur_est_nomme(
+    tmp_path: Path, version_suivante: Path
+) -> None:
+    """Un sous-agent qu'Ephor ne livre plus restait dans le projet, chargé par les agents et
+    dérivé vers opencode, sans un mot du bilan ; et une skill n'arrivait que par son SKILL.md,
+    sans les fichiers d'à côté (#37)."""
+    cible = projet_equipe(tmp_path / "noderepo")
+    (version_suivante / ".claude" / "agents" / "scout.md").unlink()
+    annexe = version_suivante / ".claude" / "skills" / "feature" / "exemple.md"
+    annexe.write_text("un fichier à côté de la skill\n", encoding="utf-8")
+    empreintes = version_suivante / ".ephor" / "empreintes.txt"
+    lignes = [
+        ligne
+        for ligne in empreintes.read_text(encoding="utf-8").splitlines()
+        if ".claude/agents/scout.md" not in ligne
+    ]
+    empreinte = hashlib.sha256(annexe.read_bytes()).hexdigest()
+    lignes.append(f"{empreinte} .claude/skills/feature/exemple.md actuelle")
+    empreintes.write_text("\n".join(lignes) + "\n", encoding="utf-8")
+    git(version_suivante, "add", "-A")
+    git(version_suivante, "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+        "commit", "-qm", "sans scout")  # fmt: skip
+
+    sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
+
+    copiee = cible / ".claude" / "skills" / "feature" / "exemple.md"
+    assert copiee.read_bytes() == annexe.read_bytes(), "la skill entière"
+    assert (cible / ".claude" / "agents" / "scout.md").exists(), (
+        "rien n'est retiré sans qu'on le demande"
+    )
+    assert "git rm .claude/agents/scout.md" in sortie
+    assert "make adapters" in sortie.split("git rm .claude/agents/scout.md", 1)[1].splitlines()[0]
+
+
 def test_une_retouche_cachee_a_git_n_est_pas_ecrasee(
     tmp_path: Path, version_suivante: Path
 ) -> None:
@@ -353,6 +387,7 @@ def test_depuis_la_meme_version_rien_ne_bouge(tmp_path: Path) -> None:
     cible = projet_equipe(tmp_path / "noderepo")
     sortie = mettre_a_jour(cible, ROOT, "--mettre-a-jour")
     assert "aucun fichier du moteur remplacé" in sortie
+    assert "Plus livré" not in sortie and "plus rien ne les lit" not in sortie
     assert git(cible, "status", "--porcelain", "--", ".ephor") == ""
 
 
