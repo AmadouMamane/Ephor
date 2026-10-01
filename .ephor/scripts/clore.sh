@@ -25,6 +25,14 @@ done
 [ -n "$PRINCIPALE" ] || { echo "REFUS : branche principale introuvable (main, master)"; exit 2; }
 BRANCHE="task/$ID"
 DIR="$(git worktree list --porcelain | awk -v b="branch refs/heads/$BRANCHE" '/^worktree /{d=substr($0, 10)} $0 == b {print d}')"
+# Lancé DEPUIS le dossier de la tâche, il se retirait lui-même : jugements rapatriés là, branche
+# restée (« Unable to read cwd »), et pourtant « tâche close » (audit du 01/10/2026).
+if [ -n "$DIR" ] && [ "$(cd "$DIR" 2>/dev/null && pwd -P)" = "$(pwd -P)" ]; then
+  PRINCIPAL="$(dirname "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)")"
+  echo "REFUS : make task-clore se lance depuis votre copie, pas depuis le dossier de la tâche :"
+  echo "  cd \"$PRINCIPAL\" && make task-clore ID=$ID${FORCE:+ FORCE=$FORCE}"
+  exit 2
+fi
 # Fusionnée, au sens de make taches : un commit de la branche principale nomme task/<ID> (la
 # fusion d'une merge request le fait), ou la branche, jugée VÉRIFIÉE, y est entrée. Le verdict
 # se lit dans tous les dossiers du dépôt, celui de la tâche compris.

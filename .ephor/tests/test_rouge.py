@@ -1126,6 +1126,24 @@ def test_l_approbation_ouvre_le_dossier_de_la_tache(repo: Path, tmp_path: Path) 
     (dossier / ".verify").mkdir(exist_ok=True)
     (dossier / ".verify" / "journal.jsonl").write_text(json.dumps(verdict) + "\n")
     git(repo, "merge", "-q", "--ff-only", "task/FEAT-020")
+    # Lancé depuis le dossier de la tâche, il se retirait lui-même, et disait « tâche close »
+    # avec la branche encore là (audit du 01/10/2026).
+    if not (dossier / ".ephor" / "scripts").is_dir():
+        shutil.copytree(repo / ".ephor", dossier / ".ephor", dirs_exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k not in operateur.VARIABLES}
+    dedans = subprocess.run(
+        ["bash", ".ephor/scripts/clore.sh", "FEAT-020"],
+        cwd=dossier,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert dedans.returncode == 2 and "depuis votre copie" in dedans.stdout, dedans.stdout
+    assert dossier.is_dir()
+    if git(dossier, "status", "--porcelain").strip():
+        shutil.rmtree(dossier / ".ephor")  # la copie faite plus haut pour l'essai
     fermee = clore()
     assert fermee.returncode == 0, fermee.stdout + fermee.stderr
     assert not dossier.exists() and "task/FEAT-020" not in git(repo, "branch")

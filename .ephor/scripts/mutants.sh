@@ -17,7 +17,10 @@ if [ "${1:-}" = "--tout" ]; then TOUT=1; shift; fi
 # `--verify --quiet` est la forme qui se tait vraiment.
 pick_base() {
   [ -n "${1:-}" ] && { printf '%s' "$1"; return; }
-  for ref in main master; do
+  # La branche que désigne le serveur d'abord (develop…), comme le juge : sur un dépôt en
+  # `develop`, seul le dernier commit était muté (audit du 01/10/2026).
+  designee="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)"
+  for ref in ${designee:+"${designee#origin/}" "$designee"} main master; do
     git rev-parse --verify --quiet "$ref" >/dev/null 2>&1 || continue
     b=$(git merge-base HEAD "$ref" 2>/dev/null) && [ -n "$b" ] && { printf '%s' "$b"; return; }
   done
