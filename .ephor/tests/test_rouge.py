@@ -1396,6 +1396,44 @@ def test_une_approbation_changee_sur_main_depuis_le_depart_de_la_branche_est_ref
     assert code == 2 and "git merge main" in report["reasons"][0], report
 
 
+TEST_ACCEPT = (
+    "import sys\nimport unittest\n\nsys.path.insert(0, '.')\nfrom src.metrics import accuracy\n\n\n"
+    "class Accept(unittest.TestCase):\n    def test_micro(self):\n"
+    "        self.assertAlmostEqual(accuracy([(9, 10), (1, 100)]), 10 / 110)\n"
+)
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        ["{python}", "-m", "unittest", "tests.test_accept"],
+        ["{python}", "-m", "unittest", "-v", "tests.test_accept.Accept.test_micro"],
+        ["{python}", "-m", "pytest", "-q", "--pyargs", "tests.test_accept"],
+    ],
+    ids=["unittest", "unittest-methode", "pytest-pyargs"],
+)
+def test_une_preuve_designee_par_son_nom_de_module_est_protegee(
+    make_repo: Callable[..., Path], run_judge: Runner, check: list[str]
+) -> None:
+    """`python -m unittest tests.test_accept`, avec `tests/` dans le périmètre : le juge ne
+    reconnaissait que des chemins, l'agent vidait le test, et VÉRIFIÉ (audit du 01/10/2026)."""
+    repo = make_repo(criteria=[{"id": "C1", "description": "micro", "check": check}])
+    git(repo, "switch", "-q", "main")
+    (repo / "tests" / "test_accept.py").write_text(TEST_ACCEPT)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "la preuve")
+    trace_rouge(repo)
+    git(repo, "switch", "-q", "task/T-001")
+    git(repo, "merge", "-q", "--no-edit", "main")
+    (repo / "tests" / "test_accept.py").write_text("")
+    git(repo, "commit", "-qam", "preuve vidée")
+    code, report = run_judge(repo)
+    assert code == 2 and report["status"] == "rejected", report
+    assert "tests/test_accept.py" in " ".join(report["reasons"])
+    # Hors d'un lanceur de tests, un nom pointé est le programme essayé, pas la preuve.
+    assert judge.modules_cites(["{python}", "-m", "src.metrics"]) == []
+
+
 def test_une_fusion_annulee_n_est_plus_fusionnee(
     repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
 ) -> None:

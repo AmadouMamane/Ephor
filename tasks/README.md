@@ -158,7 +158,9 @@ qu'en local : en dessous de quelques secondes, le verdict dépendrait du mode d'
 **Où vivent les preuves.** Un critère doit s'appuyer sur un fichier que l'agent ne peut pas
 écrire : sous `tasks/`, ou déjà commité sur la branche principale. Si un critère cite un
 fichier du périmètre de l'agent qui n'existe pas encore sur la base, le juge refuse le
-contrat avant d'exécuter quoi que ce soit — sinon l'agent noterait sa propre copie.
+contrat avant d'exécuter quoi que ce soit — sinon l'agent noterait sa propre copie. Un
+module nommé par un lanceur de tests (`{python} -m unittest tests.test_x`, `pytest --pyargs
+tests.test_x`) est lu comme son fichier, `tests/test_x.py` : il est protégé de même.
 
 Le champ `risk` règle la dépense de revue. L'`evaluator` relit chaque tâche, quel que soit
 son risque : le juge ne voit que les critères. `eleve` : en plus, test de mutation, relecteur

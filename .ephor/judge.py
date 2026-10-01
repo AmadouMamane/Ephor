@@ -1571,6 +1571,41 @@ def is_file_at(repo: Path, commit: str, path: str) -> bool:
     return kind_at(repo, commit, path) == "blob"
 
 
+NOM_DE_MODULE = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
+
+
+def modules_cites(check: Sequence[str]) -> list[str]:
+    """Les modules qu'un lanceur de tests désigne par leur NOM : `python -m unittest
+    tests.test_x`, `pytest --pyargs tests.test_x`. Le juge ne reconnaissait que des chemins :
+    cette preuve-là n'était protégée par personne, l'agent la vidait, et VÉRIFIÉ (audit du
+    01/10/2026). Hors d'un lanceur de tests, un nom pointé (`python -m app.cli`) est le
+    programme essayé, celui que l'agent corrige : pas une preuve."""
+    mots = list(check)
+    debut = None
+    for i, mot in enumerate(mots):
+        unittest = mot == "unittest" and i > 0 and mots[i - 1] == "-m"
+        pyargs = PurePosixPath(mot).name in {"pytest", "py.test"} and "--pyargs" in mots
+        if unittest or pyargs:
+            debut = i + 1
+    if debut is None:
+        return []
+    noms = (mot.split("::", 1)[0] for mot in mots[debut:])
+    return [nom for nom in noms if nom != "discover" and NOM_DE_MODULE.fullmatch(nom)]
+
+
+def chemin_de_module(repo: Path, base: str, nom: str) -> tuple[str, str] | None:
+    """`("fichier", "tests/test_x.py")` ou `("dossier", "tests")` : ce que ce nom pointé désigne,
+    du plus précis au moins précis (`tests.test_x.Classe.test_y` désigne `tests/test_x.py`)."""
+    parties = nom.split(".")
+    for taille in range(len(parties), 0, -1):
+        chemin = "/".join(parties[:taille])
+        if is_file_at(repo, base, chemin + ".py") or (repo / (chemin + ".py")).is_file():
+            return "fichier", chemin + ".py"
+        if kind_at(repo, base, chemin) == "tree" or (repo / chemin).is_dir():
+            return "dossier", chemin
+    return None
+
+
 def cited_dirs(repo: Path, base: str, contract: Contract) -> list[tuple[str, str]]:
     """Dossiers cités par les critères, `(critère, dossier)` ; `.` est le dépôt entier.
 
@@ -1594,6 +1629,10 @@ def cited_dirs(repo: Path, base: str, contract: Contract) -> list[tuple[str, str
                     continue
             if (criterion.id, dossier) not in cites:
                 cites.append((criterion.id, dossier))
+        for nom in modules_cites(criterion.check):
+            trouve = chemin_de_module(repo, base, nom)
+            if trouve and trouve[0] == "dossier" and (criterion.id, trouve[1]) not in cites:
+                cites.append((criterion.id, trouve[1]))
     return cites
 
 
@@ -1637,6 +1676,10 @@ def cited_paths(repo: Path, base: str, contract: Contract) -> list[str]:
                 continue
             if is_file_at(repo, base, candidate) or (repo / candidate).is_file():
                 cited.append(candidate)
+        for nom in modules_cites(criterion.check):
+            trouve = chemin_de_module(repo, base, nom)
+            if trouve and trouve[0] == "fichier" and trouve[1] not in cited:
+                cited.append(trouve[1])
         for chemin in criterion.preuves:
             if chemin not in cited and (
                 is_file_at(repo, base, chemin) or (repo / chemin).is_file()
