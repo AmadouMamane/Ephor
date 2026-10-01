@@ -1013,6 +1013,28 @@ def test_les_outils_mcp_de_fichiers_n_ecrivent_pas_une_zone(tmp_path: Path, sans
 
 
 @pytest.mark.parametrize("sans", [False, True], ids=["jq", "python3"])
+def test_des_arguments_en_chaine_json_sont_lus(tmp_path: Path, sans: bool) -> None:
+    """Copilot CLI peut passer `toolArgs` en chaîne JSON (`"{\\"command\\": …}"`), pas en
+    objet : lue comme un correctif brut, la charge laissait toutes les gardes aveugles (audit
+    du 01/10/2026, soupçon). Une chaîne qui se lit en objet est lue comme lui."""
+    projet = projet_avec_reglages(tmp_path)
+    chemin = sans_jq(tmp_path) if sans else None
+
+    def appel(garde: str, outil: str, args: dict[str, Any]) -> int:
+        charge = {"toolName": outil, "toolArgs": json.dumps(args), "workingDirectory": str(projet)}
+        return hook(garde, charge, project=projet, path=chemin).returncode
+
+    assert appel("shell-guard.sh", "bash", {"command": "rm -f Makefile"}) == 2
+    assert appel("shell-guard.sh", "bash", {"command": "ls src"}) == 0
+    zone = str(projet / ".ephor" / "judge.py")
+    assert appel("write-guard.sh", "create", {"path": zone, "file_text": "x"}) == 2
+    assert (
+        appel("write-guard.sh", "create", {"path": str(projet / "src" / "a.py"), "file_text": "x"})
+        == 0
+    )
+
+
+@pytest.mark.parametrize("sans", [False, True], ids=["jq", "python3"])
 def test_le_panneau_de_copilot_n_ecrit_pas_un_secret(tmp_path: Path, sans: bool) -> None:
     projet = projet_avec_reglages(tmp_path)
     chemin = sans_jq(tmp_path) if sans else None

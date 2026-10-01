@@ -68,7 +68,9 @@ deny() { # deny "raison" -> bloque l'appel d'outil
 # la virgule est plus lâche que le tube, donc `(a), (b) | f` ne veut pas dire `(a, b) | f`.
 # Le test de type n'est pas décoratif : `.tool_input // {}` fait sortir jq en erreur quand
 # `tool_input` est une chaîne, et TOUT le programme rend alors le vide, en silence.
-_ARGS='((if (.tool_input | type) == "object" then .tool_input else {} end), (if (.toolArgs | type) == "object" then .toolArgs else {} end))'
+# Et `toolArgs` en chaîne JSON (Copilot CLI) : lue comme un correctif brut, elle laissait
+# toutes les gardes aveugles (audit du 01/10/2026). Une chaîne qui se lit en objet compte comme lui.
+_ARGS='((if (.tool_input | type) == "object" then .tool_input else {} end), (if (.toolArgs | type) == "object" then .toolArgs elif (.toolArgs | type) == "string" then (.toolArgs | (try fromjson catch null) | objects) else {} end))'
 # Champs qui portent un contenu écrit, tous outils confondus. `file_text` et `new_str` sont
 # ceux du moteur de la fenêtre d'agents de VS Code (`create`, `edit`, `str_replace_editor`) :
 # sans eux, un secret écrit par ces outils passait devant le contrôle sans être lu.
@@ -169,6 +171,13 @@ if op == "evenement":
     sys.exit(0)
 
 args = [a for a in (charge.get("tool_input"), charge.get("toolArgs")) if isinstance(a, dict)]
+if isinstance(charge.get("toolArgs"), str):
+    try:
+        lu = json.loads(charge["toolArgs"])
+    except ValueError:
+        lu = None
+    if isinstance(lu, dict):
+        args.append(lu)
 brut = [charge[c] for c in ("toolArgs", "tool_input") if isinstance(charge.get(c), str)]
 
 
