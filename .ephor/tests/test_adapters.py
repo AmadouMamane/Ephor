@@ -783,6 +783,30 @@ def test_le_relais_retrouve_le_depot_sans_jq(tmp_path: Path) -> None:
     assert passe.returncode == 0
 
 
+def test_le_relais_juge_le_dossier_d_une_tache_avec_les_gardes_de_la_copie_declaree(
+    tmp_path: Path,
+) -> None:
+    """`make task-approve` dit d'ouvrir le dossier de la tâche sous Copilot ; il n'est pas
+    déclaré, et porte des garde-fous : le relais refusait tout, `read_file` compris (audit du
+    01/10/2026). Il est jugé maintenant par les gardes de la copie déclarée, l'opérateur."""
+    principal = tmp_path / "depot"
+    (principal / ".ephor").mkdir(parents=True)
+    shutil.copytree(ROOT / ".ephor" / "hooks", principal / ".ephor" / "hooks")
+    shutil.copy(ROOT / ".ephor" / "zones.txt", principal / ".ephor" / "zones.txt")
+    (principal / "src").mkdir()
+    (principal / "src" / "app.py").write_text("x = 1\n")
+    git(principal, "init", "-q", "-b", "main")
+    git(principal, "add", "-A")
+    git(principal, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-qm", "x")
+    tache = tmp_path / "depot-T-1"
+    git(principal, "worktree", "add", "-q", "-b", "task/T-1", str(tache))
+    relais = relais_pose(tmp_path, [str(principal)])
+    passe = par_le_relais(relais, tache, str(tache / "src" / "app.py"))
+    assert passe.returncode == 0, passe.stderr
+    refus = par_le_relais(relais, tache, str(tache / ".ephor" / "zones.txt"))
+    assert refus.returncode == 2 and "zone de contrôle" in refus.stderr, refus.stderr
+
+
 def test_le_relais_ne_lance_que_les_gardes_du_depot_declare(tmp_path: Path) -> None:
     """Le greffon est actif pour TOUS les dossiers que Copilot ouvre. Une relecture
     adversariale a montré trois façons de lui faire exécuter le code d'un inconnu, ou de

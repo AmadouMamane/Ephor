@@ -128,20 +128,44 @@ OUVERT="$(resoudre "$OUVERT")"
 
 # Le dépôt DÉCLARÉ qui contient le dossier ouvert — c'est lui qui fournit les garde-fous,
 # jamais un dépôt tiers cloné dessous, qui glisserait ses propres scripts dans la boucle.
-DEPOT=""
 DECLARES="$ICI/../depots.txt"
-if [ -f "$DECLARES" ]; then
-  while IFS= read -r LIGNE || [ -n "$LIGNE" ]; do
-    LIGNE="${LIGNE%%#*}"
-    LIGNE="${LIGNE#"${LIGNE%%[![:space:]]*}"}"
-    LIGNE="${LIGNE%"${LIGNE##*[![:space:]]}"}"
-    [ -n "$LIGNE" ] || continue
-    case "$LIGNE" in "~/"*) LIGNE="$HOME/${LIGNE#\~/}" ;; esac
-    LIGNE="$(resoudre "$LIGNE")"
+declare_pour() { # declare_pour <dossier> : le dépôt déclaré qui le contient, ou rien
+  local ligne trouve=""
+  [ -f "$DECLARES" ] || return 0
+  while IFS= read -r ligne || [ -n "$ligne" ]; do
+    ligne="${ligne%%#*}"
+    ligne="${ligne#"${ligne%%[![:space:]]*}"}"
+    ligne="${ligne%"${ligne##*[![:space:]]}"}"
+    [ -n "$ligne" ] || continue
+    case "$ligne" in "~/"*) ligne="$HOME/${ligne#\~/}" ;; esac
+    ligne="$(resoudre "$ligne")"
     # Le dossier déclaré lui-même, ou n'importe lequel dessous : VS Code ouvre parfois un
     # sous-dossier. Les deux chemins sont résolus, donc un « .. » ne rachète rien.
-    case "$OUVERT/" in "$LIGNE"/*) DEPOT="$LIGNE" ;; esac
+    case "$1/" in "$ligne"/*) trouve="$ligne" ;; esac
   done < "$DECLARES"
+  printf '%s' "$trouve"
+}
+DEPOT="$(declare_pour "$OUVERT")"
+# D'où viennent les garde-fous : le dépôt déclaré, et pour le dossier d'une tâche (un
+# worktree, #32), sa copie principale déclarée. `make task-approve` dit de l'ouvrir sous
+# Copilot ; non déclaré, le relais refusait tout, `read_file` compris (audit du 01/10/2026).
+# Ce sont les gardes de l'opérateur qui jugent, pas celles de la branche de l'agent.
+SOURCE=""
+if [ -z "$DEPOT" ] && command -v git >/dev/null 2>&1; then
+  TETE="$(git -C "$OUVERT" rev-parse --show-toplevel 2>/dev/null || true)"
+  COMMUN="$(git -C "$OUVERT" rev-parse --git-common-dir 2>/dev/null || true)"
+  if [ -n "$TETE" ] && [ -n "$COMMUN" ]; then
+    case "$COMMUN" in /*) ;; *) COMMUN="$OUVERT/$COMMUN" ;; esac
+    COMMUN="$(resoudre "$COMMUN")"
+    case "$COMMUN" in
+      */.git)
+        PRINCIPALE="$(declare_pour "${COMMUN%/.git}")"
+        if [ -n "$PRINCIPALE" ] && [ "$PRINCIPALE" = "${COMMUN%/.git}" ]; then
+          DEPOT="$(resoudre "$TETE")"
+          SOURCE="$PRINCIPALE"
+        fi ;;
+    esac
+  fi
 fi
 
 if [ -z "$DEPOT" ]; then
@@ -158,7 +182,7 @@ if [ -z "$DEPOT" ]; then
   exit 0
 fi
 
-if ! GARDES="$(gardes_de "$DEPOT")"; then
+if ! GARDES="$(gardes_de "${SOURCE:-$DEPOT}")"; then
   echo "REFUSÉ : $DEPOT est déclaré auprès du greffon Copilot, mais ses garde-fous ($DEPOT/.ephor/hooks/) sont introuvables. Soit le dépôt a changé, soit la déclaration est périmée : corrigez-la dans $DECLARES, ou relancez « make copilot-install »." >&2
   exit 2
 fi
