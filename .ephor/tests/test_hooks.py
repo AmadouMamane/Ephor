@@ -1627,6 +1627,20 @@ def test_sans_python_le_terminal_refuse_ce_qu_il_ne_peut_pas_lire(tmp_path: Path
     chemin = sans_python(tmp_path)
     assert au_terminal("echo x > .vscode/settings.json", "claude", path=chemin).returncode == 2
     assert au_terminal("ls src", "claude", path=chemin).returncode == 0
+    # Un nom qui contient celui d'une zone n'est pas la zone (audit du 01/10/2026).
+    assert au_terminal("rm -rf tasks/T-1", "claude", path=chemin).returncode == 2
+    assert au_terminal('cat "Makefile"', "claude", path=chemin).returncode == 2
+    for ordinaire in ("pytest tests/test_tasks.py", "cat .gitignore", "rg x src/makefile_util.py"):
+        assert au_terminal(ordinaire, "claude", path=chemin).returncode == 0, ordinaire
+
+
+def test_un_commentaire_du_shell_n_est_pas_une_commande() -> None:
+    """`ls # > Makefile` était refusé : le `#` d'un commentaire n'était pas lu comme tel.
+    Entre guillemets, ou collé à un mot (`$#`, `a#b`), ce n'est pas un commentaire."""
+    for ordinaire in ("ls # > Makefile", "make verify  # puis rm -rf .ephor"):
+        assert au_terminal(ordinaire, "claude").returncode == 0, ordinaire
+    for refusee in ('echo "a # b" > Makefile', "ls # c\nrm -rf .ephor", "echo a#b > Makefile"):
+        assert au_terminal(refusee, "claude").returncode == 2, refusee
 
 
 def projet_sans_refus(tmp_path: Path) -> Path:

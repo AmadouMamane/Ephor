@@ -64,11 +64,17 @@ COURANT="$(_charge courant 2>/dev/null || true)"
 # contrôle passe ; une qui en nomme une est refusée, faute de pouvoir dire si elle y écrit.
 if ! command -v python3 >/dev/null 2>&1; then
   while IFS= read -r MOTIF; do
-    LITTERAL="${MOTIF%%[*?[]*}"; LITTERAL="${LITTERAL#./}"
+    LITTERAL="${MOTIF%%[*?[]*}"; LITTERAL="${LITTERAL#./}"; LITTERAL="${LITTERAL%/}"
     [ -n "$LITTERAL" ] || continue
-    case "$COMMANDE" in
-      *"$LITTERAL"*) deny "REFUSÉ : cette commande nomme « $LITTERAL », zone de contrôle, et ce poste n'a pas python3 pour vérifier si elle y écrit. Elle est refusée. Si c'est une lecture, passe par l'outil de lecture ; sinon, c'est l'opérateur qui le fait." ;;
-    esac
+    # Comme chemin entier, pas comme morceau d'un nom : `tests/test_tasks.py` ou `.gitignore`
+    # étaient refusés pour `tasks` et `.git` (audit du 01/10/2026).
+    ECHAPPE="$(printf '%s' "$LITTERAL" | sed 's#[][\.*^$+?(){}|]#\\&#g')"
+    AVANT="(^|[[:space:]\"'=(;|&<>/])"
+    APRES="([/[:space:]\"';|&)<>]|\$)"
+    case "$LITTERAL" in /* | "~"*) AVANT="" ;; esac
+    if printf '%s' "$COMMANDE" | grep -Eq "${AVANT}${ECHAPPE}${APRES}"; then
+      deny "REFUSÉ : cette commande nomme « $LITTERAL », zone de contrôle, et ce poste n'a pas python3 pour vérifier si elle y écrit. Elle est refusée. Si c'est une lecture, passe par l'outil de lecture ; sinon, c'est l'opérateur qui le fait."
+    fi
   done <<EOF
 $MOTIFS
 EOF
@@ -916,6 +922,37 @@ def branche_du_dossier(dossier):
     return fait.stdout.strip()
 
 
+def sans_commentaires(texte):
+    """Le texte sans ses commentaires de shell. `ls # > Makefile` était refusé : le `#` n'était
+    pas lu (audit du 01/10/2026). Un `#` en tête de mot, hors guillemets, ouvre un commentaire
+    jusqu'à la fin de la ligne, saut de ligne gardé (il sépare la commande suivante) ; `$#`,
+    `${#x}` ou `a#b` n'en sont pas."""
+    sortie, i, n, guillemet = [], 0, len(texte), None
+    while i < n:
+        c = texte[i]
+        if guillemet is not None:
+            sortie.append(c)
+            if c == "\\" and guillemet == '"' and i + 1 < n:
+                sortie.append(texte[i + 1])
+                i += 1
+            elif c == guillemet:
+                guillemet = None
+        elif c in "'\"":
+            guillemet = c
+            sortie.append(c)
+        elif c == "\\" and i + 1 < n:
+            sortie.append(c + texte[i + 1])
+            i += 1
+        elif c == "#" and (i == 0 or texte[i - 1] in " \t\n;&|()"):
+            while i < n and texte[i] != "\n":
+                i += 1
+            continue
+        else:
+            sortie.append(c)
+        i += 1
+    return "".join(sortie)
+
+
 JOKER = re.compile(r"[*?\[]")
 
 
@@ -1031,6 +1068,7 @@ def cibles(texte, profondeur=0, base=None):
     texte = heredocs(texte)
     # Une ligne continuée (`\` en fin de ligne) est une seule commande.
     texte = texte.replace("\\\n", " ")
+    texte = sans_commentaires(texte)
     # Une substitution de commande tourne, même entre guillemets.
     if profondeur < 3:
         for trouvee in SUBSTITUTION.finditer(texte):
