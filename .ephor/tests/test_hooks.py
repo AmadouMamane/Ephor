@@ -1357,6 +1357,10 @@ ECRITURES_EN_ZONE = [
     'echo "$(rm -f Makefile)"',
     "find -L tasks -name '*.json' -delete",
     "rm \\\n  -rf .ephor",
+    # `<>` ouvre en lecture ET en écriture, et crée le fichier ; un chiffre seul, sans
+    # redirection qui le suive, reste un nom de fichier.
+    "exec 3<> Makefile",
+    "cd tasks && touch 2",
 ]
 COMMANDES_ORDINAIRES = [
     "git status --short -- .vscode/settings.json && git diff -- .vscode/settings.json",
@@ -1408,6 +1412,12 @@ COMMANDES_ORDINAIRES = [
     "cd /tmp/ailleurs && git remote add origin https://exemple.invalid/x.git",
     "cd /tmp/ailleurs && python3 - <<'EOF'\nopen('.ephor/x','w').write('x')\nEOF",
     "git -C /tmp/ailleurs commit -qm x",
+    # Un descripteur n'est pas un fichier : `2>&1` lu dans .ephor/ y écrivait « 1 », et le
+    # `2` de `2>/dev/null` devenait un fichier à toucher (vu en session le 01/10/2026).
+    "cd .ephor && ls 2>&1",
+    "cd tasks && touch /tmp/x 2>/dev/null",
+    "cd .ephor && rg x 2>&1 >&- | head",
+    "cd tasks && cat x 0<&3 3<&-",
 ]
 
 

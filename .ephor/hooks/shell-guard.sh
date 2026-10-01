@@ -187,9 +187,13 @@ LITTERAUX = sorted(LITTERAUX, key=len, reverse=True)
 SEPARATEURS = {";", "&&", "||", "|", "&", "|&", "(", ")", "\n", ";;"}
 # Un jeton fait seulement de ces signes sépare deux commandes : `;\n`, `)\n`, `&&`, `((`.
 SIGNES_SEPARATEURS = set(";&|()\n")
-# `>&` suivi d'un NOM de fichier écrit sortie et erreurs dedans (`ls >& x`) ; `>&2` ne
-# vise qu'un descripteur, que la zone ne reconnaît pas.
-REDIRIGE = {">", ">>", ">|", "&>", "&>>", ">&"}
+# `>&` suivi d'un NOM de fichier écrit sortie et erreurs dedans (`ls >& x`). `<>` ouvre en
+# lecture et en écriture, et crée le fichier : `exec 3<> Makefile` passait.
+REDIRIGE = {">", ">>", ">|", "&>", "&>>", ">&", "<>"}
+# Ce qui suit un nombre collé à sa redirection : `2>/dev/null`, `3<> x`, `0<&3`.
+REDIRECTIONS = REDIRIGE | {"<", "<&", "<<<"}
+# Un descripteur dupliqué ou fermé n'est pas un fichier : `2>&1`, `>&-`, `0<&3`.
+DESCRIPTEUR = re.compile(r"[0-9]+|-")
 TOUS_ECRITS = {"rm", "rmdir", "unlink", "truncate", "touch", "chmod", "chown", "shred", "tee"}
 DERNIER_ECRIT = {"cp", "install", "ln", "rsync"}
 INTERPRETES = {"python", "python3", "node", "nodejs", "bun", "deno", "perl", "ruby"}
@@ -951,6 +955,15 @@ def cibles(texte, profondeur=0, base=None):
         reste, entree = [], None
         i = 0
         while i < len(mots):
+            # shlex détache le `2` de `2>&1` : lu dans .ephor/, « 1 » y devenait un fichier
+            # écrit, et le `2` de `touch /tmp/x 2>/dev/null` un fichier touché (vu en session
+            # le 01/10/2026). Un nombre collé à sa redirection désigne un descripteur.
+            if re.fullmatch(r"[0-9]+", mots[i]) and i + 1 < len(mots) and mots[i + 1] in REDIRECTIONS:
+                i += 1
+                continue
+            if mots[i] in {">&", "<&"} and i + 1 < len(mots) and DESCRIPTEUR.fullmatch(mots[i + 1]):
+                i += 2
+                continue
             if mots[i] in REDIRIGE and i + 1 < len(mots):
                 yield ici(mots[i + 1]), "redirection"
                 i += 2
