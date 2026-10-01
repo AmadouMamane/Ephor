@@ -1891,6 +1891,20 @@ PYPROJECT = (
             ["[project.entry-points.pytest11]"],
         ),
         (PYPROJECT.replace("\n", "\r\n"), []),
+        # Le même greffon, en clé pointée ou en table en ligne SOUS [project] (audit du
+        # 01/10/2026) : la table [project] passait pour de la seule fiche du paquet.
+        (
+            PYPROJECT.replace(
+                'version = "0.1.0"', 'version = "0.1.0"\nentry-points.pytest11.x = "a"'
+            ),
+            ["[project.entry-points]"],
+        ),
+        (
+            PYPROJECT.replace(
+                'version = "0.1.0"', 'version = "0.1.0"\nentry-points = {pytest11 = {x = "a"}}'
+            ),
+            ["[project.entry-points]"],
+        ),
     ],
     ids=[
         "dépendance",
@@ -1903,6 +1917,8 @@ PYPROJECT = (
         "nom cité",
         "greffon pytest",
         "fins de ligne",
+        "greffon en clé pointée",
+        "greffon en table en ligne",
     ],
 )
 def test_un_pyproject_compte_pour_ce_qu_il_change(apres: str, sections: list[str]) -> None:

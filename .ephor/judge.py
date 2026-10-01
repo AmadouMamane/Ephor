@@ -867,7 +867,13 @@ def tables_toml(texte: str) -> dict[str, list[str]]:
         if en_tete:
             courante = nom_de_table(en_tete.group("nom"))
         if ligne.strip():
-            tables.setdefault(courante, []).append(ligne)
+            # Sous [project], `entry-points.pytest11.x = …` (ou en table en ligne) est un
+            # greffon que pytest charge tout seul, pas la fiche du paquet : il passait, là où
+            # la table [project.entry-points.pytest11] était refusée (audit du 01/10/2026).
+            ici = courante
+            if courante == "project" and re.match(r"\s*[\"']?entry-points[\"']?\s*[.=]", ligne):
+                ici = "project.entry-points"
+            tables.setdefault(ici, []).append(ligne)
     return tables
 
 
