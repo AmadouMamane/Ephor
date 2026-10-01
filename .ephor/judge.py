@@ -702,23 +702,37 @@ def silencieux_ajoutes(patch: bytes) -> list[str]:
     fichier: str | None = None
     ligne = 0
     precedente = ""
+    # Ce qui reste à lire du bloc en cours, d'après son en-tête `@@ -a,b +c,d @@`. Dans un
+    # bloc, `--- a` puis `+++ b/README.md` sont une ligne retirée et une ligne ajoutée, pas
+    # l'en-tête d'un fichier texte : lus ainsi, ils cachaient le `# noqa` qui suivait (audit
+    # du 01/10/2026).
+    ancien = nouveau = 0
     for brute in patch.decode("utf-8", errors="replace").splitlines():
+        if ancien > 0 or nouveau > 0:
+            if brute.startswith("+"):
+                nouveau -= 1
+                if fichier is not None:
+                    for nom, motif in SILENCIEUX:
+                        if motif.search(brute[1:]):
+                            trouves.append(f"{fichier}:{ligne} {nom}")
+                            break
+                ligne += 1
+            elif brute.startswith("-"):
+                ancien -= 1
+            elif not brute.startswith("\\"):
+                ancien, nouveau, ligne = ancien - 1, nouveau - 1, ligne + 1
+            continue
         if brute.startswith("+++ ") and precedente.startswith("--- "):
             nom = nom_git(brute[4:])
             fichier = nom[2:] if nom.startswith("b/") else None
             if fichier is not None and fichier.endswith(TEXTE_SEUL):
                 fichier = None
         elif brute.startswith("@@"):
-            debut = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)", brute)
-            ligne = int(debut.group(1)) if debut else 0
-        elif fichier is not None and brute.startswith("+"):
-            for nom, motif in SILENCIEUX:
-                if motif.search(brute[1:]):
-                    trouves.append(f"{fichier}:{ligne} {nom}")
-                    break
-            ligne += 1
-        elif fichier is not None and brute.startswith(" "):
-            ligne += 1
+            bloc = re.match(r"@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", brute)
+            if bloc:
+                ancien = int(bloc.group(1) if bloc.group(1) is not None else 1)
+                ligne = int(bloc.group(2))
+                nouveau = int(bloc.group(3) if bloc.group(3) is not None else 1)
         precedente = brute
     return trouves
 

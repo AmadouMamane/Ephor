@@ -2220,3 +2220,14 @@ def test_un_critere_ne_prend_pas_le_nom_d_une_etape_du_juge(tmp_path: Path, nom:
     (dossier / "contract.json").write_text(json.dumps(contract(criteria=doubles)))
     with pytest.raises(judge.JudgeError, match="double"):
         judge.load_contract(dossier / "contract.json", "T-001")
+
+
+def test_une_ligne_qui_ressemble_a_un_en_tete_dans_un_bloc_reste_une_ligne() -> None:
+    """Dans un bloc, une ligne retirée `-- a` puis une ligne ajoutée `++ b/README.md` se
+    lisaient comme l'en-tête d'un fichier texte : le `# noqa` qui suivait n'était pas relevé
+    (audit du 01/10/2026)."""
+    patch = (
+        b"diff --git a/src/a.py b/src/a.py\n--- a/src/a.py\n+++ b/src/a.py\n"
+        b"@@ -1,2 +1,3 @@\n--- a\n+++ b/README.md\n+x = 1  # noqa\n y\n"
+    )
+    assert judge.silencieux_ajoutes(patch) == ["src/a.py:2 noqa"]
