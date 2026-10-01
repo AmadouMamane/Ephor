@@ -86,7 +86,7 @@ le `Makefile` et détourne toutes les cibles, `make judge` compris ; le diagnost
 ```bash
 make setup     # installe l'environnement ; peut prendre une minute la première fois
 make verify    # doit afficher VERDICT: GREEN
-git add uv.lock && git commit -m "chore: fige les versions"
+git status --short uv.lock   # vide : rien à figer ; sinon, commitez-le (git add uv.lock && git commit)
 ```
 
 Si `make verify` sort `GREEN`, l'essentiel fonctionne. Sinon, la ligne rouge nomme le
@@ -152,7 +152,7 @@ plutôt qu'affirmée.
 Ouvrez le dossier, puis :
 
 ```
-/hooks        → les cinq garde-fous doivent apparaître
+/hooks        → les quatre points d'entrée d'Ephor (.ephor/hooks/avant-outil.sh…) doivent apparaître
 /context      → voir ce qu'occupe AGENTS.md et les serveurs MCP
 /verify       → lance la vérification et applique la procédure
 /feature EXEMPLE-001
