@@ -1822,6 +1822,9 @@ def test_l_agent_ne_deplace_pas_la_branche_principale(tmp_path: Path, commande: 
         "git branch -u origin/main",
         "git switch main && git reset",
         "git switch main && git reset -- README.md",
+        # Désindexer n'est pas déplacer (audit du 01/10/2026).
+        "git switch main && git reset HEAD README.md",
+        "git switch main && git reset HEAD",
         "git rebase main",
         "git push origin HEAD:task/T-1",
         "git log main..HEAD",
@@ -2319,7 +2322,9 @@ def test_depuis_le_dossier_d_une_tache_la_copie_principale_est_gardee(tmp_path: 
         "tool_name": "Write",
         "tool_input": {"file_path": str(principal / ".ephor" / "judge.py")},
     }
-    assert hook("write-guard.sh", ecrire, project=tache).returncode == 2
+    refus = hook("write-guard.sh", ecrire, project=tache)
+    assert refus.returncode == 2 and "copie principale" in refus.stderr, refus.stderr
+    assert "POSTE" not in refus.stderr, "ce n'est pas un réglage du poste"
     for commande in (f"echo x > {principal}/Makefile", f"git -C {principal} commit -m x"):
         charge = {"tool_name": "Bash", "tool_input": {"command": commande}}
         assert hook("shell-guard.sh", charge, cwd=tache, project=tache).returncode == 2, commande

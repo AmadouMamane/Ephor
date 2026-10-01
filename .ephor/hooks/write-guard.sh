@@ -32,6 +32,8 @@ CIBLES="$(cibles)"
 
 [ -f "$ZONES_MOTEUR" ] || deny "REFUSÉ : la liste des zones de contrôle ($ZONES_MOTEUR) est introuvable, donc cette garde ne sait pas ce qu'elle protège. Elle refuse. Installation à moitié faite : préviens l'opérateur."
 MOTIFS="$(motifs_zones "$ROOT" "$REGLAGES")"
+# Vue d'un dossier de tâche, la copie de l'opérateur : son refus ne parle pas « du POSTE ».
+PRINCIPALE="$(copie_principale "$ROOT")"
 
 while IFS= read -r CIBLE; do
   [ -n "$CIBLE" ] || continue
@@ -46,6 +48,7 @@ while IFS= read -r CIBLE; do
         case "$CIBLE" in $MOTIF) ;; *) continue ;; esac
         case "$CIBLE" in
           "$ROOT"/*) deny "REFUSÉ : $RELATIF est dans le dossier git du dépôt. Un agent n'a rien à y écrire : c'est là que vivent les hooks de git et sa configuration, que git exécute lui-même. Si c'est vraiment nécessaire, c'est l'opérateur qui le fait." ;;
+          "${PRINCIPALE:-/nulle-part}"/*) deny "REFUSÉ : $CIBLE est une zone de contrôle de la copie principale, celle de l'opérateur ; tu travailles dans le dossier de la tâche ($ROOT). Le juge, qui ne voit que ce dossier, n'en saurait rien. Si le changement est vraiment nécessaire, c'est l'opérateur qui le fait." ;;
           *) deny "REFUSÉ : $CIBLE est un réglage d'agent du POSTE, hors de tout dépôt. C'est là que vivent les garde-fous eux-mêmes : y écrire reviendrait à les désarmer. Si c'est vraiment nécessaire, c'est l'opérateur qui le fait, à la main." ;;
         esac
         ;;

@@ -613,9 +613,15 @@ def principale_deplacee(sous, args):
         modes = {"--soft", "--mixed", "--hard", "--keep", "--merge"}
         if modes & set(avant_chemins):
             return BRANCHE["courante"]
-        for a in avant_chemins:
+        # `reset [<commit>] [--] <chemins>` ne déplace rien : il désindexe. `git reset HEAD
+        # src/a.py` était refusé sur main, « HEAD » lu comme un commit où aller (audit du
+        # 01/10/2026). `reset HEAD` seul ne bouge pas la branche non plus.
+        noms = [a for a in avant_chemins if not a.startswith("-")]
+        if len(noms) >= 2 or ("--" in args and args[args.index("--") + 1 :]) or noms == ["HEAD"]:
+            return None
+        for a in noms:
             # Un nom qui n'est pas un fichier du dossier désigne un commit : `reset x` déplace.
-            if not a.startswith("-") and not os.path.exists(os.path.join(racine, a)):
+            if not os.path.exists(os.path.join(racine, a)):
                 return BRANCHE["courante"]
     elif sous == "rebase" and len(positionnels) >= 2 and principale_visee(positionnels[1]):
         return principale_visee(positionnels[1])
