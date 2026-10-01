@@ -54,6 +54,11 @@ DISTANTE="$(git -C "$ROOT" symbolic-ref --quiet --short refs/remotes/origin/HEAD
 PRINCIPALES="main master ${DISTANTE#*/}"
 # Ce que les réglages refusent à la LECTURE (`Read(...)`) : secrets, clés, identifiants.
 LECTURES="$(refus "$REGLAGES" Read 2>/dev/null || true)"
+# Là où la commande tourne : Claude Code garde le `cd` d'un appel à l'autre, et le donne dans
+# `cwd` ; opencode le reçoit en `workdir`. Lus depuis la racine, `cd .ephor` puis, à l'appel
+# suivant, `sed -i x zones.txt` passait (audit du 01/10/2026).
+COURANT="$(_charge courant 2>/dev/null || true)"
+[ -z "$COURANT" ] || COURANT="$(resoudre "$COURANT" "$ROOT")"
 
 # Sans python3, pas d'analyse de la commande. Une commande qui ne nomme aucune zone de
 # contrôle passe ; une qui en nomme une est refusée, faute de pouvoir dire si elle y écrit.
@@ -77,11 +82,14 @@ import fnmatch
 import os
 import re
 import shlex
+import subprocess
 import sys
 import urllib.parse
 
 racine, maison = sys.argv[1], sys.argv[2]
 commande = os.environ["EPHOR_COMMANDE"]
+# Le dossier où la commande tourne (voir COURANT plus haut) ; la racine à défaut.
+COURANT = os.environ.get("EPHOR_COURANT") or racine
 # La branche où l'on est, suivie à travers les `git switch` de la commande : `git switch main
 # && git commit` commite sur main alors que la garde voit la branche de tâche.
 BRANCHE = {"courante": os.environ.get("EPHOR_BRANCHE", "")}
@@ -177,6 +185,8 @@ for m in motifs:
 LITTERAUX = sorted(LITTERAUX, key=len, reverse=True)
 
 SEPARATEURS = {";", "&&", "||", "|", "&", "|&", "(", ")", "\n", ";;"}
+# Un jeton fait seulement de ces signes sépare deux commandes : `;\n`, `)\n`, `&&`, `((`.
+SIGNES_SEPARATEURS = set(";&|()\n")
 # `>&` suivi d'un NOM de fichier écrit sortie et erreurs dedans (`ls >& x`) ; `>&2` ne
 # vise qu'un descripteur, que la zone ne reconnaît pas.
 REDIRIGE = {">", ">>", ">|", "&>", "&>>", ">&"}
@@ -184,7 +194,29 @@ TOUS_ECRITS = {"rm", "rmdir", "unlink", "truncate", "touch", "chmod", "chown", "
 DERNIER_ECRIT = {"cp", "install", "ln", "rsync"}
 INTERPRETES = {"python", "python3", "node", "nodejs", "bun", "deno", "perl", "ruby"}
 COQUILLES = {"bash", "sh", "zsh", "dash", "ksh"}
-PREFIXES = {"sudo", "env", "command", "exec", "nohup", "time", "xargs"}
+# Ce qui lance la commande qui suit, et les options qui y prennent une valeur. Sans elles,
+# `sudo -n rm -rf .ephor` ou `timeout 30 rm …` faisaient de `-n` ou de `30` le programme.
+PREFIXES = {
+    "sudo": {"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "--user", "--group",
+             "--host", "--prompt", "--chdir", "--role", "--type", "--other-user"},
+    "doas": {"-u", "-C"},
+    "env": {"-u", "--unset", "-C", "--chdir"},
+    "command": set(),
+    "exec": {"-a"},
+    "nohup": set(),
+    "time": {"-f", "-o", "--format", "--output"},
+    "xargs": {"-I", "-n", "-P", "-d", "-E", "-L", "-s", "-a", "--max-args", "--max-procs",
+              "--delimiter", "--eof", "--max-lines", "--max-chars", "--arg-file", "--replace"},
+    "timeout": {"-s", "-k", "--signal", "--kill-after"},
+    "nice": {"-n", "--adjustment"},
+    "ionice": {"-c", "-n", "-p", "-P", "-u", "--class", "--classdata"},
+    "stdbuf": {"-i", "-o", "-e"},
+    "setsid": set(),
+    "caffeinate": {"-t", "-w"},
+    "chronic": set(),
+}
+# Ce qui ouvre ou ferme un bloc du shell : `if x; then rm y; fi` lance `rm`, pas `then`.
+MOTS_CLES = {"if", "then", "else", "elif", "do", "while", "until", "{", "}", "!", "fi", "done", "esac"}
 # Ce qui lance un autre programme sans rien changer à ce qu'il écrit : `uv run ruff`, `npx x`.
 LANCEURS = {"uv": "run", "poetry": "run", "pipx": "run", "pdm": "run", "hatch": "run", "rye": "run", "pnpm": "exec"}
 LANCEURS_SEULS = {"uvx", "npx", "bunx", "pnpx"}
@@ -195,9 +227,15 @@ ECRIT = re.compile(
     r"\.rename\(|\.touch\(|unlinkSync|renameSync|rmSync|copyFile|['\"]\+?>{1,2}"
 )
 # `python3 - <<EOF … EOF` : la forme la plus courante chez un agent pour écrire un script.
+# Le reste de la ligne est GARDÉ (groupe 3) : `cat <<EOF > tasks/x/contract.json`, `| tee
+# Makefile` ou `| git commit -F -` y écrivent, et passaient, retirés avec le document (audit
+# du 01/10/2026). Un délimiteur peut porter un tiret ou un point : `PY-FIN`.
 HEREDOC = re.compile(
-    r"<<-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1[^\n]*\n(.*?)\n[ \t]*\2[ \t]*(?=\n|$)", re.S
+    r"<<-?[ \t]*\\?(['\"]?)([^\s'\"\\;&|<>()]+)\1([^\n]*)\n(.*?)\n[ \t]*\2[ \t]*(?=\n|$)", re.S
 )
+# Une substitution de commande, même entre guillemets, où shlex n'en voit qu'un mot :
+# `echo "$(rm -f Makefile)"`, `` echo `rm -f Makefile` ``. Un niveau d'imbrication suffit.
+SUBSTITUTION = re.compile(r"\$\(((?:[^()]|\([^()]*\))*)\)|`([^`]*)`")
 
 
 def resolu(cible):
@@ -207,11 +245,49 @@ def resolu(cible):
     return os.path.normpath(os.path.join(racine, cible))
 
 
+def dans_le_depot(dossier):
+    """Ce dossier est-il dans le dépôt ? Inconnu (None) : on le suppose, par prudence."""
+    if dossier is None:
+        return True
+    reel = os.path.realpath(dossier)
+    return reel == racine or reel.startswith(racine + os.sep)
+
+
+DEPOTS = {}
+
+
+def depot_commun(dossier):
+    """Le dossier git commun du dépôt où est ce dossier (le même pour tous ses worktrees), ou
+    None hors de tout dépôt. Un appel à git, seulement pour une commande git hors du dépôt."""
+    if dossier not in DEPOTS:
+        try:
+            fait = subprocess.run(
+                ["git", "-c", "core.fsmonitor=false", "-C", dossier, "rev-parse",
+                 "--path-format=absolute", "--git-common-dir"],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            sortie = fait.stdout.strip() if fait.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            sortie = ""
+        DEPOTS[dossier] = os.path.realpath(sortie) if sortie else None
+    return DEPOTS[dossier]
+
+
 def zone(cible):
     """Le motif de zone de contrôle que vise cette cible, ou None."""
     if not cible or cible.startswith("/dev/") or cible.startswith("&"):
         return None
-    absolu = resolu(cible)
+    # Le chemin tel qu'écrit, puis tel que le système le suit : par un lien vers le dépôt
+    # (`/tmp` est un lien sur Mac) ou vers une zone (`src/lien -> ../.ephor`), l'écriture
+    # passait (audit du 01/10/2026). La racine, elle, est déjà sans lien (`pwd -P`).
+    for absolu in dict.fromkeys((resolu(cible), os.path.realpath(resolu(cible)))):
+        motif = _zone_de(absolu)
+        if motif:
+            return motif
+    return _zone_par_le_texte(cible)
+
+
+def _zone_de(absolu):
     if any(fnmatch.fnmatchcase(absolu.lower(), e.lower()) for e in exceptions):
         return None
     relatif = os.path.relpath(absolu, racine) if absolu.startswith(racine + os.sep) else None
@@ -224,6 +300,10 @@ def zone(cible):
         # `a/**` couvre aussi le dossier `a` lui-même : `rm -rf .ephor` le détruit.
         if motif.endswith("/**") and vise.lower() == motif[:-3].lower():
             return motif
+    return None
+
+
+def _zone_par_le_texte(cible):
     # Une variable qu'on ne sait pas résoudre (`"$ROOT"/.ephor/x`) : on lit le texte.
     if "$" in cible:
         for litteral in LITTERAUX:
@@ -268,12 +348,16 @@ def scripts_en_ligne(mots):
     return textes
 
 
-def script_qui_ecrit(script, pourquoi="script en ligne qui écrit"):
-    """Les zones qu'un script d'interprète nomme, s'il écrit."""
-    if ECRIT.search(script):
-        for litteral in LITTERAUX:
-            if litteral in script:
-                yield litteral, pourquoi
+def script_qui_ecrit(script, pourquoi="script en ligne qui écrit", base=None):
+    """Les zones qu'un script d'interprète nomme, s'il écrit. Lancé hors du dépôt (`cd
+    /ailleurs && python3 - <<EOF`), un nom relatif y désigne un fichier d'ailleurs : seul un
+    chemin qui nomme le dépôt, ou une zone du poste, compte alors."""
+    if not ECRIT.search(script):
+        return
+    dehors = not dans_le_depot(base)
+    for litteral in LITTERAUX:
+        if litteral in script and (not dehors or litteral.startswith("/") or racine in script):
+            yield litteral, pourquoi
 
 
 def sans_guillemets(brut):
@@ -346,17 +430,28 @@ CONFIG_LIT = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--l
 CONFIG_VALEUR = {"-f", "--file", "--blob", "--type", "--default", "--comment", "--value"}
 
 
-def git_config(args):
+def config_de(dossier):
+    """Le .git/config qu'écrit un `git config` lancé dans ce dossier, ou None hors de tout
+    dépôt. Dans le dépôt, ou dossier inconnu : celui du dépôt. Ailleurs, celui du dépôt où
+    l'on est (`cd /tmp/x && git config …` n'écrit pas le nôtre ; vu en session le 01/10/2026),
+    qui EST le nôtre depuis le dossier d'une tâche : les worktrees partagent la configuration."""
+    if dans_le_depot(dossier):
+        return os.path.join(racine, ".git", "config")
+    commun = depot_commun(dossier)
+    return os.path.join(commun, "config") if commun else None
+
+
+def git_config(args, defaut):
     """Le fichier qu'un `git config` ÉCRIT, ou rien pour une lecture. Par défaut .git/config,
     où un hook ou un moniteur de fichiers se plante : git les lance ensuite lui-même."""
-    cible, positionnels, ecrit, lit, j = os.path.join(racine, ".git", "config"), [], False, False, 0
+    cible, positionnels, ecrit, lit, j = defaut, [], False, False, 0
     while j < len(args):
         a = args[j]
         nom_option = a.split("=", 1)[0]
         if nom_option in {"--global", "--system"}:
             return None  # hors du dépôt : ni zone, ni affaire de cette garde
-        if nom_option == "--worktree":
-            cible = os.path.join(racine, ".git", "config.worktree")
+        if nom_option == "--worktree" and defaut:
+            cible = defaut + ".worktree"
         ecrit = ecrit or nom_option in CONFIG_ECRIT
         lit = lit or nom_option in CONFIG_LIT
         if nom_option in CONFIG_VALEUR and "=" not in a:
@@ -380,10 +475,17 @@ def git_config(args):
 
 def git_sous_commande(args):
     """(sous-commande, ses arguments), après les options globales : `git -C x commit`."""
-    i = 0
+    return git_options(args)[1:]
+
+
+def git_options(args):
+    """(les dossiers des `-C`, dans l'ordre ; sous-commande ; ses arguments)."""
+    dossiers, i = [], 0
     while i < len(args) and args[i].startswith("-"):
+        if args[i] == "-C" and i + 1 < len(args):
+            dossiers.append(args[i + 1])
         i += 2 if args[i] in {"-C", "-c", "--git-dir", "--work-tree", "--namespace"} else 1
-    return (args[i], args[i + 1 :]) if i < len(args) else ("", [])
+    return (dossiers, args[i], args[i + 1 :]) if i < len(args) else (dossiers, "", [])
 
 
 def branche_apres(sous, args):
@@ -406,6 +508,11 @@ def branche_apres(sous, args):
         return None
     # `git checkout fichier` restaure un fichier : seul un nom de branche principale compte.
     if sous == "checkout" and positionnels[0] not in PRINCIPALES:
+        return None
+    # `git checkout main -- x` ou `git checkout main x` restaure x tel que sur main, sans
+    # changer de branche : la suite (`&& git commit`) commite sur la branche de tâche.
+    chemins = args[args.index("--") + 1 :] if "--" in args else []
+    if sous == "checkout" and (len(positionnels) > 1 or chemins):
         return None
     return positionnels[0]
 
@@ -527,12 +634,37 @@ def script_lance(nom, args):
     return None, []
 
 
+def sans_prefixe(tete, mots):
+    """Ce qui suit un préfixe (`sudo -n`, `timeout 30`, `nice -n 5`, `env -u X A=1`)."""
+    avec_valeur = PREFIXES[tete]
+    j = 1
+    while j < len(mots):
+        mot = mots[j]
+        if mot == "--":
+            j += 1
+            break
+        if mot in avec_valeur:
+            j += 2
+        elif mot.startswith("-") and len(mot) > 1:
+            j += 1  # `-n5`, `--signal=KILL`, `-10` : l'option et sa valeur d'un seul mot
+        elif tete == "env" and re.match(r"^\w+=", mot):
+            j += 1
+        else:
+            break
+    if tete == "timeout" and j < len(mots):
+        j += 1  # la durée
+    return mots[j:]
+
+
 def programme(mots):
-    """(nom du programme, ses arguments), après affectations, préfixes et lanceurs."""
+    """(nom du programme, ses arguments), après affectations, mots-clés, préfixes et
+    lanceurs."""
     while mots:
         tete = os.path.basename(mots[0])
-        if re.match(r"^\w+=", mots[0]) or tete in PREFIXES:
+        if re.match(r"^\w+=", mots[0]) or mots[0] in MOTS_CLES:
             mots = mots[1:]
+        elif tete in PREFIXES:
+            mots = sans_prefixe(tete, mots)
         elif tete in LANCEURS and len(mots) > 1 and mots[1] == LANCEURS[tete]:
             mots = [m for m in mots[2:]]
             while mots and mots[0].startswith("-"):  # `uv run --with x ruff` : on saute les options
@@ -673,22 +805,75 @@ def agent_retire(mots):
     return None
 
 
+# Ce qui tient la place d'un document en ligne dans la commande : un mot de sa commande, lu
+# avec elle, au bon moment (après un `cd`), par son programme ou celui du tube qui suit.
+MARQUE = "EPHORDOCUMENT"
+EST_MARQUE = re.compile(MARQUE + r"(\d+)")
+# Les corps, pour toute l'analyse : une marque peut finir dans une substitution analysée à
+# part (`git commit -m "$(cat <<'EOF' … EOF)"`, la forme de commit de Claude Code).
+DOCUMENTS = []
+
+
 def heredocs(texte):
-    """Retire les documents en ligne du texte, et dit ce que chacun écrit selon qui le reçoit."""
-    trouves = []
+    """Remplace chaque document en ligne par une marque, en gardant le reste de sa ligne
+    (`cat <<EOF > tasks/x/contract.json`) ; les corps vont dans DOCUMENTS."""
 
     def retire(m):
-        ligne = texte[texte.rfind("\n", 0, m.start()) + 1 : m.start()]
-        segment = re.split(r"&&|\|\||[;|&(]", ligne)[-1]
-        try:
-            mots = shlex.split(segment)
-        except ValueError:
-            mots = segment.split()
-        trouves.append((mots, m.group(3)))
-        return ""
+        DOCUMENTS.append(m.group(4))
+        return f" {MARQUE}{len(DOCUMENTS) - 1} {m.group(3)}"
 
-    reste = HEREDOC.sub(retire, texte)
-    return reste, trouves
+    return HEREDOC.sub(retire, texte)
+
+
+def document(nom, args, corps, base, ici, profondeur):
+    """Ce qu'écrit un texte donné à un programme sur son entrée (`<<EOF`, `<<<`, un tube)."""
+    if nom.rstrip("0123456789.") in INTERPRETES:
+        yield from script_qui_ecrit(corps, "script en document en ligne qui écrit", base)
+    elif nom in COQUILLES and profondeur < 3:
+        yield from cibles(corps, profondeur + 1, base)
+    elif (nom == "git" and git_sous_commande(args)[0] in ("apply", "am")) or nom == "patch":
+        for nom_c in noms_du_correctif(corps):
+            yield ici(nom_c), "correctif appliqué"
+
+
+VARIABLE = re.compile(r"\$(?:\{(\w+)\}|(\w+))")
+
+
+def developpe(mot, variables):
+    """Un mot, ses variables connues remplacées : `for f in tasks/*.json; do rm "$f"`,
+    `X=.ephor; rm -rf $X`. Une variable inconnue reste telle quelle."""
+    noms = [n for n in dict.fromkeys(a or b for a, b in VARIABLE.findall(mot)) if n in variables]
+    resultats = [mot]
+    for n in noms:
+        motif = re.compile(r"\$(?:\{%s\}|%s(?!\w))" % (re.escape(n), re.escape(n)))
+        resultats = [motif.sub(lambda _t, v=v: v, r) for r in resultats for v in variables[n]]
+    return resultats[:64]
+
+
+def sed_en_place(option):
+    """`-i`, `-i.bak`, `--in-place`, et groupées : `-ri`, `-Ei` (pas `-e i`, un script)."""
+    if option == "--in-place" or option.startswith("--in-place="):
+        return True
+    if option.startswith("--") or not option.startswith("-"):
+        return False
+    for lettre in option[1:]:
+        if lettre == "i":
+            return True
+        if lettre in "efl":
+            return False
+    return False
+
+
+def branche_du_dossier(dossier):
+    """La branche d'un autre dossier du même dépôt (la copie principale, vue d'une tâche)."""
+    try:
+        fait = subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "-C", dossier, "branch", "--show-current"],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return fait.stdout.strip()
 
 
 def cibles(texte, profondeur=0, base=None):
@@ -705,18 +890,21 @@ def cibles(texte, profondeur=0, base=None):
             return cible
         return os.path.join(base, cible)
 
-    texte, documents = heredocs(texte)
-    for mots_doc, corps in documents:
-        nom_doc, args_doc = programme(mots_doc)
-        if nom_doc.rstrip("0123456789.") in INTERPRETES:
-            yield from script_qui_ecrit(corps, "script en document en ligne qui écrit")
-        elif nom_doc in COQUILLES and profondeur < 3:
-            yield from cibles(corps, profondeur + 1, base)
-        elif (nom_doc == "git" and args_doc[:1] in (["apply"], ["am"])) or nom_doc == "patch":
-            for nom in noms_du_correctif(corps):
-                yield ici(nom), "correctif appliqué"
+    texte = heredocs(texte)
+    # Une ligne continuée (`\` en fin de ligne) est une seule commande.
+    texte = texte.replace("\\\n", " ")
+    # Une substitution de commande tourne, même entre guillemets.
+    if profondeur < 3:
+        for trouvee in SUBSTITUTION.finditer(texte):
+            interne = trouvee.group(1) if trouvee.group(1) is not None else trouvee.group(2)
+            if interne and interne.strip():
+                yield from cibles(interne, profondeur + 1, base)
     try:
-        lexeur = shlex.shlex(texte, posix=True, punctuation_chars=";&|()<>")
+        # Le saut de ligne SÉPARE deux commandes, comme `;` : lu comme un blanc, `echo x` puis
+        # `rm -rf .ephor` sur la ligne suivante faisaient une seule commande, `echo`, et la
+        # seconde passait (audit du 01/10/2026). Entre guillemets, il reste dans le mot.
+        lexeur = shlex.shlex(texte, posix=True, punctuation_chars=";&|()<>\n")
+        lexeur.whitespace = " \t\r"
         lexeur.whitespace_split = True
         lexeur.commenters = ""
         mots = list(lexeur)
@@ -726,18 +914,37 @@ def cibles(texte, profondeur=0, base=None):
             if litteral in texte:
                 yield litteral, "commande illisible qui nomme une zone de contrôle"
         return
+    # Chaque commande, et le séparateur qui la suit : un tube passe son entrée à la suivante.
     commandes, courante = [], []
     for mot in mots:
-        if mot in SEPARATEURS:
+        if mot in SEPARATEURS or (mot and set(mot) <= SIGNES_SEPARATEURS):
             if courante:
-                commandes.append(courante)
+                commandes.append((courante, mot))
             courante = []
             continue
         courante.append(mot)
     if courante:
-        commandes.append(courante)
-    for mots in commandes:
-        # Les redirections, où qu'elles soient ; l'entrée lue (`< x.diff`) est gardée à part.
+        commandes.append((courante, ""))
+    variables, recus = {}, []
+    for mots, apres in commandes:
+        # Les documents en ligne de cette commande, et ceux qu'un tube lui passe.
+        textes = recus + [
+            DOCUMENTS[int(m.group(1))]
+            for m in map(EST_MARQUE.fullmatch, mots)
+            if m and int(m.group(1)) < len(DOCUMENTS)
+        ]
+        mots = [m for m in mots if not EST_MARQUE.fullmatch(m)]
+        # `for f in …` et `X=…` : de quoi lire `"$f"` et `$X` dans les commandes suivantes.
+        if len(mots) >= 3 and mots[0] == "for" and mots[2] == "in":
+            variables[mots[1]] = [v for m in mots[3:] for v in developpe(m, variables)] or [""]
+            recus = []
+            continue
+        if variables:
+            mots = [v for m in mots for v in developpe(m, variables)]
+        if mots and all(re.match(r"^\w+=", m) for m in mots):
+            variables.update((m.split("=", 1)[0], [m.split("=", 1)[1]]) for m in mots)
+        # Les redirections, où qu'elles soient ; l'entrée lue (`< x.diff`) est gardée à part,
+        # comme le texte donné en ligne (`python3 <<< "…"`).
         reste, entree = [], None
         i = 0
         while i < len(mots):
@@ -749,8 +956,13 @@ def cibles(texte, profondeur=0, base=None):
                 entree = mots[i + 1]
                 i += 2
                 continue
+            if mots[i] == "<<<" and i + 1 < len(mots):
+                textes.append(mots[i + 1])
+                i += 2
+                continue
             reste.append(mots[i])
             i += 1
+        recus = textes if apres in {"|", "|&"} else []
         # `env` seul (ou suivi de seules affectations) affiche tout l'environnement ; plus bas,
         # le lanceur `env x` est enlevé avant de regarder `x`, et ce cas-là passerait.
         tete = os.path.basename(reste[0]) if reste else ""
@@ -765,9 +977,12 @@ def cibles(texte, profondeur=0, base=None):
         options = [a for a in args if a.startswith("-")]
         yield from gestes_et_lectures(nom, args, ici)
         positionnels = [a for a in args if not a.startswith("-")]
+        for texte_recu in textes:
+            yield from document(nom, args, texte_recu, base, ici, profondeur)
         if nom in {"cd", "pushd"}:
-            cible = positionnels[0] if positionnels else maison
-            if "$" in cible or cible == "-":
+            # `cd -` revient au dossier précédent, inconnu ici : pas au dossier personnel.
+            cible = next((a for a in args if a == "-" or not a.startswith("-")), maison)
+            if "$" in cible or "`" in cible or cible == "-":
                 base = None
             else:
                 cible = maison + cible[1:] if cible.startswith("~") else cible
@@ -814,15 +1029,19 @@ def cibles(texte, profondeur=0, base=None):
             for a in args:
                 if a.startswith("of="):
                     yield ici(a[3:]), "dd"
-        elif nom in {"sed", "gsed"} and any(o.startswith("-i") or o == "--in-place" or o.startswith("--in-place=") for o in options):
+        elif nom in {"sed", "gsed"} and any(sed_en_place(o) for o in options):
             for a in positionnels:
                 yield ici(a), "sed -i"
         elif nom == "perl" and any(o.startswith("-") and "i" in o[1:] and not o.startswith("--") for o in options):
             for a in positionnels:
                 yield ici(a), "perl -i"
         elif nom == "find":
+            # Les options qui précèdent les racines : `find -L tasks -delete`.
+            k = 0
+            while k < len(args) and (args[k] in {"-H", "-L", "-P", "-D"} or args[k].startswith("-O")):
+                k += 2 if args[k] == "-D" else 1
             racines = []
-            for a in args:
+            for a in args[k:]:
                 if a.startswith(("-", "(", "!")):
                     break
                 racines.append(a)
@@ -831,31 +1050,58 @@ def cibles(texte, profondeur=0, base=None):
                 for a in racines or ["."]:
                     yield ici(a), "find qui écrit"
         elif nom == "git" and args:
-            sous_g, reste_g = git_sous_commande(args)
-            deplacee = principale_deplacee(sous_g, reste_g)
-            if deplacee:
-                yield PRINCIPALE + deplacee, "git " + sous_g
-            nouvelle = branche_apres(sous_g, reste_g)
-            if nouvelle is not None:
-                BRANCHE["courante"] = nouvelle
-            elif sous_g in HISTOIRE and BRANCHE["courante"] in PRINCIPALES:
-                yield PRINCIPALE + BRANCHE["courante"], "git " + sous_g
-            sous = args[0]
-            if sous in {"checkout", "restore", "rm", "mv"}:
-                for a in args[1:]:
+            # Les options globales d'abord : `git -C <dépôt> checkout -- Makefile` ou `git
+            # --no-pager restore …` perdaient leur sous-commande (audit du 01/10/2026). `-C`
+            # change aussi le dossier où se lisent les chemins.
+            dossiers_g, sous_g, reste_g = git_options(args)
+            base_g = base
+            for dossier_g in dossiers_g:
+                if base_g is None or "$" in dossier_g:
+                    base_g = None
+                    break
+                dossier_g = maison + dossier_g[1:] if dossier_g.startswith("~") else dossier_g
+                base_g = os.path.normpath(os.path.join(base_g, dossier_g))
+
+            def ici_g(cible, base_g=base_g):
+                if base_g is None or cible.startswith(("/", "~", "$", "&")):
+                    return cible
+                return os.path.join(base_g, cible)
+
+            # L'histoire de NOTRE dépôt seulement, copie principale comprise vue du dossier
+            # d'une tâche ; un autre dépôt sur `main` n'est pas une approbation.
+            chez_nous = dans_le_depot(base_g)
+            voisin = not chez_nous and depot_commun(base_g) is not None and depot_commun(base_g) == depot_commun(racine)
+            if chez_nous or voisin:
+                ici_branche = BRANCHE["courante"]
+                if voisin:
+                    BRANCHE["courante"] = branche_du_dossier(base_g)
+                deplacee = principale_deplacee(sous_g, reste_g)
+                if deplacee:
+                    yield PRINCIPALE + deplacee, "git " + sous_g
+                nouvelle = branche_apres(sous_g, reste_g)
+                if nouvelle is not None:
+                    BRANCHE["courante"] = nouvelle
+                elif sous_g in HISTOIRE and BRANCHE["courante"] in PRINCIPALES:
+                    yield PRINCIPALE + BRANCHE["courante"], "git " + sous_g
+                if voisin:
+                    BRANCHE["courante"] = ici_branche
+            if sous_g in {"checkout", "restore", "rm", "mv"}:
+                for a in reste_g:
                     if not a.startswith("-"):
-                        yield ici(a), "git " + sous
-            elif sous == "config":
-                fichier = git_config(args[1:])
+                        yield ici_g(a), "git " + sous_g
+            elif sous_g == "config":
+                fichier = git_config(reste_g, config_de(base_g))
                 if fichier:
-                    yield ici(fichier), "git config"
-            elif sous == "remote" and args[1:2] and args[1] in {"add", "set-url", "rename", "remove", "rm", "set-head", "set-branches"}:
-                yield os.path.join(racine, ".git", "config"), "git remote " + args[1]
-            elif sous in {"apply", "am"} and not {"--check", "--stat", "--numstat", "--summary"} & set(args):
-                for fichier in [a for a in args[1:] if not a.startswith("-")] + ([entree] if entree else []):
-                    texte_correctif = correctif_lu(fichier, base)
+                    yield ici_g(fichier), "git config"
+            elif sous_g == "remote" and reste_g[:1] and reste_g[0] in {"add", "set-url", "rename", "remove", "rm", "set-head", "set-branches"}:
+                fichier = config_de(base_g)
+                if fichier:
+                    yield fichier, "git remote " + reste_g[0]
+            elif sous_g in {"apply", "am"} and not {"--check", "--stat", "--numstat", "--summary"} & set(reste_g):
+                for fichier in [a for a in reste_g if not a.startswith("-")] + ([entree] if entree else []):
+                    texte_correctif = correctif_lu(fichier, base_g)
                     for nom_c in noms_du_correctif(texte_correctif or ""):
-                        yield ici(nom_c), "git " + sous
+                        yield ici_g(nom_c), "git " + sous_g
         elif nom == "patch":
             fichiers = [entree] if entree else []
             for j, a in enumerate(args):
@@ -876,11 +1122,11 @@ def cibles(texte, profondeur=0, base=None):
                 yield from cibles(texte_interne, profondeur + 1, base)
         elif nom.rstrip("0123456789.") in INTERPRETES:
             for script in scripts_en_ligne(args):
-                yield from script_qui_ecrit(script)
+                yield from script_qui_ecrit(script, base=base)
 
 
 try:
-    for cible, pourquoi in cibles(commande):
+    for cible, pourquoi in cibles(commande, base=COURANT):
         speciale = next(
             (m for m in (PRINCIPALE, OPERATEUR, SECRET, AGENT) if cible.startswith(m)), None
         )
@@ -898,7 +1144,7 @@ except Exception:  # un défaut de cette analyse ne doit pas tout laisser passer
             break
 PY
 VERDICT="$(EPHOR_COMMANDE="$COMMANDE" EPHOR_MOTIFS="$MOTIFS" EPHOR_EXCEPTIONS="$EXCEPTIONS" \
-  EPHOR_MOTEUR="$(dirname "$ZONES_MOTEUR")" \
+  EPHOR_MOTEUR="$(dirname "$ZONES_MOTEUR")" EPHOR_COURANT="$COURANT" \
   EPHOR_BRANCHE="$BRANCHE" EPHOR_PRINCIPALES="$PRINCIPALES" EPHOR_LECTURES="$LECTURES" \
   python3 -c "$ANALYSE" "$ROOT" "$HOME")"
 if [ -n "$VERDICT" ]; then

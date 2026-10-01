@@ -1328,6 +1328,35 @@ ECRITURES_EN_ZONE = [
     "git config set core.pager 'sh x'",
     "git config --file .ephor/x.cfg a.b c",
     "git remote add ailleurs https://exemple.invalid/x.git",
+    # Les formes simples qui passaient encore en 1.5.0 (audit du 01/10/2026) : le saut de
+    # ligne, le reste de la ligne d'un document en ligne, les blocs du shell, les options
+    # globales de git, les options groupées, les préfixes à options, les substitutions.
+    "echo hi\nrm -rf .ephor",
+    "cd .ephor\necho x > zones.txt",
+    "cat <<'EOF' > tasks/T1/contract.json\n{}\nEOF",
+    "cat <<EOF | tee Makefile\nall:\nEOF",
+    "cat <<'EOF' | python3\nopen('Makefile','w').write('x')\nEOF",
+    "cat <<\\EOF > Makefile\nall:\nEOF",
+    "python3 - <<'PY-FIN'\nopen('Makefile','w').write('x')\nPY-FIN",
+    "python3 <<< \"open('Makefile','w').write('x')\"",
+    "if [ -f Makefile ]; then rm Makefile; fi",
+    "for f in tasks/*/contract.json; do sed -i 's/a/b/' \"$f\"; done",
+    "{ rm -rf .ephor; }",
+    "true && ! rm -f AGENTS.md",
+    "X=.ephor; rm -rf $X",
+    f"git -C {ROOT} checkout -- Makefile",
+    f"git -C {ROOT} config core.hooksPath /tmp/x",
+    "git --no-pager restore --source=HEAD~1 -- .ephor/judge.py",
+    "sed -ri 's/a/b/' Makefile",
+    "sed -Ei 's/a/b/' AGENTS.md",
+    "sudo -n rm -rf .ephor",
+    "env -u FOO rm -rf .ephor",
+    "timeout 30 rm -rf .ephor",
+    "nice -n 5 rm -rf tasks",
+    "echo `rm -f Makefile`",
+    'echo "$(rm -f Makefile)"',
+    "find -L tasks -name '*.json' -delete",
+    "rm \\\n  -rf .ephor",
 ]
 COMMANDES_ORDINAIRES = [
     "git status --short -- .vscode/settings.json && git diff -- .vscode/settings.json",
@@ -1361,6 +1390,24 @@ COMMANDES_ORDINAIRES = [
     "git config get core.editor",
     "git config --global user.name Moi",
     "git remote -v",
+    # Ce que la lecture des sauts de ligne, des blocs et des dossiers ne doit pas refuser.
+    "cat Makefile\nrg -n x tasks/",
+    "if [ -f Makefile ]; then cat Makefile; fi",
+    'for f in tasks/*/contract.json; do jq .id "$f"; done',
+    "# on ne touche pas au Makefile\nmake verify",
+    "cat <<'EOF' > notes.md\nne pas faire rm -rf .ephor ni sed -i Makefile\nEOF",
+    "python3 -c \"\nimport json\nprint(json.load(open('tasks/EXEMPLE-001/contract.json')))\n\"",
+    "git --no-pager log --oneline -- tasks/",
+    f"git -C {ROOT} status",
+    "sed -e 's/a/b/' Makefile > /tmp/sortie",
+    "find -L tasks -name '*.json'",
+    "timeout 600 make verify",
+    # Un autre dépôt, ailleurs : ni ses réglages ni son histoire ne sont les nôtres (vu en
+    # session réelle le 01/10/2026, en préparant un dépôt jetable).
+    "cd /tmp/ailleurs && git config user.email a@exemple.invalid",
+    "cd /tmp/ailleurs && git remote add origin https://exemple.invalid/x.git",
+    "cd /tmp/ailleurs && python3 - <<'EOF'\nopen('.ephor/x','w').write('x')\nEOF",
+    "git -C /tmp/ailleurs commit -qm x",
 ]
 
 
@@ -2037,3 +2084,157 @@ def test_retirer_la_variable_d_agent_est_refuse(tmp_path: Path, commande: str) -
 def test_les_autres_variables_se_retirent_librement(tmp_path: Path, commande: str) -> None:
     appel = {"tool_name": "Bash", "tool_input": {"command": commande}}
     assert hook("shell-guard.sh", appel, project=tmp_path).returncode == 0, commande
+
+
+# ------------------------------------------------- audit des garde-fous du 01/10/2026
+
+
+def test_le_dossier_courant_de_la_session_compte(tmp_path: Path) -> None:
+    """Claude Code garde le `cd` d'un appel à l'autre et le donne dans `cwd` ; opencode le
+    reçoit en `workdir`. Lus depuis la racine, `cd .ephor` puis `sed -i x zones.txt` à l'appel
+    suivant passait, comme `rm -f contract.json` lancé dans le dossier d'une tâche."""
+    projet = projet_git(tmp_path)
+    (projet / ".ephor").mkdir()
+    for charge in (
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "sed -i 's/a/b/' zones.txt"},
+            "cwd": str(projet / ".ephor"),
+        },
+        {
+            "tool_name": "bash",
+            "tool_input": {"command": "rm -f zones.txt", "workdir": str(projet / ".ephor")},
+        },
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm -f contract.json"},
+            "cwd": str(projet / "tasks" / "T-1"),
+        },
+    ):
+        assert hook("shell-guard.sh", charge, cwd=projet, project=projet).returncode == 2, charge
+    ailleurs = {
+        "tool_name": "Bash",
+        "tool_input": {"command": "rm -f Makefile"},
+        "cwd": str(projet / "src"),
+    }
+    assert hook("shell-guard.sh", ailleurs, cwd=projet, project=projet).returncode == 0
+
+
+def test_l_histoire_de_main_par_saut_de_ligne_ou_document_en_ligne(tmp_path: Path) -> None:
+    """Le commit sur la branche principale (l'approbation) n'est couvert par aucun bac à
+    sable : la garde du terminal est seule. Un saut de ligne ou un document en ligne le
+    cachaient. Et restaurer un fichier tel que sur main n'est pas changer de branche."""
+    projet = projet_git(tmp_path)
+    for commande in (
+        "git switch main\ngit commit --allow-empty -m approuve",
+        "git switch main && cat <<'EOF' | git commit -F -\nmessage\nEOF",
+        "git switch main\ncat > /tmp/x <<EOF\ny\nEOF\ngit commit -am x",
+    ):
+        assert au_terminal_de(projet, commande) == 2, commande
+    for commande in (
+        "git checkout main -- README.md && git commit -m x",
+        "git checkout main README.md && git commit -m x",
+        "git commit -m \"$(cat <<'EOF'\nAjoute x\n\nCo-Authored-By: C <c@x.invalid>\nEOF\n)\"",
+    ):
+        assert au_terminal_de(projet, commande) == 0, commande
+
+
+def test_depuis_le_dossier_d_une_tache_la_copie_principale_est_gardee(tmp_path: Path) -> None:
+    """Une tâche vit dans son dossier (#32), à côté de la copie principale, celle de
+    l'opérateur. Ses zones s'y écrivaient, et son histoire (main) s'y commitait par `git -C`,
+    sans que le juge, qui ne voit que le dossier de la tâche, en sache rien."""
+    principal = projet_git(tmp_path)
+    git(principal, "switch", "-q", "main")
+    tache = tmp_path / "projet-T-1"
+    git(principal, "worktree", "add", "-q", str(tache), "task/T-1")
+    shutil.copytree(principal / ".claude", tache / ".claude", dirs_exist_ok=True)
+    ecrire = {
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(principal / ".ephor" / "judge.py")},
+    }
+    assert hook("write-guard.sh", ecrire, project=tache).returncode == 2
+    for commande in (f"echo x > {principal}/Makefile", f"git -C {principal} commit -m x"):
+        charge = {"tool_name": "Bash", "tool_input": {"command": commande}}
+        assert hook("shell-guard.sh", charge, cwd=tache, project=tache).returncode == 2, commande
+    ordinaire = {"tool_name": "Write", "tool_input": {"file_path": str(tache / "src" / "a.py")}}
+    assert hook("write-guard.sh", ordinaire, project=tache).returncode == 0
+    commit = {"tool_name": "Bash", "tool_input": {"command": "git commit -m x"}}
+    assert hook("shell-guard.sh", commit, cwd=tache, project=tache).returncode == 0
+
+
+def test_un_lien_vers_une_zone_ne_la_cache_pas(tmp_path: Path) -> None:
+    """`cd` ne suit que les dossiers : écrire `src/lien`, lien vers `../Makefile`, écrivait le
+    Makefile ; par le terminal, un lien de dossier (`src/dlien -> ../.ephor`) ou un dépôt
+    ouvert par un lien (`/tmp` en est un sur Mac) passaient aussi."""
+    projet = projet_git(tmp_path)
+    (projet / "src").mkdir()
+    (projet / "Makefile").write_text("all:\n")
+    (projet / ".ephor").mkdir()
+    (projet / "src" / "lien").symlink_to("../Makefile")
+    (projet / "src" / "dlien").symlink_to("../.ephor")
+    ecrire = {"tool_name": "Write", "tool_input": {"file_path": str(projet / "src" / "lien")}}
+    assert hook("write-guard.sh", ecrire, project=projet).returncode == 2
+    assert au_terminal_de(projet, "echo x > src/dlien/zones.txt") == 2
+    par_lien = tmp_path / "par-lien"
+    par_lien.symlink_to(projet)
+    charge = {
+        "tool_name": "Bash",
+        "tool_input": {"command": f"echo x > {par_lien}/.ephor/zones.txt"},
+    }
+    assert hook("shell-guard.sh", charge, cwd=projet, project=projet).returncode == 2
+    maison = {"tool_name": "Write", "tool_input": {"file_path": "~/.claude/settings.json"}}
+    assert hook("write-guard.sh", maison, project=projet).returncode == 2
+
+
+def test_sous_arret_seul_l_editeur_du_dossier_ecrit_le_progres(tmp_path: Path) -> None:
+    """L'exception d'AGENT_STOP portait sur le chemin visé, pas sur l'outil : un appel MCP
+    (GitHub) ou un terminal qui portait `"path": "PROGRESS.md"` passaient."""
+    projet = tmp_path / "projet"
+    projet.mkdir()
+    (projet / "AGENT_STOP").write_text("essai\n")
+    progres = {
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(projet / "PROGRESS.md"), "content": "x"},
+    }
+    assert hook("kill-switch.sh", progres, project=projet).returncode == 0
+    for charge in (
+        {
+            "tool_name": "mcp__github__create_or_update_file",
+            "tool_input": {"path": "PROGRESS.md", "content": "x"},
+        },
+        {"tool_name": "mcp__github__delete_file", "tool_input": {"path": "PROGRESS.md"}},
+        {"tool_name": "Bash", "tool_input": {"command": "rm -rf src", "file_path": "PROGRESS.md"}},
+        {"tool_name": "Task", "tool_input": {"prompt": "x", "path": "PROGRESS.md"}},
+    ):
+        assert hook("kill-switch.sh", charge, project=projet).returncode == 2, charge
+
+
+@pytest.mark.parametrize("sans", [False, True], ids=["jq", "python3"])
+def test_un_nom_d_outil_vide_ne_fait_pas_sauter_la_garde(tmp_path: Path, sans: bool) -> None:
+    """`.tool_name // .toolName` de jq gardait une chaîne vide : sous jq, la garde du terminal
+    ne tournait plus pour `{"tool_name": "", "toolName": "Bash"}`, sous python3 si."""
+    projet = projet_git(tmp_path)
+    charge = {"tool_name": "", "toolName": "Bash", "tool_input": {"command": "rm -f Makefile"}}
+    chemin = sans_jq(tmp_path) if sans else None
+    resultat = hook("avant-outil.sh", charge, cwd=projet, project=projet, path=chemin)
+    assert resultat.returncode == 2, resultat.stderr
+
+
+def test_une_recherche_de_copilot_ne_vise_pas_un_secret(tmp_path: Path) -> None:
+    """Sous Copilot, la garde de lecture est la seule : `grep_search` et son `includePattern`,
+    `grep` et son `glob`, trouvaient le contenu d'un `.env` (audit du 01/10/2026)."""
+    projet = projet_avec_reglages(tmp_path)
+    for outil, args in (
+        ("grep_search", {"query": "TOKEN", "includePattern": "**/.env"}),
+        ("grep", {"pattern": "TOKEN", "path": ".", "glob": ".env"}),
+        ("grep_search", {"query": "x", "includePattern": "config/*.pem"}),
+    ):
+        refus = hook("read-guard.sh", charge_copilot(outil, args, projet), project=projet)
+        assert refus.returncode == 2 and "refusé à la lecture" in refus.stderr, (outil, args)
+    for args in (
+        {"query": "x", "includePattern": "**/*.py"},
+        {"query": "x", "includePattern": "*"},
+        {"query": "x"},
+    ):
+        passe = hook("read-guard.sh", charge_copilot("grep_search", args, projet), project=projet)
+        assert passe.returncode == 0, args

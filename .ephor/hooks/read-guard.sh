@@ -24,11 +24,35 @@ OUTIL="$(outil)"
 case "$OUTIL" in
   ""|Read|read|readFile|NotebookRead|view|glob|rg|grep|str_replace_editor|*/readFile|*readFile*) ;;
   read_file|list_dir) ;;  # noms du panneau de Copilot : sans eux, `.env` s'y lisait librement
+  grep_search|file_search) ;;  # ses recherches : le contenu trouvé entre dans le prompt
   *) exit 0 ;;
 esac
 
 MOTIFS="$(refus "$REGLAGES" Read)"
 [ -z "$MOTIFS" ] && exit 0
+
+# Une recherche qui VISE un fichier refusé par son motif de fichiers : `grep_search` avec
+# `includePattern: "**/.env"`, `grep` avec `glob: ".env"` — le contenu trouvé entre dans le
+# prompt, et seul le chemin de départ était lu (audit du 01/10/2026). Un motif qui ne nomme
+# rien (`*`, `**/*`) ne vise rien : il passe, comme un `rg` sans motif de fichiers.
+while IFS= read -r GLOB; do
+  [ -n "$GLOB" ] || continue
+  FIN_GLOB="${GLOB##*/}"
+  case "$FIN_GLOB" in *[!*?]*) ;; *) continue ;; esac
+  while IFS= read -r MOTIF; do
+    [ -n "$MOTIF" ] || continue
+    FIN_MOTIF="${MOTIF##*/}"
+    # Un dossier entier (`~/.ssh/**`) : c'est le chemin de la recherche qui le vise, lu plus bas.
+    case "$FIN_MOTIF" in *[!*?]*) ;; *) continue ;; esac
+    # shellcheck disable=SC2254  # des motifs, c'est voulu, dans les deux sens
+    case "$FIN_MOTIF" in $FIN_GLOB) ;; *) case "$FIN_GLOB" in $FIN_MOTIF) ;; *) continue ;; esac ;; esac
+    deny "REFUSÉ : cette recherche vise « $GLOB », qui couvre « $MOTIF », refusé à la lecture par les réglages du dépôt. Ce qu'elle trouverait entrerait dans le prompt. Cherche ailleurs, ou demande à l'opérateur."
+  done <<MOTIFS_RECHERCHE
+$MOTIFS
+MOTIFS_RECHERCHE
+done <<GLOBS_LISTE
+$(recherche)
+GLOBS_LISTE
 
 # Une lecture peut viser plusieurs fichiers d'un coup (`rg` prend une liste) : on les
 # examine tous, sinon il suffit d'en grouper deux pour passer.

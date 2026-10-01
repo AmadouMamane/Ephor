@@ -153,6 +153,11 @@ if op == "outil":
 if op == "depot":
     print(texte("workingDirectory", "cwd"))
     sys.exit(0)
+if op == "courant":
+    entree = charge.get("tool_input")
+    dossier = entree.get("workdir") if isinstance(entree, dict) else None
+    print(dossier if isinstance(dossier, str) and dossier else texte("cwd"))
+    sys.exit(0)
 if op == "journal":
     print(texte("transcript_path", "transcriptPath"))
     sys.exit(0)
@@ -192,6 +197,8 @@ elif op == "correctif":
     print("\n".join(cueillir(CORRECTIF, ()) + brut))
 elif op == "commande":
     print(next((a["command"] for a in args if isinstance(a.get("command"), str)), ""))
+elif op == "recherche":
+    print("\n".join(cueillir(("includePattern", "glob", "include"), ())))
 elif op == "cibles":
     vus = cueillir(VISE, ("file_path", "filePath"), ("filePath", "file_path"))
     for a in args:
@@ -207,18 +214,29 @@ else:
     sys.exit(1)
 '
 
+# Le premier texte non vide parmi des champs, comme `texte` en python3 : `.a // .b` de jq
+# garde une chaîne VIDE, et `{"tool_name": "", "toolName": "Bash"}` ne lançait plus la garde
+# du terminal sous jq quand python3 la lançait (audit du 01/10/2026).
+_premier() { printf '[%s] | map(select(type == "string" and . != "")) | .[0] // empty' "$1"; }
+
 _prog() { # le programme jq d'une opération nommée
   case "$1" in
-    outil)     printf '%s' '.tool_name // .toolName // empty' ;;
-    depot)     printf '%s' '.workingDirectory // .cwd // empty' ;;
-    journal)   printf '%s' '.transcript_path // .transcriptPath // empty' ;;
-    session)   printf '%s' '.session_id // .sessionId // empty' ;;
-    evenement) printf '%s' '.hook_event_name // .hookEventName // empty' ;;
+    outil)     _premier '.tool_name, .toolName' ;;
+    depot)     _premier '.workingDirectory, .cwd' ;;
+    courant)   _premier '(.tool_input | objects | .workdir), .cwd' ;;
+    journal)   _premier '.transcript_path, .transcriptPath' ;;
+    session)   _premier '.session_id, .sessionId' ;;
+    evenement) _premier '.hook_event_name, .hookEventName' ;;
     corps)     printf '%s' "[$_ARGS | ($_ECRIT, .input)] + [$_BRUT] | $_CHAINES | join(\"\n\")" ;;
     correctif) printf '%s' "[$_ARGS | ($_CORRECTIF)] + [$_BRUT] | $_CHAINES | join(\"\n\")" ;;
     cibles)    printf '%s' "[$_ARGS | ($_VISE)] | $_CHAINES | .[]" ;;
     commande)  printf '%s' "[$_ARGS | .command] | $_CHAINES | .[0] // empty" ;;
+    recherche) printf '%s' "[$_ARGS | (.includePattern, .glob, .include)] | $_CHAINES | .[]" ;;
   esac
+}
+
+recherche() { # les motifs de fichiers d'une recherche (`grep_search`, `grep`), un par ligne
+  _charge recherche
 }
 
 _charge() { # _charge <opération> — la seule porte vers la charge reçue
@@ -300,14 +318,30 @@ motifs_zones() { # motifs_zones <racine> [réglages] : un motif de `case` par li
 $(zones_moteur)
 ZONES_LISTE
   # Le dossier git réel, s'il n'est pas `.git/` à la racine (arbre de travail secondaire).
+  local principal=""
   while IFS= read -r dossier; do
     [ -n "$dossier" ] || continue
     case "$dossier" in /*) ;; *) dossier="$1/$dossier" ;; esac
     dossier="$(resoudre "$dossier")"
     printf '%s\n%s\n' "$dossier" "$dossier/*"
+    case "$dossier" in */.git) principal="${dossier%/.git}" ;; esac
   done <<GIT_LISTE
 $(git -C "$1" rev-parse --absolute-git-dir --git-common-dir 2>/dev/null | sort -u)
 GIT_LISTE
+  # Dans le dossier d'une tâche (#32), la copie principale, celle de l'opérateur, est à côté :
+  # ses zones aussi. Un `Write <copie principale>/.ephor/judge.py` passait (audit du
+  # 01/10/2026), et le juge, qui ne voit que le dossier de la tâche, n'en savait rien.
+  if [ -n "$principal" ] && [ "$principal" != "$(resoudre "$1")" ]; then
+    while IFS= read -r entree; do
+      case "$entree" in
+        /*) ;;
+        */) printf '%s\n%s\n' "$principal/${entree%/}" "$principal/${entree}*" ;;
+        *) printf '%s\n' "$principal/$entree" ;;
+      esac
+    done <<ZONES_PRINCIPALES
+$(zones_moteur)
+ZONES_PRINCIPALES
+  fi
   if [ -n "${2:-}" ] && [ -f "$2" ]; then
     refus "$2" Edit | while IFS= read -r entree; do
       case "$entree" in ./*) entree="${entree#./}" ;; "~/"*) entree="$HOME/${entree#\~/}" ;; esac
@@ -369,8 +403,16 @@ _plier() { # plie « . », « .. » et les doubles barres d'un chemin absolu
 }
 
 resoudre() { # resoudre <chemin> [racine] -> chemin absolu comparable
-  local chemin="$1" reste="" tete reel
+  local chemin="$1" reste="" tete reel lien sauts=0
+  case "$chemin" in "~/"*) chemin="$HOME/${chemin#\~/}" ;; esac
   case "$chemin" in /*) ;; *) chemin="${2:-$PWD}/$chemin" ;; esac
+  # Un lien vers un FICHIER : écrire le lien, c'est écrire sa cible. `cd` ne suit que les
+  # dossiers, et `src/lien -> ../Makefile` passait la garde d'écriture (audit du 01/10/2026).
+  while [ -L "$chemin" ] && [ "$sauts" -lt 20 ]; do
+    lien="$(readlink -- "$chemin" 2>/dev/null)" || break
+    case "$lien" in /*) chemin="$lien" ;; *) chemin="${chemin%/*}/$lien" ;; esac
+    sauts=$((sauts + 1))
+  done
   while [ "${chemin%/}" != "$chemin" ] && [ "$chemin" != "/" ]; do chemin="${chemin%/}"; done
   tete="$chemin"
   while [ -n "$tete" ]; do
