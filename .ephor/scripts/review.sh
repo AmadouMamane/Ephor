@@ -12,6 +12,8 @@ if [ -z "$TASK" ]; then
   exit 2
 fi
 
+# La copie de l'opérateur, d'où la revue est lancée : son juge et son Makefile sont les siens.
+PRINCIPAL="$(pwd -P)"
 # Une tâche vit dans son dossier (#32) : la revue s'y fait. Lancée du dossier principal, elle
 # vérifiait la branche principale, et le juge n'y voyait « rien à juger » (01/10/2026).
 AILLEURS="$(git worktree list --porcelain 2>/dev/null \
@@ -22,7 +24,9 @@ if [ -n "$AILLEURS" ] && [ -d "$AILLEURS" ] && [ "$(cd "$AILLEURS" && pwd -P)" !
 fi
 
 # Rangée ou non dans un lot (tasks/<lot>/<ID>/, #35) : le juge sait où est la tâche.
-DOSSIER="$(python3 .ephor/judge.py dossier --task-id "$TASK" 2>/dev/null)" || DOSSIER="tasks/${TASK}"
+# Le juge de la copie de l'opérateur, jamais celui du dossier de la tâche (voir plus bas).
+JUGE="$PRINCIPAL/.ephor/judge.py"
+DOSSIER="$(python3 -B "$JUGE" dossier --repo . --task-id "$TASK" 2>/dev/null)" || DOSSIER="tasks/${TASK}"
 CONTRACT="$DOSSIER/contract.json"
 if [ ! -f "$CONTRACT" ]; then
   echo "Erreur : contrat $CONTRACT introuvable." >&2
@@ -44,12 +48,33 @@ if [ -z "${BASE:-}" ]; then
   done
 fi
 BASE="${BASE:-main}"
-DOSSIER_BASE="$(python3 .ephor/judge.py dossier --task-id "$TASK" --ref "$BASE" 2>/dev/null)" || DOSSIER_BASE="$DOSSIER"
+DOSSIER_BASE="$(python3 -B "$JUGE" dossier --repo . --task-id "$TASK" --ref "$BASE" 2>/dev/null)" || DOSSIER_BASE="$DOSSIER"
 APPROUVE="$(mktemp)"
 trap 'rm -f "$APPROUVE"' EXIT
 if ! git show "${BASE}:${DOSSIER_BASE}/contract.json" > "$APPROUVE" 2>/dev/null; then
   echo "Erreur : $CONTRACT n'existe pas sur $BASE — c'est l'approbation qui manque." >&2
   exit 1
+fi
+
+# La revue LANCE du code du dépôt : verify.sh, le Makefile, le juge. Sur la branche de la tâche,
+# l'agent a pu les retoucher, et la revue les lançait avec les droits de l'opérateur : « 2
+# étape(s) sur 2 vertes » avec un juge réécrit, là où `make judge` refusait (audit du
+# 01/10/2026). Une zone de contrôle qui diffère du point de départ de la branche, commitée ou
+# non : rien n'est lancé. Lu par le juge de la copie de l'opérateur, pas par celui de la tâche.
+if [ "$(git branch --show-current 2>/dev/null)" = "task/$TASK" ]; then
+  DEPART="$(git merge-base HEAD "$BASE" 2>/dev/null || true)"
+  RETOUCHEES="$( { [ -z "$DEPART" ] || git diff --name-only "$DEPART" --; git ls-files --others --exclude-standard; } 2>/dev/null \
+    | python3 -B -c 'import sys
+sys.path.insert(0, sys.argv[1])
+import judge
+for ligne in sys.stdin:
+    if ligne.strip() and judge.is_protected(ligne.strip()):
+        print(ligne.strip())' "$PRINCIPAL/.ephor" | LC_ALL=C sort -u | tr '\n' ' ')"
+  if [ -n "$RETOUCHEES" ]; then
+    echo "REFUS : la branche de la tâche retouche des zones de contrôle ($RETOUCHEES) ; la revue ne" >&2
+    echo "lance pas ce code avec vos droits, et le juge refusera le correctif. git diff $BASE -- <fichier>." >&2
+    exit 1
+  fi
 fi
 
 # Le chemin passe en ARGUMENT, jamais dans le texte du programme : il contient
@@ -72,11 +97,23 @@ VERTES=0
 TOTAL=0
 ECHECS=""
 etape() { # etape <nom> <commande...> : lancée quoi qu'il soit arrivé avant, et comptée
-  local nom="$1"
+  local nom="$1" sortie
   shift
   TOTAL=$((TOTAL + 1))
   echo "-> $nom"
-  if "$@"; then VERTES=$((VERTES + 1)); else ECHECS="${ECHECS:+$ECHECS, }$nom"; fi
+  sortie="$(mktemp)"
+  if "$@" 2>&1 | tee "$sortie"; [ "${PIPESTATUS[0]}" -eq 0 ]; then
+    # « GREEN PARTIEL… ce n'est pas une validation », dit verify.sh lui-même : la revue la
+    # comptait verte (audit du 01/10/2026).
+    if grep -q 'GREEN PARTIEL' "$sortie"; then
+      ECHECS="${ECHECS:+$ECHECS, }$nom (partielle)"
+    else
+      VERTES=$((VERTES + 1))
+    fi
+  else
+    ECHECS="${ECHECS:+$ECHECS, }$nom"
+  fi
+  rm -f "$sortie"
 }
 
 CONSEIL=""
@@ -84,13 +121,13 @@ case "$RISK" in
   faible)
     echo "-> Risque faible : vérification locale puis jugement."
     etape "vérification" bash .ephor/projet/verify.sh
-    etape "juge" make judge TASK="$TASK"
+    etape "juge" make --no-print-directory -C "$PRINCIPAL" judge TASK="$TASK"
     ;;
   modere)
     echo "-> Risque modéré : vérification complète + échantillon de régression."
     etape "vérification" bash .ephor/projet/verify.sh
     etape "échantillon de régression (test-fast)" make test-fast
-    etape "juge" make judge TASK="$TASK"
+    etape "juge" make --no-print-directory -C "$PRINCIPAL" judge TASK="$TASK"
     CONSEIL="CONSEIL : sur un risque modéré, faites relire le patch par le sous-agent evaluator."
     ;;
   eleve)
@@ -98,13 +135,13 @@ case "$RISK" in
     etape "vérification stricte" env VERIFY_STRICT=1 bash .ephor/projet/verify.sh
     etape "secrets et fuites de données (make sec)" make sec
     etape "score de mutation (make mutants)" make mutants
-    etape "juge" make judge TASK="$TASK"
+    etape "juge" make --no-print-directory -C "$PRINCIPAL" judge TASK="$TASK"
     CONSEIL="CONSEIL : sur un risque élevé, la revue humaine est obligatoire avant la fusion."
     ;;
   *)
     echo "Niveau de risque inconnu : $RISK. Exécution standard."
     etape "vérification" bash .ephor/projet/verify.sh
-    etape "juge" make judge TASK="$TASK"
+    etape "juge" make --no-print-directory -C "$PRINCIPAL" judge TASK="$TASK"
     ;;
 esac
 

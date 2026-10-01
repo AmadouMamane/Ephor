@@ -779,6 +779,17 @@ def test_la_revue_va_au_bout_et_dit_son_bilan(tmp_path: Path) -> None:
     assert sortie.returncode != 0
     assert "-> juge" in sortie.stdout, "le juge tourne même après un verify rouge"
     assert "revue : 0 étape(s) sur 2 vertes — en échec : vérification, juge" in sortie.stdout
+    # Une vérification partielle n'est pas une validation, verify.sh le dit lui-même.
+    (cible / ".ephor" / "projet" / "verify.sh").write_text("echo 'VERDICT: GREEN PARTIEL'\n")
+    sortie = subprocess.run(
+        ["bash", ".ephor/scripts/review.sh", "T-001"],
+        cwd=cible,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert "en échec : vérification (partielle), juge" in sortie.stdout
 
 
 def test_la_revue_lancee_du_dossier_principal_se_fait_dans_le_dossier_de_la_tache(
@@ -812,6 +823,37 @@ def test_la_revue_lancee_du_dossier_principal_se_fait_dans_le_dossier_de_la_tach
     ).stdout
     assert f"la revue s'y fait ({dossier})" in sortie
     assert "vérifié sur task/T-001" in sortie and "vérifié sur main" not in sortie
+
+
+def test_la_revue_n_execute_pas_les_zones_retouchees_par_l_agent(tmp_path: Path) -> None:
+    """`make review`, geste de l'opérateur, lançait dans le dossier de la tâche le verify.sh,
+    le Makefile et le juge que l'agent avait pu retoucher : « 2 étape(s) sur 2 vertes » avec un
+    juge réécrit, là où `make judge` refusait (audit du 01/10/2026)."""
+    cible = tmp_path / "depot"
+    cible.mkdir()
+    git(cible, "init", "-q", "-b", "main")
+    git(cible, "config", "user.email", "test@example.invalid")
+    git(cible, "config", "user.name", "Ephor test")
+    bootstrap(cible)
+    (cible / "tasks" / "T-001").mkdir(parents=True)
+    (cible / "tasks" / "T-001" / "contract.json").write_text('{"risk": "faible"}\n')
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "base")
+    dossier = tmp_path / "depot-T-001"
+    git(cible, "worktree", "add", "-q", "-b", "task/T-001", str(dossier))
+    temoin = tmp_path / "execute"
+    (dossier / ".ephor" / "projet" / "verify.sh").write_text(f"touch '{temoin}'\nexit 0\n")
+    sortie = subprocess.run(
+        ["bash", ".ephor/scripts/review.sh", "T-001"],
+        cwd=cible,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert sortie.returncode != 0
+    assert ".ephor/projet/verify.sh" in sortie.stdout + sortie.stderr
+    assert not temoin.exists(), "le code de l'agent ne tourne pas avec les droits de l'opérateur"
 
 
 def _projet_a_muter(racine: Path, fonctions: int) -> Path:

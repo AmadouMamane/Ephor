@@ -30,7 +30,7 @@
         "modere",
         "eleve"
       ],
-      "description": "Décide de la revue : faible = contrôles automatiques seuls ; modéré et élevé = évaluateur, et mutation pour élevé. Élevé : chaque critère doit prouver qu'il est allé au bout, et tout silencieux ajouté (noqa, type: ignore, skip...) est refusé."
+      "description": "Décide de la dépense de revue. L'évaluateur relit chaque tâche, quel que soit son risque ; élevé : en plus, mutation, relecteur et revue humaine attentive. Élevé : chaque critère doit prouver qu'il est allé au bout, et tout silencieux ajouté (noqa, type: ignore, skip...) est refusé."
     },
     "niveau": {
       "enum": [
