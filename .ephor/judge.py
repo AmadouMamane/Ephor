@@ -4076,6 +4076,13 @@ def cmd_etat(args: argparse.Namespace) -> int:
     return 0
 
 
+def cite_la_tache(texte: str, tache: str) -> bool:
+    """Un contrat cite-t-il le dossier de cette tâche : un de ses fichiers, ou le dossier
+    entier, `tasks/PAY-001` sans barre finale (qui passait : audit du 01/10/2026) ?"""
+    motif = rf"tasks/(?:[a-z0-9][a-z0-9_-]*/)?{re.escape(tache)}(?![A-Za-z0-9_.-])"
+    return re.search(motif, texte) is not None
+
+
 def cmd_ranger(args: argparse.Namespace) -> int:
     """`make task-ranger LOT=<lot> ID=<ID> | PREFIXE=<P>` : range des tâches dans un dossier par
     fonctionnalité, `tasks/<lot>/<ID>/`, dans un commit sur la branche principale. Dans
@@ -4138,11 +4145,7 @@ def cmd_ranger(args: argparse.Namespace) -> int:
             continue
         with suppress(OSError):
             texte = (repo / dossier / "contract.json").read_text(encoding="utf-8", errors="replace")
-            liees += [
-                (autre, tache)
-                for tache in sorted(deplacees)
-                if re.search(rf"tasks/(?:[a-z0-9][a-z0-9_-]*/)?{re.escape(tache)}/", texte)
-            ]
+            liees += [(autre, tache) for tache in sorted(deplacees) if cite_la_tache(texte, tache)]
     if liees:
         for autre, tache in liees:
             print(

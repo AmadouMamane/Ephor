@@ -1356,6 +1356,15 @@ def test_le_rangement_refuse_de_casser_le_contrat_d_une_autre_tache(
     assert git(repo, "rev-parse", "HEAD") == avant and (repo / "tasks" / "T-001").is_dir()
 
 
+def test_un_contrat_qui_cite_le_dossier_entier_d_une_tache_la_cite() -> None:
+    """`["pytest", "tasks/PAY-001"]` : sans barre finale, la citation n'était pas vue, le
+    rangement annonçait « restent valables », et l'autre tâche devenait « rouge à refaire »."""
+    assert judge.cite_la_tache('["pytest", "tasks/PAY-001"]', "PAY-001")
+    assert judge.cite_la_tache('"tasks/paiement/PAY-001/test_x.py"', "PAY-001")
+    assert not judge.cite_la_tache('"tasks/PAY-0012"', "PAY-001")
+    assert not judge.cite_la_tache('"tasks/PAY-001-BIS/x"', "PAY-001")
+
+
 def test_un_lot_ne_s_appelle_pas_tasks_et_un_identifiant_n_a_pas_de_saut_de_ligne(
     repo: Path,
 ) -> None:
