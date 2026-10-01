@@ -1411,6 +1411,10 @@ ECRITURES_EN_ZONE = [
     # Le `cd` d'un sous-shell s'arrête à sa parenthèse (audit du 01/10/2026).
     "(cd src && make) && rm -f Makefile",
     "(cd src; ls) ; (cd /tmp) ; sed -i s/a/b/ AGENTS.md",
+    "python3 - <<'EOF'\nimport os\nopen(os.path.join('tasks', 'T-1', 'contract.json'), 'w')\nEOF",
+    "perl -e 'open(F, \">Makefile\"); print F 1'",
+    "python3 -c \"from pathlib import Path; Path(f'{R}/.ephor/x.py').write_text(1)\"",
+    'rm -rf "$ROOT/tasks"',
 ]
 COMMANDES_ORDINAIRES = [
     "git status --short -- .vscode/settings.json && git diff -- .vscode/settings.json",
@@ -1470,6 +1474,17 @@ COMMANDES_ORDINAIRES = [
     "cd tasks && cat x 0<&3 3<&-",
     "(cd tasks && ls) && echo fini > notes.txt",
     "(cd .ephor && rg -l x) | wc -l > /tmp/compte",
+    # Un mot qui ressemble à une zone n'est pas un chemin (audit du 01/10/2026).
+    "python3 - <<'EOF'\ntasks = ['a']\nopen('/tmp/out.txt', 'w').write(str(tasks))\nEOF",
+    "python3 -c \"import asyncio; open('/tmp/x', 'w').write(str(asyncio.all_tasks))\"",
+    "python3 - <<'EOF'\nfrom pathlib import Path\nignore = Path('.gitignore').read_text()\n"
+    "Path('src/generated.py').write_text(ignore)\nEOF",
+    "python3 - <<'EOF'\nfrom pathlib import Path\n"
+    "Path('src/a.py').write_text('# voir le Makefile\\n')\nEOF",
+    "node -e \"const tasks = [1]; require('fs').writeFileSync('/tmp/o.json', String(tasks))\"",
+    'uv run pytest -q > "$TMPDIR/tasks.log" 2>&1',
+    'cp src/a.py "$TMPDIR/tasks_backup.py"',
+    'rm -rf "$TMPDIR/tasks-cache"',
 ]
 
 

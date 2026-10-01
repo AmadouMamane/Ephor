@@ -176,11 +176,18 @@ exceptions = [
 # Ce qu'une zone donne à voir dans un texte : ce qui précède son premier joker, sans la barre
 # finale. Un chemin du poste se lit aussi sous sa forme « ~/ » ou « $HOME/ ».
 LITTERAUX = set()
+# Un littéral tiré d'un chemin exact (`Makefile`, `tasks/`, `tasks/*`) ne compte que comme
+# composant ENTIER d'un chemin : `$TMPDIR/tasks.log`, `.gitignore` ou `asyncio.all_tasks`
+# faisaient refuser des commandes qui n'écrivaient nulle part ailleurs (audit du 01/10/2026).
+# Tiré d'un préfixe (`docs/adr/0*`), il compte tel quel.
+BORNE = {}
 for m in motifs:
-    litteral = re.split(r"[*?\[]", m, maxsplit=1)[0].rstrip("/")
+    debut = re.split(r"[*?\[]", m, maxsplit=1)[0]
+    litteral = debut.rstrip("/")
     if not litteral:
         continue
     LITTERAUX.add(litteral)
+    BORNE[litteral] = BORNE.get(litteral, True) and (debut.endswith("/") or debut == m)
     if litteral.startswith(maison + "/"):
         reste = litteral[len(maison) + 1 :]
         LITTERAUX.update({"~/" + reste, "$HOME/" + reste, "${HOME}/" + reste})
@@ -228,7 +235,7 @@ LANCEURS = {"uv": "run", "poetry": "run", "pipx": "run", "pdm": "run", "hatch": 
 LANCEURS_SEULS = {"uvx", "npx", "bunx", "pnpx"}
 # Un script en ligne qui écrit, déplace ou supprime un fichier.
 ECRIT = re.compile(
-    r"write_text|write_bytes|\.write\(|open\([^)]*['\"][rwxa]?[wxa+]|writeFile|appendFile|"
+    r"write_text|write_bytes|\.write\(|open\((?:[^()]|\([^()]*\))*?['\"][rwxa]?[wxa+]|writeFile|appendFile|"
     r"createWriteStream|os\.remove|os\.unlink|os\.rename|os\.replace|shutil\.|\.unlink\(|"
     r"\.rename\(|\.touch\(|unlinkSync|renameSync|rmSync|copyFile|['\"]\+?>{1,2}"
 )
@@ -313,9 +320,22 @@ def _zone_par_le_texte(cible):
     # Une variable qu'on ne sait pas résoudre (`"$ROOT"/.ephor/x`) : on lit le texte.
     if "$" in cible:
         for litteral in LITTERAUX:
-            if "/" + litteral in cible or cible.startswith(litteral):
+            if nomme(cible, litteral):
                 return litteral
     return None
+
+
+def nomme(texte, litteral, debut=r"(?:^|/)"):
+    """Le texte nomme-t-il ce chemin de zone, comme composant entier d'un chemin ?"""
+    if litteral.startswith(("/", "~", "$")):
+        debut = ""
+    fin = r"(?=/|$)" if BORNE.get(litteral, True) else ""
+    return re.search(debut + re.escape(litteral) + fin, texte, re.M) is not None
+
+
+# Les chaînes d'un script : c'est là qu'il nomme les fichiers qu'il ouvre. Un mot du code
+# (`tasks = []`, `asyncio.all_tasks`) n'est pas un chemin.
+CHAINE = re.compile(r"""\"(?:\\.|[^"\\\n])*\"|'(?:\\.|[^'\\\n])*'|`[^`]*`""")
 
 
 def valeurs(args, courtes, longues):
@@ -361,8 +381,12 @@ def script_qui_ecrit(script, pourquoi="script en ligne qui écrit", base=None):
     if not ECRIT.search(script):
         return
     dehors = not dans_le_depot(base)
+    chaines = [m.group(0)[1:-1] for m in CHAINE.finditer(script)]
     for litteral in LITTERAUX:
-        if litteral in script and (not dehors or litteral.startswith("/") or racine in script):
+        # `open(F, ">Makefile")` : le mode de perl, collé au nom, en tête de chaîne.
+        if any(nomme(c, litteral, r"(?:^[+<>|]*\s*|/)") for c in chaines) and (
+            not dehors or litteral.startswith("/") or racine in script
+        ):
             yield litteral, pourquoi
 
 
