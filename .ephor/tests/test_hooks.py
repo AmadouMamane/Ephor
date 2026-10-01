@@ -1569,6 +1569,9 @@ def depot_aux_jokers(tmp_path: Path) -> Path:
     git(projet, "add", "-A")
     git(projet, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-qm", "x")
     (projet / ".env").write_text("CLE=valeur\n")
+    # Un cache compilé, ignoré, dans une zone : `find . -name '*.pyc' -delete` doit passer.
+    (projet / ".ephor" / "__pycache__").mkdir(parents=True)
+    (projet / ".ephor" / "__pycache__" / "judge.cpython-311.pyc").write_bytes(b"")
     patch = "--- a/Makefile\n+++ b/Makefile\n@@ -1 +1 @@\n-verify:\n+verify: x\n"
     (projet / "src" / "fix.patch").write_text(patch)
     return projet

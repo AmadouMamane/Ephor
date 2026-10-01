@@ -968,6 +968,7 @@ def sans_commentaires(texte):
 
 
 JOKER = re.compile(r"[*?\[]")
+CACHES = {"__pycache__", ".ruff_cache", ".mypy_cache", ".pytest_cache", ".hypothesis", "node_modules"}
 
 
 def deplie(cible):
@@ -1049,6 +1050,9 @@ def find_atteints(tape, absolu, args):
         fichiers = [zone_abs]
         if os.path.isdir(zone_abs):
             for dossier, sous_dossiers, noms_f in os.walk(zone_abs):
+                # Les caches que des outils posent d'eux-mêmes, comme pour la sentinelle :
+                # `find . -name '*.pyc' -delete` ne retire rien qui compte.
+                sous_dossiers[:] = [d for d in sous_dossiers if d not in CACHES]
                 fichiers += [os.path.join(dossier, n) for n in sous_dossiers + noms_f]
                 if len(fichiers) > 5000:
                     break
