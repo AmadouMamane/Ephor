@@ -3,6 +3,96 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.5.2 — 1er octobre 2026
+
+Chaque fonctionnalité de la 1.5.1 évaluée de nouveau, par trois relectures adverses menées
+dans des dépôts jetables (juge et boucle de tâche, garde-fous, installation et outils), et,
+pour la première fois dans ce conteneur, le juge sous Docker : la démonstration y rend ses
+quatre verdicts justes. Chaque défaut a été rejoué, puis fermé par un test qui échoue sans
+son correctif (991 tests d'Ephor avant, 1078 après). Les tickets #36, #37 et #38 sont fermés.
+
+- **Le juge lit l'approbation d'aujourd'hui.** Il lisait contrat, preuves et contrôle rouge
+  au point de départ de la branche : une preuve resserrée ensuite sur la branche principale
+  ne comptait pas, et un correctif à moitié juste ressortait VÉRIFIÉ, en local comme contre
+  `origin/main` ; une tâche retirée de main aussi. Il refuse maintenant, et demande
+  d'intégrer la branche principale (`git merge main`).
+- **Une preuve nommée par son module est protégée.** `{python} -m unittest tests.test_x`,
+  ou `pytest --pyargs tests.test_x`, avec `tests/` dans le périmètre : l'agent vidait le
+  test, et VÉRIFIÉ. Le module est lu comme son fichier ; `python -m app.cli` reste le
+  programme essayé.
+- **Les autres trous du juge.** `--base origin/task/<ID>` (la branche de l'agent, poussée)
+  faisait lire « approuvé » le contrat qu'il s'y était écrit. En risque élevé, `# ruff: noqa`,
+  `# flake8: noqa`, `# pyright: ignore`, un `@skip` de unittest, `self.skipTest`, `it.skip`,
+  `t.Skip`, `@Disabled` passaient ; une ligne `-- a` puis `++ b/README.md`, dans un bloc, se
+  lisait comme l'en-tête d'un fichier texte et cachait le `# noqa` suivant ; un greffon pytest
+  déclaré en clé pointée sous `[project]` passait pour la fiche du paquet. Un critère nommé
+  `verify`, `setup` ou `pull` écrasait le journal de l'étape du même nom.
+- **`make review` ne lance plus le code de l'agent avec vos droits.** Dans le dossier de la
+  tâche, il lançait le verify.sh, le Makefile et le juge que l'agent avait pu retoucher :
+  « 2 étape(s) sur 2 vertes » avec un juge réécrit. Une zone retouchée arrête la revue avant
+  de rien lancer, et le juge est celui de votre copie. Une vérification « GREEN PARTIEL »
+  n'est plus comptée verte.
+- **`make taches` et la fermeture d'une tâche.** Une fusion annulée par `git revert` laissait
+  la tâche « fusionnée » pour toujours (#36) ; une fusion par squash, le bouton par défaut de
+  GitHub, ne la faisait jamais fusionnée. `make task-ranger` ne voyait pas un contrat qui
+  cite le dossier entier d'une tâche (`tasks/PAY-001`, sans barre). `make task-clore`, lancé
+  depuis le dossier de la tâche, se retirait lui-même ; il refuse, et donne la ligne à lancer.
+  `make mutants` suit la branche que le serveur désigne (`develop`).
+- **La garde du terminal.** Faux refus : `2>&1` ou `2>/dev/null` après un `cd` dans une zone
+  (le descripteur lu comme un fichier), un mot qui ressemble à une zone (`tasks = []`,
+  `.gitignore`, `"$TMPDIR/tasks.log"`), `( cd tasks && ls ) && echo x > notes.txt`,
+  `ls # > Makefile`, `git reset HEAD src/a.py` sur main, et, sans python3, tout nom qui
+  contenait celui d'une zone. Écritures qui passaient : une commande de plus de 128 Kio
+  (python3 ne démarrait pas, et tout passait), `exec 3<> Makefile`, `( cd src && make ) &&
+  rm -f Makefile`, `open(os.path.join('tasks', …), 'w')`, et ce que développent un joker ou
+  un chemin large : `sed -i … *.md`, `find . -name Makefile -delete`, `git restore .`,
+  `git checkout -- '*.md'`, `git stash` et `git reset --hard` (qui effaçaient la consigne
+  en cours d'écriture), `cat fix.patch | git apply` ; à la lecture, `cat .env*` et
+  `cat < .env`.
+- **Les autres gardes.** `make stop`, posé dans votre copie, n'arrêtait pas l'agent du
+  dossier d'une tâche. Les outils MCP de fichiers (`edit_file`, `move_file`) n'étaient pas
+  lus comme des écritures ; sous jq, un élément de liste qui n'était pas un objet faisait
+  tout taire. Des arguments d'outil en chaîne JSON (Copilot CLI) sont lus. Sous Copilot, le
+  dossier d'une tâche était bloqué en entier, `read_file` compris : il est jugé par les
+  gardes de la copie déclarée. La sentinelle nomme une dépendance ou un script glissé dans
+  `.opencode/package.json`, qu'opencode installerait au démarrage suivant (#38).
+- **Installation et mise à jour.** La configuration opencode du projet était écrasée
+  (modèle, serveurs MCP, ses propres sous-agents et commandes) : ses clés restent, et un
+  fichier qui n'est pas d'Ephor reçoit un `.ephor-new`. Un hook propre au projet devenait
+  une commande cassée sous Copilot. Un en-tête YAML en bloc (`description: >-`) faisait
+  tomber `make adapters`, donc l'installation. Ce qu'Ephor ne livre plus hors du moteur
+  (un sous-agent, une skill) est nommé avec la commande pour le retirer (#37), et une skill
+  arrive entière. Un rôle dont le projet a réglé `model:` n'est plus annoncé « remplacé » à
+  chaque mise à jour ; un `PROGRESS.md` déjà là ne reçoit plus de `.ephor-new`.
+- **Le diagnostic** taisait le mot de passe du proxy (il l'affichait en clair), et concluait
+  « Rien ne bloque » sur un dépôt dont les réglages ne déclarent aucune garde : c'est un
+  échec, avec le geste à faire.
+- **Les outils.** `make map REPO=<nom>` écrivait son cache chez le dépôt de référence, censé
+  rester en lecture seule. `make score` et `make usage` tombaient sur `NaN`, `1e999` ou un
+  appel d'outil abîmé ; le verdict perdait le « au moins » des sous-agents. Une référence
+  dans un sous-dossier de monorepo a son commit ; `make gitlab-check` lit un remote SSH sans
+  utilisateur et dit une coupure réseau sans trace ; `make verify` ne renvoie plus un projet
+  non Python vers `make setup`.
+- **Un projet né de l'archive garde sa CI verte** quand il retouche son Makefile : les deux
+  tests d'intégrité d'une livraison ne tournent que dans le dépôt d'Ephor (`.depot-ephor`,
+  qui ne part pas dans l'archive).
+
+**Ce qui peut changer pour vous.** Une tâche retouchée sur la branche principale après le
+départ de sa branche demande `git merge main` avant le juge. Un critère nommé `verify`,
+`setup` ou `pull`, ou deux critères qui ne diffèrent que par la casse, sont à renommer. En
+risque élevé, les nouveaux silencieux reconnus sont refusés comme les autres. `make
+task-clore` se lance depuis votre copie.
+
+**Après la mise à jour d'un projet** : `make adapters` (la configuration opencode est
+maintenant fusionnée), et `make copilot-install` sur chaque poste qui travaille sous Copilot
+(le relais a changé), puis une fenêtre VS Code neuve.
+
+**Limites connues, gardées.** Une branche principale qui ne s'appelle ni `main` ni `master`
+doit être désignée par le dépôt distant (`origin/HEAD`). `rg -l x | xargs sed -i …` n'est pas
+lu par la garde du terminal (le juge reste la barrière). `.env.example` reste refusé à la
+lecture par `Read(**/.env.*)`. Le juge sous Podman, opencode et Copilot en session réelle
+restent à voir sur le poste (#39).
+
 ## 1.5.1 — 1er octobre 2026
 
 Chaque fonctionnalité de la 1.5.0 évaluée de nouveau : la boucle d'une tâche rejouée de bout
