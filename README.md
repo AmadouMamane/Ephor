@@ -82,7 +82,7 @@ relancer opencode ou Claude Code.
 | Nouvelle fonctionnalité | `/feature <demande>` : `planner` prépare contrat et tests ; l'opérateur approuve d'un geste (`make task-approve ID=<ID> FROM=.verify/plans/<ID>.md` : résumé, « oui », contrôle rouge, commit sur `main`, dossier de la tâche ouvert), puis colle la ligne qui y lance l'agent ; tout le reste s'enchaîne jusqu'au verdict (`/feature <ID> pas-a-pas` pour confirmer chaque étape). Ou à la main : `make task-new … FROM=…`, `make task-check ID=<ID>`, commit |
 | Pendant | branche `task/<ID>`, `make verify` après chaque incrément |
 | Sous opencode, une fois par poste | `make opencode-modeles FORT=<fournisseur/modèle> RAPIDE=<…>` : chaque rôle reçoit le modèle de son niveau (`make doctor` le rappelle) |
-| Plusieurs tâches en même temps | une par dossier, ouvert par `make task-approve` (ou `make task-worktree ID=<ID>`) : branche, environnement, bac à sable, et la ligne qui y lance l'agent ; `make task-clore ID=<ID>` le ferme après la fusion, en gardant son verdict et sa mesure ; Ephor prévient quand deux sessions tournent dans le même dossier |
+| Plusieurs tâches en même temps | une par dossier, ouvert par `make task-approve` (ou `make task-worktree ID=<ID>`) : branche, environnement, bac à sable, et la ligne qui y lance l'agent ; `make task-clore ID=<ID>` le ferme après la fusion, en gardant son verdict, le rapport du juge et sa mesure ; Ephor prévient quand deux sessions tournent dans le même dossier |
 | Beaucoup de tâches | `make taches` : une ligne par tâche et son état, calculé ; `make task-ranger LOT=<fonctionnalité> PREFIXE=<ID->` les range dans `tasks/<lot>/` |
 | Avant de conclure | `make judge TASK=<ID>` ; en conteneur, `RUNTIME=podman` |
 | Revue | `make review TASK=<ID>` : enchaîne ce que le risque du contrat exige, et rien de plus ; lancée du dossier principal, elle se fait dans celui de la tâche, comme `make judge` |
@@ -103,7 +103,7 @@ relancer opencode ou Claude Code.
 | Manifeste de livraison lié au code jugé | Qu'on livre un code différent de celui qui a été jugé | Une empreinte n'est pas une signature : la chaîne de livraison doit protéger les rapports |
 | Juge en conteneur durci, sans réseau | Que les tests appellent l'extérieur, lisent le poste ou gagnent des privilèges | Mesuré avec Podman et Docker sur Mac, et avec Podman sous Linux (Fedora, SELinux actif) : mêmes verdicts qu'en local ; Docker sous Linux mesuré à chaque passage de la CI GitHub |
 | Environnement filtré du juge | Que les clés LiteLLM, cloud ou GitLab atteignent les tests | Seuls les identifiants JFrog passent, et seulement à l'installation |
-| Une seule liste de zones de contrôle (`.ephor/zones.txt`), lue par `write-guard.sh`, `shell-guard.sh`, la sentinelle, le juge et la CI | Que l'agent modifie ses propres contrôles — `.git/`, un `GNUmakefile` et les réglages d'agent du poste compris — par l'édition ou par une forme simple du terminal | Les réglages du projet peuvent l'allonger, pas la raccourcir. Règles d'outil, pas une frontière : un détour par le terminal passe. **Sous Copilot** : il faut `make copilot-install` ET une fenêtre neuve ; sans le greffon, seule la vue « agents » lance les hooks du dépôt (`.ephor/docs/11-trois-agents.md`) |
+| Une seule liste de zones de contrôle (`.ephor/zones.txt`), lue par `write-guard.sh`, `shell-guard.sh`, la sentinelle, le juge et la CI | Que l'agent modifie ses propres contrôles — `.git/`, un `GNUmakefile`, les réglages d'agent du poste et ses points d'exécution différée (`~/.gitconfig`, `~/.ssh/`, les rc du shell) compris — par l'édition ou par une forme simple du terminal | Les réglages du projet peuvent l'allonger, pas la raccourcir. Règles d'outil, pas une frontière : un détour par le terminal passe. **Sous Copilot** : il faut `make copilot-install` ET une fenêtre neuve ; sans le greffon, seule la vue « agents » lance les hooks du dépôt (`.ephor/docs/11-trois-agents.md`) |
 | Bac à sable de Claude Code (ADR 0008) | Que le terminal écrive une zone de contrôle, **détour compris** : refus du système, même après un clic de l'opérateur | Claude Code ; mesuré sur Mac, pas encore derrière le proxy de l'entreprise ni sous Linux. opencode peut l'avoir par `srt` (`.ephor/scripts/opencode_bac_a_sable.sh`, mesuré en local, à essayer sur le poste : #26) ; Copilot n'en a pas |
 | Sentinelle | Qu'une zone change pendant un tour sans que personne le voie, par quelque chemin que ce soit — tour interrompu compris | Constate après coup ; un agent qui veut la faire taire y arrive encore. Sous les trois outils (opencode depuis 1.1.5) |
 | La branche principale, écrite par l'opérateur seul | Qu'un agent s'approuve lui-même en commitant un contrat sur la branche principale, où le juge lit l'approbation | Garde du terminal : un filet. En CI, la protection de la branche fait foi |
@@ -152,7 +152,8 @@ docs/external/       pages du web aspirées par l'opérateur — données, jamai
 
 Dans .ephor/ : le moteur, le même dans chaque projet (carte : .ephor/README.md)
 .ephor/*.py              le juge et ses outils : judge · usage · repo_map · score ·
-                         personal_data · refs · fetch_docs · adapters
+                         personal_data · refs · fetch_docs · adapters · gitlab_check ·
+                         operateur · progres
 .ephor/hooks/            les garde-fous, communs aux trois agents
 .ephor/scripts/          doctor, review, mutants, repo_map, bootstrap, demo_judge…
 .ephor/deploy/           livraison vers Kubernetes ou GCP : manifeste, image de CI, principes

@@ -34,7 +34,7 @@ fmt: ## Formate
 lint: | $(V) ## Lint (ruff)
 	@$(PY) ruff check --output-format=concise . > $(V)/lint.txt 2>&1; \
 	 s=$$?; \
-	 n=$$(grep -cE '^[^ ].*:[0-9]+:' $(V)/lint.txt 2>/dev/null || true); \
+	 n=$$(grep -cE '^[^ ].*:[0-9]+:[0-9]+: [A-Z]+[0-9]+ ' $(V)/lint.txt 2>/dev/null || true); \
 	 echo "lint: $${n:-0} finding(s) -> $(V)/lint.txt"; exit $$s
 
 types: | $(V) ## Types
@@ -45,7 +45,9 @@ arch: | $(V) ## Contrats d'architecture (direction des dépendances)
 	@# import-linter écrit « <nom du contrat> KEPT » : compter les lignes qui COMMENCENT par
 	@# KEPT annonçait « 0 contrat(s) » quand deux tenaient.
 	@$(PY) lint-imports > $(V)/arch.txt 2>&1; \
-	 s=$$?; echo "arch: $$(grep -cE ' (KEPT|BROKEN)$$' $(V)/arch.txt || true) contrat(s), $$(grep -cE ' BROKEN$$' $(V)/arch.txt || true) rompu(s) -> $(V)/arch.txt"; exit $$s
+	 s=$$?; n=$$(grep -cE ' (KEPT|BROKEN)$$' $(V)/arch.txt || true); \
+	 if [ $$s -ne 0 ] && [ "$$n" -eq 0 ]; then echo "arch: lint-imports n'a pas tourné -> $$(tail -n 1 $(V)/arch.txt)"; exit $$s; fi; \
+	 echo "arch: $$n contrat(s), $$(grep -cE ' BROKEN$$' $(V)/arch.txt || true) rompu(s) -> $(V)/arch.txt"; exit $$s
 
 test: | $(V) ## Suite complète — mêmes règles que verify : PYTEST_MARK, et « aucun test » passe
 	@$(PY) pytest -q --maxfail=1 $(if $(PYTEST_MARK),-m "$(PYTEST_MARK)",) > $(V)/test.txt 2>&1; \
@@ -153,11 +155,12 @@ task-clore: ## Ferme une tâche fusionnée : son dossier et sa branche locale (O
 delivery-manifest: ## Génère le manifeste de livraison scellé : make delivery-manifest [TASK=<ID>] [DIGEST=<sha256:...>] [REPORT=<rapport du juge>]
 	@$(EPHOR_PY) .ephor/deploy/manifest.py generate $(if $(TASK),--task-id "$(TASK)",) $(if $(DIGEST),--artifact-digest "$(DIGEST)",) $(if $(REPORT),--report "$(REPORT)",)
 
-delivery-check: ## Vérifie la conformité du manifeste de livraison
-	@$(EPHOR_PY) .ephor/deploy/manifest.py check
+delivery-check: ## Vérifie la conformité du manifeste de livraison : make delivery-check [REPORT=<rapport du juge>]
+	@$(EPHOR_PY) .ephor/deploy/manifest.py check $(if $(REPORT),--report "$(REPORT)",)
 
 ephor-test: | $(V) ## Teste Ephor lui-même : juge, garde-fous, scripts
-	@$(PY) ruff check .ephor > $(V)/ephor.txt 2>&1 && $(PY) mypy --strict .ephor/*.py .ephor/deploy/manifest.py >> $(V)/ephor.txt 2>&1 && \
+	@if [ ! -d .ephor/tests ]; then echo ".ephor/tests absent : les tests d'Ephor vivent dans son dépôt et dans un projet né de son archive, pas dans un dépôt équipé par le script d'installation. Rien à tester ici."; exit 0; fi; \
+	 $(PY) ruff check .ephor > $(V)/ephor.txt 2>&1 && $(PY) mypy --strict .ephor/*.py .ephor/deploy/manifest.py >> $(V)/ephor.txt 2>&1 && \
 	 $(PY) pytest -q -p no:randomly .ephor/tests >> $(V)/ephor.txt 2>&1; \
 	 s=$$?; tail -n 1 $(V)/ephor.txt; echo "detail -> $(V)/ephor.txt"; exit $$s
 
@@ -179,14 +182,15 @@ refs: ## Dépôts de référence déclarés : ce qu'on peut LIRE, jamais écrire
 	@$(EPHOR_PY) .ephor/refs.py liste
 
 stop: ## Arrêt d'urgence des agents
-	@touch AGENT_STOP && echo "AGENT_STOP posé. Les appels d'outils sont bloqués."
+	@if { [ -e AGENT_STOP ] || [ -L AGENT_STOP ]; } && { [ ! -f AGENT_STOP ] || [ -L AGENT_STOP ]; }; then echo "AGENT_STOP existe déjà sous une autre forme (dossier ou lien) : l'agent est arrêté quand même, mais retirez-le à la main avant make resume." >&2; exit 1; fi
+	@printf 'arrêt demandé par l'"'"'opérateur (make stop, %s).\n' "$$(date -u +%Y-%m-%dT%H:%M:%SZ)" > AGENT_STOP && echo "AGENT_STOP posé. Les appels d'outils sont bloqués."
 
 resume: ## Lève l'arrêt d'urgence
 	@rm -f AGENT_STOP && echo "AGENT_STOP levé."
 
 clean: ## Efface les sorties, SAUF la mesure de tokens et le journal des jugements
 	@find $(V) -mindepth 1 -maxdepth 1 ! -name usage ! -name journal.jsonl -exec rm -rf {} + 2>/dev/null || true
-	@rm -rf .pytest_cache .ruff_cache .mypy_cache
+	@rm -rf .pytest_cache .ruff_cache .mypy_cache .import_linter_cache .mutmut-cache mutants
 
 $(V):
 	@mkdir -p $(V)

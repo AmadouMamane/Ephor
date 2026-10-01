@@ -11,6 +11,13 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.." || { echo "impossible d'atteindre la racine du dépôt" >&2; exit 1; }
 PCT="${1:-10}"
+# Un pourcentage qui n'en est pas un (`FAST_PCT=abc`) faisait tomber le tirage en Python,
+# puis lançait la suite ENTIÈRE sous l'annonce « 0/N tests » (relecture du 01/10/2026).
+case "$PCT" in
+  ''|*[!0-9]*) echo "FAST_PCT : un entier de 1 à 100 attendu, pas « $PCT »" >&2; exit 2 ;;
+esac
+[ "$PCT" -gt 100 ] && PCT=100
+[ "$PCT" -lt 1 ] && PCT=1
 SEED="${2:-$(git rev-parse HEAD 2>/dev/null | tr -cd '0-9' | cut -c1-8)}"
 SEED="${SEED:-42}"
 V=.verify; mkdir -p "$V"
@@ -23,7 +30,8 @@ $R pytest --collect-only -q -p no:randomly 2>/dev/null | sed '/^$/,$d' | LC_ALL=
 TOTAL=$(grep -c . "$V/all-tests.txt" 2>/dev/null; true)
 if [ "${TOTAL:-0}" -eq 0 ]; then
   # Sans Python, pytest n'a rien à collecter : ce n'est pas « aucun test » (F5).
-  if git ls-files -- '*.py' | grep -q .; then
+  # Hors du moteur : ses `.ephor/*.py` faisaient passer un projet Node pour du Python.
+  if git ls-files -- '*.py' ':(exclude).ephor' | grep -q .; then
     echo "aucun test collecté"
   else
     echo "SKIP : l'échantillon ne sait tirer que des tests pytest ; lancez la suite du projet"
@@ -41,6 +49,8 @@ print("\n".join(lines[:n]))
 PY
 
 N=$(grep -c . "$V/sample.txt" 2>/dev/null; true)
+# Un échantillon vide, c'est pytest sans argument : toute la suite, sous une fausse annonce.
+[ "${N:-0}" -gt 0 ] || { echo "échantillon vide : le tirage a échoué (voir $V/sample.txt)" >&2; exit 1; }
 echo "échantillon: $N/$TOTAL tests (seed=$SEED)"
 # shellcheck disable=SC2046
 $R pytest -q -p no:randomly $(tr '\n' ' ' < "$V/sample.txt") > "$V/test-fast.txt" 2>&1

@@ -209,3 +209,41 @@ def test_une_coupure_pendant_la_lecture_est_dite_sans_trace(
     api = gitlab_check.Api("https://gitlab.interne", "jeton-factice")
     with pytest.raises(SystemExit, match="coupé la réponse"):
         api.get("/projects/1")
+
+
+def test_une_reponse_tronquee_est_dite_sans_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`Content-Length: 5000`, cinq octets, connexion fermée : `http.client.IncompleteRead`
+    n'est pas une OSError, et sortait en trace (relecture adverse du 01/10/2026)."""
+    import http.client
+
+    class Tronquee:
+        def __enter__(self) -> Tronquee:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            raise http.client.IncompleteRead(b'{"a":', 4995)
+
+    monkeypatch.setattr(gitlab_check.urllib.request, "urlopen", lambda *a, **k: Tronquee())
+    with pytest.raises(SystemExit) as fin:
+        gitlab_check.Api("https://gitlab.invalid", JETON).get("/projects/1")
+    assert "a coupé la réponse en route" in str(fin.value)
+
+
+def test_un_jeton_refuse_est_dit_comme_tel(
+    gitlab: tuple[str, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Un 401 était annoncé « projet illisible : vérifie GITLAB_PROJECT », alors que c'est le
+    jeton qui ne va pas."""
+    url, routes = gitlab
+    routes.update(BON)
+    monkeypatch.setenv("GITLAB_TOKEN", "pas-le-bon-jeton")
+    with pytest.raises(SystemExit) as fin:
+        gitlab_check.main(["--url", url, "--projet", PROJET])
+    message = str(fin.value)
+    assert "jeton refusé" in message and "GITLAB_TOKEN" in message
+    assert "pas-le-bon-jeton" not in message + capsys.readouterr().out

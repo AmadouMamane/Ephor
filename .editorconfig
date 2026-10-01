@@ -8,3 +8,7 @@ indent_style = space
 indent_size = 4
 [*.{json,yml,yaml,md,sh}]
 indent_size = 2
+
+# Les recettes de make exigent des tabulations : un éditeur qui applique « space » les casse.
+[Makefile]
+indent_style = tab

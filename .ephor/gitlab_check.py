@@ -19,6 +19,7 @@ encore contre une vraie instance. Bibliothèque standard seule, Python 3.9.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -103,7 +104,10 @@ class Api:
                 f"erreur : {self.base} injoignable ({exc.reason}). Derrière un proxy : "
                 "HTTPS_PROXY. Certificat refusé : SSL_CERT_FILE vers l'autorité de l'entreprise."
             ) from exc
-        except OSError as exc:  # délai dépassé, connexion coupée PENDANT la lecture
+        except (OSError, http.client.HTTPException) as exc:
+            # Délai dépassé, connexion coupée PENDANT la lecture — y compris une réponse
+            # tronquée (IncompleteRead) ou une ligne d'état abîmée (BadStatusLine), qui ne
+            # sont pas des OSError et sortaient en trace (relecture du 01/10/2026).
             raise SystemExit(
                 f"erreur : {self.base} a coupé la réponse en route ({exc}). Relancez ; derrière"
                 " un proxy, vérifiez HTTPS_PROXY."
@@ -228,6 +232,13 @@ def constats(api: Api, projet_chemin: str) -> list[Constat]:
     try:
         projet = api.get(f"/projects/{ident}")
     except IllisibleError as exc:
+        if str(exc) in ("HTTP 401", "HTTP 403"):
+            # Un jeton refusé était annoncé comme un projet illisible : l'opérateur vérifiait
+            # GITLAB_PROJECT alors que c'est GITLAB_TOKEN qui ne va pas (relecture du 01/10/2026).
+            raise SystemExit(
+                f"erreur : jeton refusé par {api.base} ({exc}). GITLAB_TOKEN est invalide, expiré,"
+                f" ou sans la portée read_api sur {projet_chemin}."
+            ) from exc
         raise SystemExit(
             f"erreur : projet {projet_chemin} illisible ({exc}). Vérifie GITLAB_PROJECT, et que "
             "le jeton a la portée read_api sur ce projet."

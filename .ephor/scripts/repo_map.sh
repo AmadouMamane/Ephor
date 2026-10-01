@@ -30,6 +30,11 @@ detect_test_dirs() {
 SRC_DIRS=$(detect_src_dirs)
 TEST_DIRS=$(detect_test_dirs)
 ALL_DIRS="$SRC_DIRS $TEST_DIRS"
+# Quand le code n'est pas détecté (`.`), find et grep descendaient dans les dossiers cachés :
+# sur un projet Node, la volumétrie et les points d'entrée étaient ceux du moteur d'Ephor
+# (`.ephor/*.py`, 9 000 lignes), présentés comme ceux du projet (relecture du 01/10/2026).
+# shellcheck disable=SC2086
+fichiers_py() { find $ALL_DIRS \( -name '.*' -o -name node_modules -o -name mutants -o -name __pycache__ \) -prune -o -name '*.py' -type f -print 2>/dev/null; }
 echo "== arbre (profondeur 3, code seulement) =="
 # Sans les dossiers cachés : sur un petit projet équipé, ceux d'Ephor et des agents (.ephor,
 # .claude, .opencode, .github, .vscode) faisaient vingt-six lignes sur quarante-deux, payées en
@@ -60,15 +65,14 @@ if command -v tokei >/dev/null 2>&1 && tokei --output compact 2>/dev/null; then
 else
   # `find -exec` plutôt que `cat $(find ...)` : un chemin contenant un espace
   # casserait le découpage de mots et le compte serait faux sans le dire.
-  # shellcheck disable=SC2086
-  echo "fichiers py: $(find $ALL_DIRS -name '*.py' 2>/dev/null | wc -l | tr -d ' ')"
-  # shellcheck disable=SC2086
-  echo "lignes py:   $(find $ALL_DIRS -name '*.py' -exec cat {} + 2>/dev/null | wc -l | tr -d ' ')"
+  echo "fichiers py: $(fichiers_py | wc -l | tr -d ' ')"
+  echo "lignes py:   $(fichiers_py | tr '\n' '\0' | xargs -0 cat 2>/dev/null | wc -l | tr -d ' ')"
 fi
 echo
 echo "== points d'entrée =="
 # shellcheck disable=SC2086
-grep -rln --include='*.py' -E 'if __name__|FastAPI\(|Flow\(|@flow|def main' $SRC_DIRS 2>/dev/null | head -10 || true
+grep -rln --include='*.py' --exclude-dir='.*' --exclude-dir=node_modules --exclude-dir=mutants \
+  -E 'if __name__|FastAPI\(|Flow\(|@flow|def main' $SRC_DIRS 2>/dev/null | head -10 || true
 # Sortie explicite : ce script LIT, il n'échoue jamais. Un code de retour non nul
 # ferait croire à l'agent que l'outil est cassé et lui ferait perdre des tours.
 exit 0

@@ -107,7 +107,9 @@ fi
 {
   echo "commit=$(git rev-parse --short HEAD 2>/dev/null || echo none)"
   echo "changed_files=$(git diff --name-only HEAD 2>/dev/null | wc -l | tr -d ' ')"
-  echo "lint_findings=$(grep -cE '^[^ ].*:[0-9]+:' "$V/lint.txt" 2>/dev/null; true)"
+  # La forme concise d'un constat (`chemin:ligne:colonne: CODE …`) seule : un avertissement de
+  # ruff sur sa configuration (`chemin:ligne: …`) était compté comme un constat.
+  echo "lint_findings=$(grep -cE '^[^ ].*:[0-9]+:[0-9]+: [A-Z]+[0-9]+ ' "$V/lint.txt" 2>/dev/null; true)"
   echo "type_errors=$(grep -c 'error:' "$V/types.txt" 2>/dev/null; true)"
   echo "tests_line=$(tail -n 1 "$V/test.txt" 2>/dev/null)"
   echo "steps_skipped=$SKIP"

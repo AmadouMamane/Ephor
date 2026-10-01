@@ -40,7 +40,10 @@ default:
   image: $EPHOR_CI_IMAGE
   interruptible: true
   before_script:
-    - command -v git >/dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null; }
+    # git et make : l'image publique n'a ni l'un ni l'autre. Sans make, `make sec` tombait sur
+    # « command not found » au lieu de dire ce qui manque (gitleaks, que seule l'image de
+    # `make ci-image` apporte) ; le pipeline de référence était rouge sans raison lisible.
+    - command -v git >/dev/null && command -v make >/dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends git make >/dev/null; }
     - uv sync --all-extras
   cache:
     key: uv-$CI_COMMIT_REF_SLUG
@@ -64,8 +67,9 @@ verify:
   script:
     - bash .ephor/projet/verify.sh
     # Les secrets et les données personnelles : `make sec` ne tournait que sur le poste,
-    # où un rouge pouvait passer inaperçu. Exige make ET gitleaks
-    # dans l'image du job : .ephor/deploy/Containerfile.ci les met, l'image publique ne les a pas.
+    # où un rouge pouvait passer inaperçu. Il exige gitleaks (VERIFY_STRICT=1 : un scan qui
+    # n'a pas tourné est un échec) : l'image de .ephor/deploy/Containerfile.ci l'apporte ;
+    # avec l'image publique, le job s'arrête ici en nommant ce qui manque.
     - make sec
     # Les tests d'Ephor ne vivent que dans son dépôt. Ce fichier, déposé dans un projet
     # `controles` (.ephor/docs/12-gitlab.md), sert aussi les projets équipés, qui ne les ont

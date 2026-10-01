@@ -256,3 +256,31 @@ def test_une_reference_dans_un_sous_dossier_de_depot_a_son_commit(tmp_path: Path
     assert refs.state(ref).endswith(")") is False, "modifié hors du sous-dossier : pas lui"
     (mono / "producteurs" / "schema.py").write_text("# modifié\n", encoding="utf-8")
     assert "modifié" in refs.state(ref)
+
+
+def test_la_liste_separe_l_etat_du_chemin(tmp_path: Path) -> None:
+    """Un état de vingt-deux caractères (« dossier sans dépôt git ») se collait au chemin."""
+    repo = make_repo(tmp_path / "travail")
+    sans_git = tmp_path / "sans-git"
+    sans_git.mkdir()
+    declare(repo, [{"nom": "sans-git", "chemin": str(sans_git), "pourquoi": "voir"}])
+    lignes = refs.listing(repo).splitlines()
+    ligne = next(x for x in lignes if "sans-git" in x and "voir" not in x)
+    assert "dossier sans dépôt git  " + str(sans_git) in ligne
+
+
+def test_une_sortie_fermee_par_head_n_est_pas_une_erreur(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`make map REPO=x | head` : « erreur : [Errno 32] Broken pipe », code 2."""
+    repo = make_repo(tmp_path / "travail")
+
+    class Fermee:
+        def write(self, texte: str) -> int:
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def flush(self) -> None:
+            return None
+
+    monkeypatch.setattr(sys, "stdout", Fermee())
+    assert refs.main(["--repo", str(repo), "liste"]) == 0

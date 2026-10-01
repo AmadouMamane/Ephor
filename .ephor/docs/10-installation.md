@@ -120,9 +120,10 @@ python3 -B -c "import sys; sys.path.insert(0,'.ephor'); import personal_data as 
 # 4. les dépôts voisins déclarés en lecture seule (vide au départ, c'est normal)
 make refs
 
-# 5 à 7 : seulement dans le dépôt d'Ephor ou dans une copie du modèle (étape 2). Un
-# projet équipé par le script d'installation n'a ni les tests d'Ephor, ni sa démo, ni le
-# code d'exemple : `make ephor-test` y dirait « .ephor/tests absent », et c'est normal.
+# 5 à 7 : dans le dépôt d'Ephor ou dans un projet né de son archive (la recette « nouveau
+# projet », qui emporte les tests d'Ephor, sa démo et le code d'exemple). Un projet équipé
+# par le script d'installation ne les a pas : `make ephor-test` y dit « .ephor/tests
+# absent », sans rien lancer, et c'est normal.
 
 # 5. le juge face à trois agents simulés : honnête, tricheur, maladroit
 bash .ephor/scripts/demo_judge.sh            # en conteneur : bash .ephor/scripts/demo_judge.sh podman
@@ -131,7 +132,10 @@ bash .ephor/scripts/demo_judge.sh            # en conteneur : bash .ephor/script
 make ephor-test
 
 # 7. le score de mutation : la démonstration
-sed -i '' 's/label.strip()/label.strip() if label else ""/' src/app/service.py
+python3 - <<'PY'   # portable (le `sed -i ''` de BSD ne marche pas sous GNU sed, ni l'inverse)
+from pathlib import Path
+f = Path("src/app/service.py"); f.write_text(f.read_text().replace('label.strip()', 'label.strip() if label else ""'))
+PY
 make mutants      # score autour de 50 % alors que TOUS les tests passent
 git checkout src/app/service.py
 ```

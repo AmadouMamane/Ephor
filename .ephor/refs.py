@@ -20,6 +20,7 @@ Bibliothèque standard uniquement, et syntaxe Python 3.9.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -215,7 +216,7 @@ def listing(repo: Path) -> str:
         )
     lignes = [f"{len(refs)} dépôt(s) de référence · lecture seule, jamais d'écriture", ""]
     for ref in refs:
-        lignes.append(f"  {ref.nom:<16}{state(ref):<22}{ref.chemin}")
+        lignes.append(f"  {ref.nom:<16}{state(ref):<22}  {ref.chemin}")
         if ref.pourquoi:
             lignes.append(f"  {'':<16}{ref.pourquoi}")
     lignes += ["", "  carte d'un dépôt, pas chère en tokens : make map REPO=<nom>"]
@@ -280,6 +281,12 @@ def main(argv: list[str] | None = None) -> int:
     except RefsError as exc:
         print(f"erreur : {exc}", file=sys.stderr)
         return 2
+    except BrokenPipeError:
+        # `make map REPO=x | head` : le lecteur a fermé la sortie, ce n'est pas une erreur. La
+        # sortie standard est détournée pour que Python ne se plaigne pas en la vidant.
+        with contextlib.suppress(OSError, ValueError, AttributeError):
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
     except (OSError, ValueError) as exc:
         print(f"erreur : {exc}", file=sys.stderr)
         return 2

@@ -1296,3 +1296,219 @@ def test_le_bac_a_sable_d_opencode_suit_la_liste_des_zones(tmp_path: Path) -> No
         sans_srt.returncode == 2
         and "npm install -g @anthropic-ai/sandbox-runtime" in sans_srt.stdout
     )
+
+
+# ------------------------------------------------- relecture adverse de la 1.5.2 (01/10/2026)
+
+
+def _make(
+    dossier: Path, *cibles: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Le Makefile d'Ephor, lancé dans un autre dossier : ses cibles d'atelier, isolées."""
+    return subprocess.run(
+        ["make", "-C", str(dossier), "-f", str(ROOT / "Makefile"), *cibles],
+        capture_output=True,
+        text=True,
+        env={**os.environ, **(env or {})},
+        check=False,
+    )
+
+
+def test_un_pourcentage_qui_n_en_est_pas_un_est_refuse_avant_tout_test() -> None:
+    """`make test-fast FAST_PCT=abc` : trace Python, « échantillon: 0/6 », puis la suite ENTIÈRE
+    sous cette annonce, en vert (relecture adverse du 01/10/2026)."""
+    resultat = subprocess.run(
+        ["bash", str(ROOT / ".ephor" / "scripts" / "test_sample.sh"), "abc"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert resultat.returncode == 2
+    assert "entier de 1 à 100" in resultat.stderr
+    assert "échantillon" not in resultat.stdout, "aucun test n'a été lancé"
+
+
+def test_hors_python_l_echantillon_dit_skip_malgre_le_moteur(tmp_path: Path) -> None:
+    """Les `.ephor/*.py` du moteur faisaient passer un projet Node pour du Python : « aucun test
+    collecté » au lieu du SKIP promis."""
+    cible = tmp_path / "noderepo"
+    depot_node(cible)
+    bootstrap(cible)
+    resultat = subprocess.run(
+        ["bash", str(cible / ".ephor" / "scripts" / "test_sample.sh")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert resultat.returncode == 0
+    assert "SKIP : l'échantillon ne sait tirer que des tests pytest" in resultat.stdout
+
+
+def test_hors_python_la_carte_ne_compte_pas_le_moteur(tmp_path: Path) -> None:
+    """`make map` sur un projet Node : « fichiers py: 14 / lignes py: 9386 » et dix points
+    d'entrée, tous dans .ephor/ — le moteur présenté comme le code du projet."""
+    cible = tmp_path / "noderepo"
+    depot_node(cible)
+    bootstrap(cible)
+    sortie = subprocess.run(
+        ["bash", str(cible / ".ephor" / "scripts" / "repo_map.sh")],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "fichiers py: 0" in sortie
+    assert ".ephor/" not in sortie.split("== points d'entrée ==")[1]
+
+
+def test_le_doctor_ne_reclame_pas_uv_a_un_projet_qui_n_est_pas_python(tmp_path: Path) -> None:
+    """`[FAIL] uv absent … Corrigez les [FAIL]` sur un dépôt Node, trois lignes avant « pas un
+    projet Python — normal » : le diagnostic se contredisait et sortait en échec."""
+    cible = tmp_path / "noderepo"
+    depot_node(cible)
+    bootstrap(cible)
+    (cible / ".claude" / "settings.json.ephor-new").replace(cible / ".claude" / "settings.json")
+    chemin = tmp_path / "sans-uv"
+    chemin.mkdir()
+    for outil in ("bash", "sh", "git", "python3", "grep", "sed", "awk", "head", "tail", "tr",
+                  "wc", "cut", "sort", "uniq", "dirname", "basename", "cat", "ls", "mktemp",
+                  "find", "cmp", "env", "uname", "df", "readlink", "stat", "date", "command",
+                  "printf", "test", "which", "xargs", "touch", "id"):  # fmt: skip
+        vrai = shutil.which(outil)
+        if vrai and not (chemin / outil).exists():
+            (chemin / outil).symlink_to(vrai)
+    assert shutil.which("uv", path=str(chemin)) is None
+    resultat = subprocess.run(
+        ["bash", str(cible / ".ephor" / "scripts" / "doctor.sh")],
+        capture_output=True,
+        text=True,
+        cwd=cible,
+        env={**os.environ, "PATH": str(chemin)},
+        check=False,
+    )
+    assert "[FAIL] uv absent" not in resultat.stdout, resultat.stdout
+    assert "uv absent du PATH — inutile" in resultat.stdout
+
+
+def test_le_doctor_masque_chaque_mot_de_passe_de_proxy_et_nomme_chaque_variable() -> None:
+    """Un mot de passe qui contenait `@` sortait à moitié, et seule la dernière variable de la
+    boucle était montrée."""
+    env = {
+        **os.environ,
+        "HTTPS_PROXY": "http://utilisateur:p@ss@proxy.invalid:3128",
+        "HTTP_PROXY": "http://autre.invalid:4",
+    }
+    env.pop("https_proxy", None)
+    env.pop("http_proxy", None)
+    sortie = subprocess.run(
+        ["bash", str(ROOT / ".ephor" / "scripts" / "doctor.sh")],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        env=env,
+        check=False,
+    ).stdout
+    assert "p@ss" not in sortie and "utilisateur" not in sortie
+    assert "HTTPS_PROXY=http://…@proxy.invalid:3128" in sortie
+    assert "HTTP_PROXY=http://autre.invalid:4" in sortie
+
+
+def test_make_stop_refuse_un_bouton_altere_et_dit_pourquoi_sinon(tmp_path: Path) -> None:
+    """`make stop` posait un fichier vide (AGENTS.md promet « le fichier dit pourquoi »), et
+    disait « AGENT_STOP posé » même quand un dossier de ce nom l'en empêchait."""
+    assert _make(tmp_path, "stop").returncode == 0
+    assert "make stop" in (tmp_path / "AGENT_STOP").read_text(encoding="utf-8")
+    assert _make(tmp_path, "resume").returncode == 0
+    (tmp_path / "AGENT_STOP").mkdir()
+    resultat = _make(tmp_path, "stop")
+    assert resultat.returncode != 0
+    assert "autre forme" in resultat.stderr
+
+
+def test_make_arch_dit_quand_lint_imports_n_a_pas_tourne(tmp_path: Path) -> None:
+    """Sans l'outil : « arch: 0 contrat(s), 0 rompu(s) », comme un succès vide."""
+    resultat = _make(tmp_path, "arch", "PY=false")
+    assert resultat.returncode != 0
+    assert "n'a pas tourné" in resultat.stdout
+
+
+def test_make_lint_ne_compte_pas_un_avertissement_de_ruff(tmp_path: Path) -> None:
+    """Deux avertissements de ruff (`chemin:ligne: …`) étaient comptés comme deux constats :
+    `lint: 2 finding(s)` et `lint_findings=2` dans verify alors que tout passait."""
+    faux = tmp_path / "fauxruff.sh"
+    faux.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo 'warning: Invalid `# noqa` directive on .ephor/judge.py:707: …'\n"
+        "echo 'All checks passed!'\n"
+    )
+    assert "lint: 0 finding(s)" in _make(tmp_path, "lint", f"PY=bash {faux}").stdout
+    faux.write_text(
+        "#!/usr/bin/env bash\necho 'src/a.py:1:1: F401 `os` imported but unused'\nexit 1\n"
+    )
+    assert "lint: 1 finding(s)" in _make(tmp_path, "lint", f"PY=bash {faux}").stdout
+
+
+def test_make_clean_emporte_la_copie_de_mutmut_et_garde_la_mesure(tmp_path: Path) -> None:
+    (tmp_path / "mutants" / "tests").mkdir(parents=True)
+    (tmp_path / ".verify" / "usage").mkdir(parents=True)
+    (tmp_path / ".verify" / "usage" / "T.json").write_text("{}")
+    (tmp_path / ".verify" / "journal.jsonl").write_text("{}\n")
+    (tmp_path / ".verify" / "lint.txt").write_text("x")
+    assert _make(tmp_path, "clean").returncode == 0
+    assert not (tmp_path / "mutants").exists()
+    assert not (tmp_path / ".verify" / "lint.txt").exists()
+    assert (tmp_path / ".verify" / "usage" / "T.json").exists()
+    assert (tmp_path / ".verify" / "journal.jsonl").exists()
+
+
+def test_make_ephor_test_sans_les_tests_le_dit_et_ne_lance_rien(tmp_path: Path) -> None:
+    """Dans un projet équipé par le script d'installation, la cible lançait ruff et mypy sur le
+    moteur avec l'outillage du projet, puis pytest sortait en 4 sur un dossier absent."""
+    resultat = _make(tmp_path, "ephor-test", "PY=false")
+    assert resultat.returncode == 0
+    assert ".ephor/tests absent" in resultat.stdout
+
+
+def test_sans_dossier_tests_pytest_ne_collecte_ni_tasks_ni_mutants(tmp_path: Path) -> None:
+    """Sans `tests/`, pytest retombait sur la racine et descendait dans `tasks/` (rouge par
+    construction) et `mutants/` : VERDICT: RED pour une mauvaise raison."""
+    shutil.copy(ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
+    for dossier in ("tasks/T-1", "mutants/tests"):
+        (tmp_path / dossier).mkdir(parents=True)
+        (tmp_path / dossier / "test_piege.py").write_text("def test_piege():\n    assert False\n")
+    resultat = subprocess.run(
+        [
+            str(ROOT / ".venv" / "bin" / "python"),
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:randomly",
+            "-p",
+            "no:cacheprovider",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert "no tests collected" in resultat.stdout, resultat.stdout
+    explicite = subprocess.run(
+        [
+            str(ROOT / ".venv" / "bin" / "python"),
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:randomly",
+            "-p",
+            "no:cacheprovider",
+            "tasks/T-1/test_piege.py",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert "1 test collected" in explicite.stdout, "un chemin explicite (un critère) reste collecté"

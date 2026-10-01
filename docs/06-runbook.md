@@ -29,7 +29,7 @@ TODO — remplir avec VOS commandes. L'objectif est qu'un agent puisse répondre
 
 | Symptôme | Premier réflexe |
 |---|---|
-| `make verify` rouge sur `arch` | `cat .verify/arch.txt` — un import remonte une couche |
-| `make verify` rouge sur `types` | `cat .verify/types.txt` — ne pas ajouter de `# type: ignore` sans commentaire |
+| `make verify` rouge sur `arch` | `tail -n 20 .verify/arch.txt` — un import remonte une couche |
+| `make verify` rouge sur `types` | `rg error: .verify/types.txt` — ne pas ajouter de `# type: ignore` sans commentaire |
 | Test intermittent | marquer `@pytest.mark.flaky`, inscrire dans `docs/04-tech-debt.md` avec une date |
 | Le juge, la revue ou la livraison refusent | `.ephor/docs/06-exploitation.md`, « Symptômes et premiers réflexes » |

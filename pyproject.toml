@@ -61,6 +61,10 @@ files = ["src", "tests"]
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Sans `tests/`, pytest retombe sur la racine et descendait dans `tasks/` (les tests
+# d'acceptation, rouges par construction) et `mutants/` (la copie de mutmut) : RED pour une
+# mauvaise raison. Un chemin donné explicitement (un critère du juge) reste collecté.
+norecursedirs = [".*", "build", "dist", "node_modules", "mutants", "tasks"]
 addopts = "-ra --strict-markers --strict-config"
 markers = [
   "slow: test lent, exclu de l'étage pré-file",
