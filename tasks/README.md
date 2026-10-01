@@ -32,6 +32,8 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
    branche principale. **Ce commit est l'approbation** : le juge refuse tout contrat absent
    de la base ou différent de sa version approuvée, et toute tâche sans contrôle rouge, ou
    dont une preuve a changé depuis. Un test retouché après coup : relancez `make task-check`.
+   Une tâche retouchée sur la branche principale après le départ de sa branche (preuve
+   resserrée, tâche retirée) : le juge refuse, et demande d'intégrer la branche principale.
    `make task-check` sans `ID` liste les tâches dont la trace est à refaire, lues sur la
    branche principale comme le juge les lira (un reformatage du dépôt en périme plusieurs).
 4. **Travailler.** L'agent travaille sur la branche `task/FEAT-001`, dans le périmètre

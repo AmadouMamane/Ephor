@@ -1451,6 +1451,29 @@ def resolve_base(repo: Path, base: str | None) -> tuple[str, str]:
     raise JudgeError(f"base introuvable ({', '.join(candidates)}) : précisez --base")
 
 
+def approbation_changee_depuis(
+    repo: Path, base_ref: str, depart: str, contract: Contract
+) -> list[str]:
+    """Ce qui, de l'approbation de la tâche (son dossier, contrat, preuves et contrôle rouge
+    compris, et les preuves qu'elle cite ailleurs), a changé sur la branche principale depuis le
+    point de départ de la branche jugée.
+
+    Le juge lit tout cela au point de départ, d'où part aussi le correctif. Une preuve resserrée
+    ensuite sur main ne comptait donc pas : un correctif à moitié juste ressortait VÉRIFIÉ ; une
+    tâche retirée de main aussi (audit du 01/10/2026)."""
+    try:
+        bout = git(repo, "rev-parse", "--verify", "--quiet", f"{base_ref}^{{commit}}")
+    except JudgeError:
+        return []
+    bout_commit = bout.decode().strip()
+    if not bout_commit or bout_commit == depart:
+        return []
+    chemins = sorted({f"{contract.ou}/", *acceptance_files(repo, depart, contract)})
+    sortie = git(repo, "-c", "core.quotepath=off", "diff", "--name-only", depart, bout_commit,
+                 "--", *chemins)  # fmt: skip
+    return sortie.decode("utf-8", "replace").split("\n")[:-1]
+
+
 def snapshot(
     repo: Path,
     base: str,
@@ -3097,6 +3120,13 @@ def cmd_check(args: argparse.Namespace) -> int:
             )
         if approved != contract_bytes:
             raise JudgeError("contrat différent de la version approuvée sur la base")
+        en_retard = approbation_changee_depuis(repo, base_ref, base, contract)
+        if en_retard:
+            raise JudgeError(
+                f"la tâche a changé sur {base_ref} depuis le départ de cette branche "
+                f"({', '.join(en_retard[:5])}{', …' if len(en_retard) > 5 else ''}) : le juge lit "
+                f"l'approbation d'aujourd'hui. Intégrez-la (git merge {base_ref}), puis relancez"
+            )
         # Lu sur la base, comme le contrat : l'agent ne peut ni l'écrire ni le rafraîchir.
         rouge = lire_trace_rouge(repo, base, contract, task_id)
         report["rouge"] = {"date": rouge.get("date"), "commit": rouge.get("commit")}

@@ -1368,6 +1368,34 @@ def test_une_branche_sans_commit_n_est_pas_fusionnee(
     assert "fusionnée" in ligne(), "commitée puis entrée dans main en avance rapide"
 
 
+def test_une_approbation_changee_sur_main_depuis_le_depart_de_la_branche_est_refusee(
+    repo: Path, run_judge: Runner
+) -> None:
+    """Le juge lisait contrat, preuves et contrôle rouge au point de départ de la branche : une
+    preuve resserrée ensuite sur main ne comptait pas, et un correctif à moitié juste ressortait
+    VÉRIFIÉ ; une tâche retirée de main aussi (audit du 01/10/2026)."""
+    git(repo, "switch", "-q", "main")
+    preuve = repo / "tasks" / "T-001" / "check_c2.py"
+    preuve.write_text(CHECK_C2 + "assert accuracy([(1, 2)]) == 0.5\n")
+    git(repo, "commit", "-qam", "preuve resserrée")
+    trace_rouge(repo)
+    git(repo, "switch", "-q", "task/T-001")
+    (repo / "src" / "metrics.py").write_text(FIX)
+    git(repo, "commit", "-qam", "correctif")
+    code, report = run_judge(repo)
+    assert code == 2 and report["status"] == "rejected", report
+    assert "tasks/T-001/check_c2.py" in report["reasons"][0]
+    assert "git merge main" in report["reasons"][0]
+    git(repo, "merge", "-q", "--no-edit", "main")
+    assert run_judge(repo)[0] == 0, "main intégrée : jugée contre l'approbation d'aujourd'hui"
+    git(repo, "switch", "-q", "main")
+    git(repo, "rm", "-rq", "tasks/T-001")
+    git(repo, "commit", "-qm", "T-001 abandonnée")
+    git(repo, "switch", "-q", "task/T-001")
+    code, report = run_judge(repo)
+    assert code == 2 and "git merge main" in report["reasons"][0], report
+
+
 def test_une_fusion_annulee_n_est_plus_fusionnee(
     repo: Path, run_judge: Runner, capsys: pytest.CaptureFixture[str]
 ) -> None:
