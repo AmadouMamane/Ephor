@@ -3,6 +3,117 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.5.3 — 1er octobre 2026
+
+Chaque fonctionnalité de la 1.5.2 évaluée de nouveau, par quatre relectures adverses menées
+dans des dépôts jetables hors du dossier d'Ephor (juge et boucle de tâche ; garde-fous ;
+installation, mise à jour et greffons ; outils annexes, CI et documentation), plus une relecture
+du diff. Chaque défaut a été rejoué, puis fermé par un test qui échoue sans son correctif
+(1 092 tests d'Ephor collectés avant, 1 178 après ; ici, 1 174 passent et 4 sautent, faute
+de gitleaks et d'une image de CI joignable). Le juge en conteneur a été rejoué sous Docker,
+sur l'image de test ; l'image de CI n'a pas pu être construite ici (ghcr.io refusé par le
+proxy), et les deux tests qui la construisent disent maintenant SKIP, avec la raison, au lieu
+d'échouer.
+
+- **Le juge.** `{python}` désigne maintenant l'interpréteur de la copie installée (`.venv`,
+  posé par `setup`) quand il existe : avec le python3 du système, la forme documentée
+  `{python} tasks/<ID>/check.py` ne pouvait jamais passer dans un projet uv (« No module named
+  'app' »), et le contrôle rouge prenait ce rouge-là pour un vrai. Il nomme désormais ces rouges
+  techniques (le paquet même du projet introuvable, une erreur de syntaxe dans la preuve) comme
+  « mauvaise raison », et `make task-new` écrit un squelette de script, pas un test pytest, pour
+  une preuve lancée comme un script. Un contrat n'est approuvé que sur une branche principale :
+  `BASE=origin/<n'importe quelle branche>` et un `origin/HEAD` pointé sur `task/…` faisaient lire
+  « approuvé » un contrat écrit par l'agent. Un silencieux dans un fichier de données
+  (`{"note": "# noqa"}` dans un JSON) ou sur une ligne de chaîne n'en est plus un.
+  `"verify": null`, `src//app/`, `src/ `, `~/x` et `MAKEFILE` dans `allowed_paths` sont refusés
+  à la validation. `make taches` et `make score` ne tombent plus sur un octet qui n'est pas de
+  l'UTF-8 dans un journal ; `make score` borne les valeurs absurdes (critères satisfaits
+  supérieurs au total, durées négatives ou infinies, niveau qui n'en est pas un, identifiant
+  avec saut de ligne). `make task-clore` garde aussi le dernier rapport du juge, celui que
+  `make delivery-manifest` lit. `make delivery-check` refuse proprement un manifeste illisible,
+  et recompare l'empreinte du rapport avec `REPORT=`. `make review` ne compte plus verte une
+  étape `make sec` partielle, refuse un `GNUmakefile` ou un `makefile` posé dans le dossier de
+  la tâche, et lance ses étapes avec le Makefile de votre copie. La démonstration du juge part
+  du dernier commit et retrouve EXEMPLE-001 rangée dans un lot.
+- **La garde du terminal.** Fermé : `echo x > $(pwd)/Makefile` et `` > `pwd`/Makefile `` (le
+  mot que laisse une substitution est lu), `git symbolic-ref HEAD refs/heads/main && git commit`
+  et `git filter-branch` sur main, `git worktree add … main && git -C … commit` dans la même
+  commande, `git update-index --skip-worktree|--assume-unchanged` sur une zone (qui la cachait
+  à la sentinelle et à la revue : les deux relisent les fichiers marqués), `mkdir`, `ln` ou `mv`
+  vers `AGENT_STOP` (un dossier ou un lien sous ce nom neutralisait le bouton d'arrêt :
+  le kill-switch arrête aussi sur une forme altérée, et `make stop` le refuse), `mkdir tasks/x`,
+  un script qui lit un secret dans l'environnement (`os.environ['DB_PASSWORD']`,
+  `process.env.API_TOKEN`, `dict(os.environ)`), `cat /proc/self/environ`, `cp`, `dd`, `tar`,
+  `openssl` sur un fichier refusé à la lecture, `git config --global` d'une clé qui exécute
+  (`core.hooksPath`, `alias.*`, `credential.helper`…), et l'écriture des points d'exécution
+  différée du poste, nouvelles zones : `~/.gitconfig`, `~/.config/git/`, `~/.ssh/`, les rc du
+  shell. Une commande de plus de 512 Kio est refusée d'emblée (un seul mot d'un mégaoctet tenait
+  la garde vingt-cinq secondes). `tool_input` en chaîne JSON est relu comme `toolArgs`. Les refus
+  de `.claude/settings.json` doublent la garde sur `git symbolic-ref`, `update-index`,
+  `filter-branch` et `make copilot-install`.
+- **L'anti-secret.** Une constante au nom lisible (`AUTH_TOKEN_HEADER_NAME=X-Auth-Token-For-…`,
+  `TOKEN_PERMISSIONS=contents-read_pull-requests-write`) n'est plus refusée : une valeur tirée
+  au hasard porte un chiffre ou un signe de base64. Un mot de passe entre apostrophes est vu
+  comme entre guillemets.
+- **Installation, mise à jour, adaptateurs.** `make adapters` ne tombe plus en trace sur des
+  réglages légitimes (une règle `mcp__serveur__outil`, une skill dont le bloc `!` tient sur
+  plusieurs lignes, un sous-agent sans `description:`, `maxTurns: "15"`) : ce qu'il ne sait pas
+  traduire est nommé en note, le reste s'écrit ; un échec arrête l'installation, en tête du
+  bilan et par son code de sortie, au lieu de « 0 à fusionner ». `python3 .ephor/adapters.py
+  check` laisse un sous-agent ou une commande opencode du projet. `make opencode-modeles` règle
+  l'agent par le nom de son fichier (celui qu'opencode lit), nomme les rôles dont `model:` n'est
+  pas un niveau, et refuse une valeur sans `fournisseur/`. Un `opencode.json` du projet dont le
+  bloc `permission` est remplacé le lit en note. Un sous-agent ou une skill retouchés par le
+  projet, qu'Ephor n'a pas changés entre les deux versions, sont « rien à reprendre », sans
+  `.ephor-new` ni WARN de `make doctor` pour toujours. L'installation pose `CLAUDE.md`
+  (`@AGENTS.md`) et `.github/copilot-instructions.md` s'ils manquent : sans eux, Claude Code et
+  Copilot travaillaient sans contrat de travail chargé ; les `.ephor-new` des adaptateurs sont
+  comptés dans le bilan ; une ligne de `.gitignore` déjà couverte n'est plus ajoutée.
+  `empreintes.py` refuse de réécrire la liste depuis un clone superficiel (elle perdait toutes
+  les versions passées, et `check` la disait « à jour »), garde les versions déjà écrites, et
+  `check` voit une version disparue. Le greffon opencode ne jette plus une exception sur un
+  `edits` qui n'est pas une liste.
+- **Les outils.** `make test-fast FAST_PCT=abc` refusait mal : trace, « 0/6 », puis toute la
+  suite en vert ; il refuse, borne 1-100, et ne lance rien sur un échantillon vide ; hors Python,
+  il dit SKIP même avec le moteur dans le dépôt. `make map` ne compte plus `.ephor/*.py` comme
+  le code d'un projet Node. `make gitlab-check` dit une réponse tronquée sans trace, et un jeton
+  refusé (401, 403) comme tel. `make doctor` ne réclame plus uv à un dépôt qui n'est pas Python,
+  masque chaque mot de passe de proxy entier (même avec un `@` dedans) et nomme chaque variable.
+  `make lint` et `verify` ne comptent plus un avertissement de ruff comme un constat, et le
+  moteur n'en émet plus. `make arch` dit quand lint-imports n'a pas tourné. `make stop` écrit
+  pourquoi dans `AGENT_STOP`. `make clean` emporte `mutants/` et les caches de lint-imports et
+  mutmut. `make ephor-test` dit « .ephor/tests absent » sans rien lancer dans un dépôt équipé par
+  le script. Sans dossier `tests/`, pytest ne descend plus dans `tasks/` ni `mutants/`
+  (`norecursedirs`). `make refs` sépare l'état du chemin ; `make map REPO=x | head` ne dit plus
+  « Broken pipe ». `.editorconfig` garde les tabulations du Makefile. La CI GitLab de référence
+  installe `make` avec `git` : sans gitleaks, `make sec` y échoue en nommant ce qui manque, au
+  lieu de « command not found ».
+- **La documentation.** Les tests d'Ephor partent dans l'archive (la recette « nouveau projet »
+  les a), pas avec le script d'installation : trois passages disaient le contraire. Les listes
+  des modules du moteur étaient incomplètes ; le runbook prescrivait `cat` d'un journal ;
+  la doc 10 citait un `sed -i ''` qui ne marche que sous BSD ; la table des dépendances de
+  `docs/03` était vide ; la doc 11 annonçait 0,5 s pour une commande de 2 Mo. `tasks/README.md`
+  dit où juger (depuis votre copie) et ce qu'est `{python}`. Les skills nomment l'outil `Agent`
+  (le nom actuel de `Task`).
+
+**Ce qui peut changer pour vous.** `make judge BASE=origin/<branche>` n'accepte plus qu'une
+branche principale. Un critère `{python} …` tourne avec l'interpréteur de la copie installée :
+un script qui comptait sur le python3 du système en prend acte. `make review` refuse un
+`GNUmakefile` dans le dossier de la tâche. `make task-check` peut maintenant refuser un rouge
+« technique » qu'il acceptait. L'installation échoue (code 1) quand les adaptateurs tombent.
+Les constantes de configuration au nom lisible ne sont plus refusées par l'anti-secret.
+
+**Après la mise à jour d'un projet** : `make adapters` (les refus ajoutés dans
+`.claude/settings.json` en dérivent) ; `make copilot-install` n'est pas nécessaire.
+
+**Limites connues, gardées.** Un silencieux dans une chaîne de plusieurs lignes d'un fichier
+Python n'est pas distingué d'un commentaire (lecture à la ligne). `grep -r` sans `--include`
+sur un dossier qui contient `.env` n'est pas lu comme une lecture de secret (rg, qui respecte
+`.gitignore`, est l'outil recommandé). Une fusion par squash dont un conflit a été résolu n'est
+pas reconnue comme fusion (`make task-clore ID=X FORCE=1`). L'image de CI (ghcr.io) n'a pas pu
+être reconstruite dans ce conteneur ; Podman, opencode et Copilot en session réelle restent à
+voir sur le poste (#39).
+
 ## 1.5.2 — 1er octobre 2026
 
 Chaque fonctionnalité de la 1.5.1 évaluée de nouveau, par trois relectures adverses menées
