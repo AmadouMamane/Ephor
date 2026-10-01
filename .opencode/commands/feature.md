@@ -13,7 +13,7 @@ description: "Boucle complète d'une fonctionnalité, du contrat au juge et à l
 
 Tâches :
 
-!`{ make -s taches 2>/dev/null || ls tasks 2>/dev/null | grep -v README || echo "aucune tâche"; } | head -40`
+!`( make -s taches 2>/dev/null || ls tasks 2>/dev/null | grep -v README ) | head -40`
 
 ## En automatique, par défaut
 
@@ -56,7 +56,9 @@ pas), et arrête-toi. Seulement s'il te demande de travailler ici : `git switch 
 volumineuse reste dans son contexte, seule la synthèse remonte.
 
 **4. Le plus petit incrément.** Reste dans `allowed_paths`. Un incrément, un commit.
-`make verify` après chaque incrément : c'est la boucle rapide.
+`make verify` après chaque incrément : c'est la boucle rapide. Lance-le tel quel, sans `| tee`
+ni redirection : sa sortie est déjà courte, et un tuyau vers un fichier ferait demander une
+permission à l'opérateur.
 
 **5. Le juge.** `make judge TASK=<ID>`. Lis `.verify/judge/<ID>/latest/summary.txt`,
 puis **uniquement** le journal de l'étape en échec. Corrige et recommence.

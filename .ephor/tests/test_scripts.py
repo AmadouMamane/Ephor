@@ -1512,3 +1512,52 @@ def test_sans_dossier_tests_pytest_ne_collecte_ni_tasks_ni_mutants(tmp_path: Pat
         check=False,
     )
     assert "1 test collected" in explicite.stdout, "un chemin explicite (un critère) reste collecté"
+
+
+def test_la_revue_ne_prend_pas_le_makefile_pour_un_makefile_detourne(tmp_path: Path) -> None:
+    """Sur le disque insensible à la casse d'un Mac, `[ -e makefile ]` est vrai dès que
+    `Makefile` existe : la revue refusait toujours, « makefile existe » (vu le 01/10/2026). Un
+    vrai `GNUmakefile` reste refusé."""
+    (tmp_path / "Casse").write_text("x")
+    if not (tmp_path / "casse").exists():
+        pytest.skip("disque sensible à la casse : rien à distinguer ici")
+    cible = tmp_path / "depot"
+    cible.mkdir()
+    git(cible, "init", "-q", "-b", "main")
+    git(cible, "config", "user.email", "test@example.invalid")
+    git(cible, "config", "user.name", "Ephor test")
+    bootstrap(cible)
+    (cible / "tasks" / "T-001").mkdir(parents=True)
+    (cible / "tasks" / "T-001" / "contract.json").write_text('{"risk": "faible"}\n')
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "base")
+
+    def revue() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", ".ephor/scripts/review.sh", "T-001"],
+            cwd=cible,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+
+    sortie = revue()
+    assert "GNU make le lirait" not in sortie.stderr, sortie.stderr
+    assert "Niveau de risque   : faible" in sortie.stdout
+    (cible / "GNUmakefile").write_text("x:\n\ttrue\n")
+    sortie = revue()
+    assert sortie.returncode == 1 and "GNUmakefile" in sortie.stderr
+
+
+def test_l_installation_compte_les_tests_javascript(tmp_path: Path) -> None:
+    """« tests détectés : 0 fichier(s) » sur un dépôt Node dont les tests sont des `*.test.mjs`
+    (vu le 01/10/2026) : seuls `*.test.ts` étaient comptés côté JavaScript."""
+    cible = tmp_path / "depot"
+    depot_node(cible)
+    (cible / "test").mkdir()
+    (cible / "test" / "add.test.mjs").write_text("import test from 'node:test';\n")
+    (cible / "src" / "util.spec.js").write_text("describe('x', () => {});\n")
+    git(cible, "add", "-A")
+    git(cible, "commit", "-qm", "tests js")
+    assert "tests détectés : 2 fichier(s)" in bootstrap(cible)

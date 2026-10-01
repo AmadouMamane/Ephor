@@ -295,8 +295,7 @@ commits_du_tour() { # les zones que touchent les commits créés pendant le tour
 
 controler() { # controler <quand> : compare à la photo ; alerte et rend 1 si une zone a changé
   local avant maintenant reference tete_avant tete changes liste total raison nouveaux drapeau
-  local deplacees nom sha actuel remedes paquet
-  local -a paquets=()
+  local deplacees nom sha actuel remedes paquet paquets
   avant="$(lue arbre)"
   if [ -z "$avant" ] || ! git cat-file -e "$avant^{tree}" 2>/dev/null; then
     return 0  # pas de photo pour ce tour (hook branché en cours de session) : on commence ici
@@ -346,7 +345,9 @@ PRINCIPALES
   if [ -n "$(lue opencode)" ]; then
     # `read -a`, pas `for x in $(…)` : une version `*` se développerait en noms de fichiers.
     read -r -a paquets <<< "$(paquets_opencode)"
-    for paquet in "${paquets[@]}"; do
+    # `${paquets[@]+…}` : sous le bash 3.2 de macOS, un tableau vide est « unbound » avec
+    # `set -u`, et la sentinelle tombait à chaque fin de tour (vu en session réelle, 01/10/2026).
+    for paquet in ${paquets[@]+"${paquets[@]}"}; do
       case " $(lue opencode) " in *" $paquet "*) ;; *) nouveaux="$nouveaux $paquet" ;; esac
     done
   fi

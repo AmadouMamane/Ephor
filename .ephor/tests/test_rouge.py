@@ -1526,7 +1526,10 @@ def test_un_nom_de_fichier_qui_n_est_pas_de_l_utf8_est_un_refus(
     """Un `UnicodeDecodeError` faisait planter le juge : « VERDICT : running », et le journal
     gardait ce statut, qui refaisait la tâche « en cours » dans `make taches`."""
     (repo / "src" / "metrics.py").write_text(FIX)
-    (repo / os.fsdecode(b"src/caf\xe9.txt")).write_text("x")
+    try:
+        (repo / os.fsdecode(b"src/caf\xe9.txt")).write_text("x")
+    except OSError as exc:  # APFS (macOS) refuse un nom qui n'est pas de l'UTF-8 : rien à juger ici
+        pytest.skip(f"le système de fichiers refuse un tel nom ({exc.strerror})")
     code, report = run_judge(repo)
     assert code == 2 and report["status"] == "rejected", report
     assert "pas de l'UTF-8" in report["reasons"][0]

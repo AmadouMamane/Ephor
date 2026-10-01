@@ -19,6 +19,7 @@ paths = ['''^\.ephor/tests/test_hooks\.py$''']
 regexes = [
   '''^glpat-AbCdEfGhIjKlMnOpQrSt$''',
   '''^abcdef0123456789abcd$''',
+  '''^Zk8s9Qw2Lm4Np7Rt1Vx3Yb6Cd0Ef5Gh$''',
 ]
 
 # Le faux GitLab des tests de `make gitlab-check` réclame un jeton, et gitleaks le reconnaît

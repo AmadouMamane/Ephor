@@ -1616,3 +1616,13 @@ def test_les_modeles_d_opencode_suivent_le_nom_du_fichier_et_nomment_les_oublies
     assert "relecteur" not in reglee["agent"]
     assert reglee["agent"]["scout"]["model"] == "p/vite"
     assert "reviewer (model: claude-sonnet-4-5)" in sortie
+
+
+def test_les_blocs_en_ligne_des_skills_passent_le_controle_de_claude_code() -> None:
+    """Claude Code 2.1.286 refuse un bloc `!`…`` qui mêle une accolade et un guillemet
+    (« Contains brace with quote character (expansion obfuscation) ») : la skill /feature ne
+    démarrait plus du tout (vu en session réelle, 01/10/2026)."""
+    for skill in sorted((ROOT / ".claude" / "skills").glob("*/SKILL.md")):
+        for bloc in re.findall(r"!`([^`]*)`", skill.read_text(encoding="utf-8")):
+            melange = (set("{}") & set(bloc)) and (set("\"'") & set(bloc))
+            assert not melange, f"{skill.relative_to(ROOT)} : accolade et guillemet dans « {bloc} »"

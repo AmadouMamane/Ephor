@@ -36,12 +36,13 @@ pas cette recette, allez droit à [`.ephor/docs/10-installation.md`](.ephor/docs
 
 ```bash
 mkdir -p ~/dev && cp -R ephor ~/dev/mon-projet && cd ~/dev/mon-projet   # hors dossier synchronisé
-rm -rf .git .venv .verify                # sans ça : historique d'Ephor hérité, venv périmé, git init ignoré
+rm -rf .git .venv .verify .depot-ephor   # sans ça : historique d'Ephor hérité, venv périmé, git init ignoré, tests du dépôt d'Ephor seul
 git init -b main && git add -A && git commit -m "chore: base Ephor"
 brew install uv                          # obligatoire : l'environnement du projet
 brew install jq ripgrep fd               # confort ; sans jq les garde-fous lisent le JSON avec python3
 make doctor                              # nomme chaque problème et donne la commande exacte
 make setup && make verify                # doit afficher VERDICT: GREEN
+make task-check ID=EXEMPLE-001 && git add tasks && git commit -qm "EXEMPLE-001 : contrôle rouge sur ce dépôt"   # la trace rouge de l'exemple, dans VOTRE historique
 bash .ephor/scripts/demo_judge.sh       # le juge face à un agent honnête, tricheur, maladroit
 ```
 
@@ -172,8 +173,10 @@ juste et à un code tricheur. L'aspirateur de documentation a été essayé sur 
 sites, les dépôts de référence sur des dépôts fabriqués pour l'occasion : aucun des deux
 sur un dépôt de production. `make score` n'a encore jamais vu de vraie tâche mesurée en
 tokens ; le compteur de Copilot a été relu sur quinze journaux réels, pas encore au fil
-d'une tâche. opencode a été essayé en session réelle (1.18.32) : écriture d'un secret refusée,
-arrêt d'urgence respecté. Copilot aussi (VS Code 1.139.0) : le greffon installé par
+d'une tâche. opencode a été essayé en session réelle (1.18.32, puis 1.18.33 sur la 1.5.3) : écriture
+d'un secret refusée, arrêt d'urgence respecté, édition d'une zone et lecture d'un `.env`
+refusées. Claude Code 2.1.286 a déroulé `/feature` de bout en bout dans le dossier d'une tâche
+(1.5.3). Copilot aussi (VS Code 1.139.0) : le greffon installé par
 `make copilot-install` est bien appelé, un refus laisse le fichier intact, et la vue
 « agents » lance aussi les hooks du dépôt (`.ephor/docs/11-trois-agents.md`). Le juge a
 tourné sous Podman 6.1.2 sur Mac, image non root comprise, et sous Linux ; sous Docker Linux,

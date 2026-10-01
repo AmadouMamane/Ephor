@@ -7,7 +7,7 @@ description: "Prépare un passage de relais propre avant /clear, avant une pause
 
 État :
 
-!`git log --oneline -5 2>/dev/null || echo '(aucun commit)'`
+!`git log --oneline -5 2>/dev/null`
 
 !`git status --short 2>/dev/null | head -20 || true`
 

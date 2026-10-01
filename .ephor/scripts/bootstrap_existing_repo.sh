@@ -461,7 +461,7 @@ mkdir -p .verify
   # shellcheck disable=SC2012  # simple inventaire lisible, pas de traitement des noms
   [ -d .github/workflows ] && echo "- CI GitHub Actions : $(ls .github/workflows | tr '\n' ' ')"
   { [ -f Containerfile ] || [ -f Dockerfile ]; } && echo "- image de conteneur (Containerfile/Dockerfile)"
-  echo "- tests détectés : $(find . \( -path ./node_modules -o -path ./.ephor \) -prune -o \( -name 'test_*.py' -o -name '*_test.go' -o -name '*.test.ts' -o -name '*Test.java' \) -print 2>/dev/null | wc -l | tr -d ' ') fichier(s)"
+  echo "- tests détectés : $(find . \( -path ./node_modules -o -path ./.ephor \) -prune -o \( -name 'test_*.py' -o -name '*_test.go' -o -name '*.test.ts' -o -name '*.test.tsx' -o -name '*.test.js' -o -name '*.test.mjs' -o -name '*.spec.ts' -o -name '*.spec.js' -o -name '*Test.java' \) -print 2>/dev/null | wc -l | tr -d ' ') fichier(s)"
 } > .verify/detection.md
 sed 's/^/  /' .verify/detection.md
 

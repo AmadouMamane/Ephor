@@ -8,7 +8,7 @@ allowed-tools: Bash(git status *) Bash(git log *) Bash(git diff *) Bash(git add 
 
 État :
 
-!`git log --oneline -5 2>/dev/null || echo '(aucun commit)'`
+!`git log --oneline -5 2>/dev/null`
 
 !`git status --short 2>/dev/null | head -20 || true`
 

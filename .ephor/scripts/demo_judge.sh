@@ -36,6 +36,12 @@ git add -A && git commit -qm "base approuvée : template, contrat EXEMPLE-001 et
 # `make task-ranger` (relecture du 01/10/2026).
 DOSSIER="$(python3 .ephor/judge.py dossier --task-id EXEMPLE-001 2>/dev/null || echo tasks/EXEMPLE-001)"
 [ -f "$DOSSIER/test_exemple_001.py" ] || { echo "EXEMPLE-001 introuvable ($DOSSIER) : la démonstration a besoin du contrat d'exemple"; exit 1; }
+# Rouge d'abord, ici même : la trace livrée cite un commit du dépôt d'Ephor, absent de cette
+# histoire neuve, et chaque verdict le disait (« contrôle rouge fait sur un commit absent »).
+echo "=== 0. contrôle rouge : les critères échouent avant tout travail"
+python3 .ephor/judge.py rouge --task-id EXEMPLE-001 --runtime "$RUNTIME" \
+  --workdir "$HOME/.cache/ephor/demo" | grep -E '^  (rouge|FAUX)|^REFUS' || true
+git add -A && git commit -qm "EXEMPLE-001 : contrôle rouge sur cette base"
 
 judge() { python3 .ephor/judge.py check --task-id EXEMPLE-001 --runtime "$RUNTIME" \
   --workdir "$HOME/.cache/ephor/demo" || true; }

@@ -9,8 +9,8 @@ Chaque fonctionnalité de la 1.5.2 évaluée de nouveau, par quatre relectures a
 dans des dépôts jetables hors du dossier d'Ephor (juge et boucle de tâche ; garde-fous ;
 installation, mise à jour et greffons ; outils annexes, CI et documentation), plus une relecture
 du diff. Chaque défaut a été rejoué, puis fermé par un test qui échoue sans son correctif
-(1 092 tests d'Ephor collectés avant, 1 178 après ; ici, 1 174 passent et 4 sautent, faute
-de gitleaks et d'une image de CI joignable). Le juge en conteneur a été rejoué sous Docker,
+(1 092 tests d'Ephor collectés avant, 1 182 après ; sur un Mac, 1 181 passent et 1 saute, un
+nom de fichier qu'APFS refuse). Le juge en conteneur a été rejoué sous Docker,
 sur l'image de test ; l'image de CI n'a pas pu être construite ici (ghcr.io refusé par le
 proxy), et les deux tests qui la construisent disent maintenant SKIP, avec la raison, au lieu
 d'échouer.
@@ -96,6 +96,40 @@ d'échouer.
   dit où juger (depuis votre copie) et ce qu'est `{python}`. Les skills nomment l'outil `Agent`
   (le nom actuel de `Task`).
 
+- **Rejoué sur un Mac, avec les vrais outils.** Cette version et les deux précédentes avaient
+  été évaluées dans un conteneur Linux ; rejouées sur un Mac (bash 3.2, disque insensible à la
+  casse), trois défauts sortaient aussitôt, dont deux qui rendaient Ephor inutilisable sous
+  Claude Code depuis la 1.5.2 : la sentinelle tombait au début et à la fin de chaque tour
+  (`paquets[@]: unbound variable` : un tableau vide, que le bash 3.2 de macOS ne lit pas avec
+  `set -u`), et Claude Code refusait alors chaque demande de l'opérateur ; la skill `/feature`
+  ne démarrait plus (Claude Code 2.1.286 refuse un bloc en ligne qui mêle une accolade et un
+  guillemet, « expansion obfuscation ») ; et `make review` refusait toujours (« makefile
+  existe » : sur un disque insensible à la casse, `[ -e makefile ]` est vrai dès que `Makefile`
+  existe). Les trois sont corrigés, chacun avec un test qui échoue sur l'ancien code (le premier
+  cherche la forme même, la CI tournant sous un bash récent qui ne voit rien). La sentinelle a
+  ensuite fait son travail : une retouche de l'opérateur dans une zone, en cours de session, a
+  été nommée, et l'agent arrêté jusqu'à `make resume`.
+- **Ce qui a été rejoué sur ce poste** (#39, pour Podman et opencode) : la recette du projet neuf
+  du `README.md` ; `make doctor`, `make setup`, `make verify` ; la démonstration du juge, en local
+  et sous Podman 6.1.2 (quatre verdicts justes dans les deux cas) ; l'approbation d'un geste
+  (`make task-approve`, « oui » tapé, dossier de la tâche ouvert, ligne à coller) ; une session
+  Claude Code 2.1.286 lancée par cette ligne (`/feature FEAT-001` : implémentation,
+  `make verify`, juge VÉRIFIÉ, évaluateur, `PROGRESS.md`) ; opencode 1.18.33 : l'édition d'une
+  zone refusée par le greffon, la lecture d'un `.env` par le terminal refusée ; la mise à jour
+  d'un projet né de l'archive 1.5.0 (rien à fusionner) ; l'installation sur un dépôt Node et sur
+  un dépôt Python sans uv ; une preuve lancée comme un script (`{python}` : squelette refusé,
+  rouge pour la bonne raison, faute de syntaxe nommée) ; chaque cible annexe de `make`. Reste à
+  voir sur un poste : Copilot en session réelle.
+- **Petits points, vus en rejouant.** La démonstration du juge refait d'abord le contrôle rouge
+  sur sa propre base (sa trace livrée citait un commit du dépôt d'Ephor, absent d'une histoire
+  neuve, et chaque verdict le disait) ; la recette du projet neuf retire aussi `.depot-ephor`,
+  et refait ce contrôle rouge dans votre historique. La skill `/feature` dit de lancer
+  `make verify` tel quel : un `| tee` vers un fichier faisait demander une permission en plein
+  mode automatique. L'installation compte les tests JavaScript (`*.test.js`, `*.test.mjs`,
+  `*.spec.*`), pas seulement `*.test.ts`. Un faux mot de passe des tests est exempté de gitleaks
+  par sa valeur (la CI de cette version était rouge pour lui seul). Le test du nom de fichier qui
+  n'est pas de l'UTF-8 saute quand le disque refuse un tel nom (APFS).
+
 **Ce qui peut changer pour vous.** `make judge BASE=origin/<branche>` n'accepte plus qu'une
 branche principale. Un critère `{python} …` tourne avec l'interpréteur de la copie installée :
 un script qui comptait sur le python3 du système en prend acte. `make review` refuse un
@@ -110,9 +144,8 @@ Les constantes de configuration au nom lisible ne sont plus refusées par l'anti
 Python n'est pas distingué d'un commentaire (lecture à la ligne). `grep -r` sans `--include`
 sur un dossier qui contient `.env` n'est pas lu comme une lecture de secret (rg, qui respecte
 `.gitignore`, est l'outil recommandé). Une fusion par squash dont un conflit a été résolu n'est
-pas reconnue comme fusion (`make task-clore ID=X FORCE=1`). L'image de CI (ghcr.io) n'a pas pu
-être reconstruite dans ce conteneur ; Podman, opencode et Copilot en session réelle restent à
-voir sur le poste (#39).
+pas reconnue comme fusion (`make task-clore ID=X FORCE=1`). Copilot en session réelle reste à voir sur un
+poste (#39) ; Podman et opencode l'ont été (ci-dessus).
 
 ## 1.5.2 — 1er octobre 2026
 

@@ -80,8 +80,10 @@ fi
 # GNU make lit GNUmakefile puis makefile AVANT Makefile : posé dans le dossier de la tâche,
 # même hors de git (.git/info/exclude), l'un ou l'autre détournait les étapes de la revue
 # (« ok » en 0 s, relecture du 01/10/2026). Le disque, pas git ; et le Makefile de VOTRE copie.
+# Par le nom exact de l'entrée (find), pas `[ -e ]` : sur le disque insensible à la casse d'un
+# Mac, « makefile » existe dès que Makefile existe, et la revue refusait toujours (01/10/2026).
 for DETOUR in GNUmakefile makefile; do
-  if [ -e "$DETOUR" ]; then
+  if [ -n "$(find . -maxdepth 1 -name "$DETOUR" -print 2>/dev/null | head -n 1)" ]; then
     echo "REFUS : $PWD/$DETOUR existe : GNU make le lirait à la place du Makefile, et la revue" >&2
     echo "lancerait ce que l'agent y a mis. Retirez-le (git status --ignored) avant de relancer." >&2
     exit 1

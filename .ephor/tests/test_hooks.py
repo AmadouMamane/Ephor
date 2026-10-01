@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -2584,3 +2585,22 @@ def test_des_arguments_en_chaine_json_sous_tool_input_sont_lus(tmp_path: Path) -
         "tool_input": json.dumps({"file_path": "Makefile", "content": "x"}),
     }
     assert hook("avant-outil.sh", charge, cwd=repo, project=repo).returncode == 2
+
+
+def test_aucun_tableau_vide_n_est_declare_dans_les_scripts_bash() -> None:
+    """`local -a x=()` puis `"${x[@]}"` : sous le bash 3.2 de macOS, avec `set -u`, c'est
+    « x[@]: unbound variable », et la sentinelle tombait au début et à la fin de chaque tour :
+    Claude Code refusait alors chaque demande de l'opérateur (vu en session réelle, 01/10/2026).
+    La CI tourne sous un bash récent, qui ne le voit pas : on cherche la forme elle-même."""
+    motif = re.compile(r"^\s*(?:local|declare|typeset)\s+-[a-zA-Z]*a[a-zA-Z]*\s+\w+=\(\)", re.M)
+    scripts = [
+        *HOOKS.glob("*.sh"),
+        *(ROOT / ".ephor" / "scripts").glob("*.sh"),
+        *(ROOT / ".ephor" / "greffon-copilot" / "hooks").glob("*.sh"),
+    ]
+    fautifs = [
+        str(script.relative_to(ROOT))
+        for script in scripts
+        if motif.search(script.read_text(encoding="utf-8"))
+    ]
+    assert fautifs == [], f"tableau vide déclaré, illisible sous bash 3.2 : {fautifs}"
