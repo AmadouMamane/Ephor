@@ -550,6 +550,15 @@ def test_une_retouche_d_un_fichier_qu_ephor_ne_change_pas_n_est_pas_a_reprendre(
     assert "À REPRENDRE" in sortie[sortie.index("MISE À JOUR :") :]
 
 
+# L'intégrité d'une LIVRAISON d'Ephor : vérifiée dans son dépôt, pas dans un projet né de son
+# archive, qui retouche son Makefile (sa CI devenait rouge, audit du 01/10/2026). Le marqueur
+# ne part pas dans l'archive (.gitattributes).
+depot_d_ephor = pytest.mark.skipif(
+    not (ROOT / ".depot-ephor").exists(), reason="intégrité d'une livraison : dépôt d'Ephor seul"
+)
+
+
+@depot_d_ephor
 def test_les_versions_actuelles_ont_leur_empreinte() -> None:
     """Sans elle, une mise à jour ne reconnaîtrait pas la version qu'elle doit remplacer, et
     le fichier resterait en `.ephor-new` pour toujours. À refaire à chaque livraison qui
@@ -564,6 +573,7 @@ def test_les_versions_actuelles_ont_leur_empreinte() -> None:
     assert resultat.returncode == 0, resultat.stdout
 
 
+@depot_d_ephor
 def test_tout_ce_que_l_installation_pose_hors_du_moteur_a_son_empreinte(tmp_path: Path) -> None:
     """Un fichier d'Ephor posé hors du moteur sans empreinte ne serait jamais reconnu, donc
     jamais remplacé. Les réglages du projet, l'état tenu par l'agent et les fichiers que les

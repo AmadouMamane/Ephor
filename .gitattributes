@@ -1,0 +1,2 @@
+# Ce qui reste dans le dépôt d'Ephor et ne part pas dans son archive (`git archive`).
+/.depot-ephor export-ignore

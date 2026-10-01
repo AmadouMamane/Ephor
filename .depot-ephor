@@ -1,0 +1,7 @@
+Ce fichier dit « ici, c'est le dépôt d'Ephor », celui où il se développe et d'où il se livre.
+
+Il ne part pas dans l'archive d'Ephor (`export-ignore`, voir .gitattributes) : un projet né de
+cette archive ne l'a donc pas. Les tests qui vérifient l'intégrité d'une livraison (les
+empreintes de ce qu'Ephor pose hors de .ephor/) ne tournent que là où il est : dans un projet,
+ils devenaient rouges dès que le projet retouchait son Makefile, et sa CI avec (audit du
+01/10/2026).
