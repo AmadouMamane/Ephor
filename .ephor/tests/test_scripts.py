@@ -728,6 +728,32 @@ def test_le_doctor_voit_le_bac_a_sable_saute_sous_linux(tmp_path: Path) -> None:
     assert "[WARN] bac à sable de Claude Code coupé" in diagnostic()
 
 
+def test_le_diagnostic_tait_le_mot_de_passe_du_proxy_et_voit_les_gardes_absentes(
+    tmp_path: Path,
+) -> None:
+    """Deux défauts de `make doctor` (audit du 01/10/2026) : il affichait `HTTPS_PROXY` en
+    entier, mot de passe compris, dans une sortie que l'agent lit ; et, sur un dépôt dont les
+    réglages ne déclarent aucune garde (geste 0 pas fait), il concluait « Rien ne bloque »."""
+    cible = tmp_path / "depot"
+    depot_node(cible)
+    bootstrap(cible)
+    proxy = "http://moi:MotDePasseSecret@127.0.0.1:9"
+    env = dict(os.environ, HTTPS_PROXY=proxy, https_proxy=proxy, HTTP_PROXY=proxy, http_proxy=proxy)
+    sortie = subprocess.run(
+        ["bash", ".ephor/scripts/doctor.sh"],
+        cwd=cible,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=180,
+        check=False,
+    )
+    assert "MotDePasseSecret" not in sortie.stdout + sortie.stderr
+    assert "127.0.0.1:9" in sortie.stdout, "le proxy reste nommé"
+    assert "aucun garde-fou d'Ephor" in sortie.stdout and "Rien ne bloque" not in sortie.stdout
+    assert sortie.returncode != 0
+
+
 def test_la_revue_trouve_le_contrat_sur_master_comme_le_juge(tmp_path: Path) -> None:
     """`make review` ne cherchait l'approbation que sur `main` : sur un dépôt dont la branche
     principale s'appelle `master`, il annonçait « c'est l'approbation qui manque » alors que

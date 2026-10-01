@@ -100,7 +100,9 @@ echo
 echo "== Réseau et dépôt de paquets (poste contraint) =="
 PROXY=""
 for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
-  [ -n "${!v:-}" ] && PROXY="$v=${!v}"
+  # Sans l'identifiant ni le mot de passe : `make doctor` est permis à l'agent, et sa sortie
+  # entre dans le prompt. Le mot de passe s'y affichait en clair (audit du 01/10/2026).
+  [ -n "${!v:-}" ] && PROXY="$v=$(printf '%s' "${!v}" | sed -E 's#(://)[^/@]*@#\1…@#')"
 done
 [ -n "$PROXY" ] && ok "proxy configuré ($PROXY)" || printf '  [ -- ] aucun proxy dans l'"'"'environnement\n'
 IDX=""
@@ -233,6 +235,12 @@ print(" ".join(n for n in noms if not os.access(os.path.join(".ephor", "hooks", 
 if [ -n "$ABSENTS" ]; then
   bad "hooks déclarés par .claude/settings.json introuvables : $ABSENTS (Claude Code le signale, puis laisse passer l'appel)" \
       "mettez le moteur à jour : bootstrap_existing_repo.sh --mettre-a-jour, depuis le dépôt d'Ephor"
+fi
+# Aucune garde déclarée : Ephor est posé, et rien ne tourne. Le diagnostic concluait « Rien ne
+# bloque » sur un dépôt dont le geste 0 n'était pas fait (audit du 01/10/2026).
+if ! grep -q '\.ephor/hooks/' .claude/settings.json 2>/dev/null; then
+  bad "aucun garde-fou d'Ephor n'est déclaré dans .claude/settings.json : Ephor est posé, et INERTE" \
+      "geste 0 : fusionnez les blocs « hooks » et « permissions » de .claude/settings.json.ephor-new dans le vôtre, puis make adapters"
 fi
 
 echo
