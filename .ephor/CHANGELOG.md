@@ -3,9 +3,16 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
-## 1.5.0 — en préparation
+## 1.5.0 — 1er octobre 2026
 
-Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35).
+Les points de terrain que la 1.4.0 n'avait pas pris (tickets #27 à #35) : un test partagé par
+deux contrats, l'évaluateur qui ne pouvait lancer aucun test, la réponse vide du planner en
+effort max sous opencode, le modèle et l'effort de chaque rôle, cent tâches illisibles,
+`PROGRESS.md` pas tenu, des tâches qui se marchaient dessus dans un même dossier, le mode
+automatique, et les sous-agents lents. Puis chaque fonctionnalité de cette version a été
+rejouée dans un projet neuf, avec les vrais outils : quatre défauts trouvés et corrigés,
+dont deux qui touchaient justement le travail à cent tâches et une tâche par dossier, et
+quelques points plus petits (les cinq dernières entrées).
 
 - **Un test partagé par deux contrats, signalé au moment d'approuver.** Un critère qui lance
   le test d'un autre contrat lie les deux tâches : le juge de l'une peut attendre le travail
