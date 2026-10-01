@@ -7,7 +7,14 @@ set -uo pipefail
 # shellcheck source=/dev/null  # résolu à l'exécution, chemin relatif au hook
 source "$(dirname "$0")/_lib.sh" || { echo "REFUSÉ : la bibliothèque des garde-fous (.ephor/hooks/_lib.sh) ne s'est pas chargée, donc cette garde ne peut rien juger. Elle refuse. Vérifie le dépôt : fichier manquant, droits, ou installation à moitié faite." >&2; exit 2; }
 ROOT="$(racine)"
-if [ -f "$ROOT/AGENT_STOP" ]; then
+ARRET="$ROOT/AGENT_STOP"
+# `make stop` pose AGENT_STOP là où l'opérateur le lance : dans SA copie. L'agent, lui,
+# travaille dans le dossier de la tâche, où ce bouton ne regardait pas (audit du 01/10/2026).
+if [ ! -f "$ARRET" ]; then
+  PRINCIPALE="$(copie_principale "$ROOT")"
+  if [ -n "$PRINCIPALE" ] && [ -f "$PRINCIPALE/AGENT_STOP" ]; then ARRET="$PRINCIPALE/AGENT_STOP"; fi
+fi
+if [ -f "$ARRET" ]; then
   # Une exception, et une seule : écrire PROGRESS.md. C'est ce qu'on lui demande de faire
   # avant de s'arrêter ; le lui interdire ferait tourner l'agent dans le vide.
   # Un lot mixte ne passe pas : il suffirait sinon de joindre PROGRESS.md à autre chose.
@@ -33,7 +40,7 @@ CIBLES_LISTE
       [ "$SEULEMENT" = "1" ] && exit 0
     fi
   fi
-  RAISON="$(head -c 400 "$ROOT/AGENT_STOP" 2>/dev/null | tr '\n' ' ')"
+  RAISON="$(head -c 400 "$ARRET" 2>/dev/null | tr '\n' ' ')"
   [ -n "$RAISON" ] || RAISON="l'opérateur a demandé l'arrêt."
   echo "AGENT_STOP est présent : $RAISON Résume ton état dans PROGRESS.md puis arrête-toi. Ne supprime pas AGENT_STOP." >&2
   exit 2

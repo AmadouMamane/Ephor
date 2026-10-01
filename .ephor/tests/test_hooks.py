@@ -118,6 +118,27 @@ def test_kill_switch(tmp_path: Path) -> None:
     assert hook("kill-switch.sh", {}, project=tmp_path).returncode == 2
 
 
+def test_make_stop_dans_la_copie_principale_arrete_l_agent_d_un_dossier_de_tache(
+    tmp_path: Path,
+) -> None:
+    """`make stop` pose AGENT_STOP là où l'opérateur le lance, dans sa copie ; l'agent, lui,
+    travaille dans le dossier de la tâche, où le bouton ne regardait pas (audit du 01/10/2026)."""
+    principale = tmp_path / "depot"
+    principale.mkdir()
+    git(principale, "init", "-q", "-b", "main")
+    git(principale, "-c", "user.email=t@example.invalid", "-c", "user.name=t",
+        "commit", "-q", "--allow-empty", "-m", "base")  # fmt: skip
+    tache = tmp_path / "depot-T-1"
+    git(principale, "worktree", "add", "-q", "-b", "task/T-1", str(tache))
+    ecrire = {"tool_name": "Write", "tool_input": {"file_path": str(tache / "src" / "a.py")}}
+    assert hook("kill-switch.sh", ecrire, project=tache).returncode == 0
+    (principale / "AGENT_STOP").write_text("l'opérateur reprend la main\n")
+    arret = hook("kill-switch.sh", ecrire, project=tache)
+    assert arret.returncode == 2 and "l'opérateur reprend la main" in arret.stderr
+    progres = {"tool_name": "Write", "tool_input": {"file_path": str(tache / "PROGRESS.md")}}
+    assert hook("kill-switch.sh", progres, project=tache).returncode == 0, "son état, d'abord"
+
+
 @pytest.mark.parametrize(
     "tool_input",
     [

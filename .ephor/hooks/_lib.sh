@@ -351,6 +351,17 @@ ZONES_PRINCIPALES
   return 0
 }
 
+copie_principale() { # copie_principale <racine> : la copie de l'opérateur, vue du dossier
+  # d'une tâche (un worktree) ; rien ailleurs.
+  local commun
+  commun="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 0
+  case "$commun" in /*) ;; *) commun="$1/$commun" ;; esac
+  commun="$(resoudre "$commun")"
+  case "$commun" in */.git) ;; *) return 0 ;; esac
+  [ "${commun%/.git}" != "$(resoudre "$1")" ] && printf '%s\n' "${commun%/.git}"
+  return 0
+}
+
 hors_zone() { # hors_zone <chemin absolu> : une exception de la liste (la mémoire de l'agent) ?
   local motif
   while IFS= read -r motif; do
