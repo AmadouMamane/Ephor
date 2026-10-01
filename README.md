@@ -20,7 +20,7 @@ JFrog et Podman. Trois pièces :
 
 **Python d'abord.** Le juge, les garde-fous, la sentinelle et la CI valent pour tout
 langage : un critère est une commande, et sa preuve peut être le rapport JUnit de Maven,
-Gradle, Jest ou Go (`tasks/README.md`). Quatre pièces ne lisent que le Python, et le disent
+Gradle, Jest ou Go (`tasks/README.md` ; mesuré de bout en bout avec le lanceur de tests de Node, 1.5.4). Quatre pièces ne lisent que le Python, et le disent
 (SKIP) ailleurs : la carte du code (`make map`), la mutation (`make mutants`), l'échantillon
 de tests (`make test-fast`) et le relevé des données personnelles.
 
@@ -175,8 +175,8 @@ sur un dépôt de production. `make score` n'a encore jamais vu de vraie tâche 
 tokens ; le compteur de Copilot a été relu sur quinze journaux réels, pas encore au fil
 d'une tâche. opencode a été essayé en session réelle (1.18.32, puis 1.18.33 sur la 1.5.3) : écriture
 d'un secret refusée, arrêt d'urgence respecté, édition d'une zone et lecture d'un `.env`
-refusées. Claude Code 2.1.286 a déroulé `/feature` de bout en bout dans le dossier d'une tâche
-(1.5.3). Copilot aussi (VS Code 1.139.0) : le greffon installé par
+refusées. Claude Code 2.1.287 a déroulé `/feature` de bout en bout dans le dossier d'une tâche
+(1.5.4 ; la 2.1.286 l'avait fait en 1.5.3). Copilot aussi (VS Code 1.139.0) : le greffon installé par
 `make copilot-install` est bien appelé, un refus laisse le fichier intact, et la vue
 « agents » lance aussi les hooks du dépôt (`.ephor/docs/11-trois-agents.md`). Le juge a
 tourné sous Podman 6.1.2 sur Mac, image non root comprise, et sous Linux ; sous Docker Linux,

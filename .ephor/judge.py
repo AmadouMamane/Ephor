@@ -2528,6 +2528,23 @@ def relayed_names(phase: str) -> list[str]:
     return sorted(names)
 
 
+# Ce qu'uv dit quand le cache ne suffit pas : « Network connectivity is disabled, but the
+# requested data wasn't found in the cache », « Packages were unavailable because the network
+# was disabled ». Rien de plus large : « offline » seul se lit dans la commande elle-même.
+MANQUE_AU_CACHE = re.compile(r"network connectivity is disabled|network was disabled", re.I)
+
+
+def manque_au_cache(log: Path, debut: int) -> bool:
+    """L'installation hors ligne a-t-elle échoué faute de cache, et non pour une autre raison ?
+    Lu dans la sortie de la commande, pas dans son en-tête ; une installation qui échoue
+    autrement n'est pas relancée, le verdict serait le même."""
+    try:
+        sortie = log.read_bytes()[debut:][-20000:].decode("utf-8", "replace")
+    except OSError:
+        return False
+    return MANQUE_AU_CACHE.search(sortie) is not None
+
+
 def kill_group(pid: int) -> None:
     with suppress(ProcessLookupError, PermissionError):
         os.killpg(pid, signal.SIGKILL)
@@ -3050,8 +3067,17 @@ class Banc:
         entree = critere.stdin if critere is not None else None
         log = self.logs / f"{key}.log"
         cleanup: Callable[[], None] | None = None
+        hors_ligne = False
         if self.runtime.kind == "local":
             command, env = resolved, filtered_env(phase, self.has_setup)
+            # L'installation d'abord HORS LIGNE, sur le cache d'uv : avec le réseau, `uv sync`
+            # interroge l'index pour le moteur de construction du projet (hatchling), et le bac à
+            # sable de Claude Code demande alors à l'opérateur d'ouvrir pypi.org ; sans réponse,
+            # l'installation échouait au bout de 47 s et le verdict était ÉCHEC (vu en session
+            # réelle, 02/10/2026). Si le cache ne suffit pas, elle recommence avec le réseau.
+            hors_ligne = phase == "setup" and "UV_OFFLINE" not in env
+            if hors_ligne:
+                env = {**env, "UV_OFFLINE": "1"}
         else:
             name = f"ephor-judge-{self.run_id}-{key.lower()}"
             command, env = container_command(
@@ -3072,6 +3098,15 @@ class Banc:
         if max_seconds is not None and max_seconds < limit:
             limit, bounded = max_seconds, True
         result = run_process(command, self.copy, log, limit, env, on_timeout=cleanup, entree=entree)
+        relance = hors_ligne and result["returncode"] != 0
+        if relance and manque_au_cache(log, result["output_offset"]):
+            shutil.copy2(log, log.with_name(f"{key}.hors-ligne.log"))
+            env.pop("UV_OFFLINE")
+            limit = self.deadline - time.monotonic()
+            result = run_process(
+                command, self.copy, log, limit, env, on_timeout=cleanup, entree=entree
+            )
+            label = f"{label} (cache uv insuffisant : relancée avec le réseau)"
         termine = not result["timed_out"] and not result["output_limit"]
         reason = ""
         if forme == "sortie" and critere is not None:
@@ -4671,7 +4706,12 @@ def cmd_new(args: argparse.Namespace) -> int:
     for path in sorted(set(fournis) - set(tests)):
         reel = relocalise(path, task_id, dossier)
         print(f"ATTENTION : aucun critère ne cite {reel} ; il fera partie des preuves, relisez-le.")
-    if not tests:
+    # Une preuve JUnit (`preuves`) sous le dossier de la tâche en est une aussi : un contrat Node
+    # ou Maven recevait cet avertissement à tort (rejoué le 02/10/2026).
+    preuves_du_dossier = bool(args.from_file) and any(
+        preuve.startswith(f"tasks/{task_id}/") for c in contract.criteria for preuve in c.preuves
+    )
+    if not tests and not preuves_du_dossier:
         print(
             f"ATTENTION : aucun critère ne s'appuie sur un fichier de {dossier}/.\n"
             "C'est là que vivent les preuves : ailleurs, elles ne sont protégées que si\n"

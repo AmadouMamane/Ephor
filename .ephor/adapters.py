@@ -772,11 +772,18 @@ def modeles_opencode(valeurs: dict[str, str]) -> int:
     dossier = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "opencode"
     fichier = dossier / "opencode.json"
     ajout = {"agent": {role: {"model": modele} for role, modele in roles.items()}}
-    if (dossier / "opencode.jsonc").exists() and not fichier.exists():
-        # Réécrire un JSONC en perdrait les commentaires : on dit quoi y ajouter.
-        print(f"{dossier / 'opencode.jsonc'} a des commentaires : ajoutez-y vous-même")
-        print(json.dumps(ajout, indent=2, ensure_ascii=False))
-        return 1
+    jsonc = dossier / "opencode.jsonc"
+    if jsonc.exists() and not fichier.exists():
+        # Réécrire un JSONC en perdrait les commentaires : on dit quoi y ajouter. Sans
+        # commentaire (un `.jsonc` qui se lit en JSON), il est réglé comme l'autre : le refus
+        # valait pour tout `.jsonc`, même un `{"$schema": …}` nu (rejoué le 02/10/2026).
+        try:
+            json.loads(jsonc.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            print(f"{jsonc} a des commentaires, et les réécrire les perdrait : ajoutez-y vous-même")
+            print(json.dumps(ajout, indent=2, ensure_ascii=False))
+            return 1
+        fichier = jsonc
     try:
         config = json.loads(fichier.read_text(encoding="utf-8")) if fichier.exists() else {}
     except json.JSONDecodeError as exc:

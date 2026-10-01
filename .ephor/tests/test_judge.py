@@ -2412,3 +2412,87 @@ def test_make_task_new_ecrit_un_squelette_de_script_pour_une_preuve_script(
     script = (repo / "tasks" / "T-002" / "check_c1.py").read_text()
     assert "sys.exit(" in script and judge.SQUELETTE in script and "pytest" not in script
     assert "def test_b" in (repo / "tasks" / "T-002" / "test_t2.py").read_text()
+
+
+# ------------------------------------ rejoué sur Mac avec Claude Code 2.1.287 (02/10/2026)
+
+
+def test_l_installation_locale_tente_le_cache_d_abord_puis_le_reseau(
+    make_repo: Callable[..., Path], run_judge: Runner
+) -> None:
+    """`uv sync` interroge l'index pour le moteur de construction du projet : sous le bac à
+    sable de Claude Code, la question « ouvrir pypi.org ? » restait sans réponse, et le verdict
+    était ÉCHEC après 47 s (vu en session réelle, 02/10/2026). L'installation tente d'abord le
+    cache (UV_OFFLINE=1) ; si uv dit que le réseau manque, elle recommence avec lui."""
+    script = (
+        "import os, sys\n"
+        "print('UV_OFFLINE=' + os.environ.get('UV_OFFLINE', '-'))\n"
+        "if os.environ.get('UV_OFFLINE'):\n"
+        "    print('error: Network connectivity is disabled, but the requested data'\n"
+        '          " wasn\'t found in the cache")\n'
+        "    sys.exit(1)\n"
+    )
+    repo = make_repo(setup=["{python}", "-c", script])
+    (repo / "src" / "metrics.py").write_text(FIX)
+    code, report = run_judge(repo)
+    assert code == 0, report
+    journaux = repo / ".verify" / "judge" / "T-001" / "latest" / "logs"
+    assert "UV_OFFLINE=1" in (journaux / "setup.hors-ligne.log").read_text(encoding="utf-8")
+    assert "UV_OFFLINE=-" in (journaux / "setup.log").read_text(encoding="utf-8")
+    resume = (journaux.parent / "summary.txt").read_text(encoding="utf-8")
+    assert "relancée avec le réseau" in resume
+    assert [s["name"] for s in report["steps"]].count("setup") == 1
+
+
+def test_une_installation_qui_echoue_autrement_n_est_pas_relancee(
+    tmp_path: Path, run_judge: Runner
+) -> None:
+    """Le verdict serait le même, et sous le bac à sable la relance ferait poser la question
+    réseau pour rien."""
+    script = "import os, sys\nprint('UV_OFFLINE=' + os.environ.get('UV_OFFLINE', '-'))\nsys.exit(1)"
+    from conftest import build_repo
+
+    repo = build_repo(tmp_path / "autre", contract(setup=["{python}", "-c", script]))
+    (repo / "src" / "metrics.py").write_text(FIX)
+    code, report = run_judge(repo)
+    assert code == 1 and report["status"] == "verification_failed"
+    journaux = repo / ".verify" / "judge" / "T-001" / "latest" / "logs"
+    assert not (journaux / "setup.hors-ligne.log").exists()
+    sortie = (journaux / "setup.log").read_text(encoding="utf-8")
+    assert sortie.count("\nUV_OFFLINE=1\n") == 1 and "\nUV_OFFLINE=-" not in sortie, sortie
+
+
+def test_task_new_ne_reclame_pas_de_preuve_a_un_contrat_junit(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Un critère Node, Maven ou Go nomme ses tests par `preuves`, sous le dossier de la tâche :
+    `make task-new` disait quand même « aucun critère ne s'appuie sur un fichier de
+    tasks/<ID>/ » (rejoué sur un dépôt Node, 02/10/2026)."""
+    repo = tmp_path / "depot"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps(
+            contract(
+                id="N-001",
+                criteria=[
+                    {
+                        "id": "C1",
+                        "description": "soustraction",
+                        "check": [
+                            "sh",
+                            "-c",
+                            "node --test --test-reporter=junit"
+                            " --test-reporter-destination={rapport}/n.xml"
+                            " tasks/N-001/soustraction.test.js",
+                        ],
+                        "rapport_junit": ["soustraction"],
+                        "preuves": ["tasks/N-001/soustraction.test.js"],
+                    }
+                ],
+            )
+        )
+    )
+    assert judge.main(["new", "--task-id", "N-001", "--repo", str(repo), "--from", str(plan)]) == 0
+    assert "aucun critère ne s'appuie" not in capsys.readouterr().out

@@ -13,7 +13,7 @@ description: "Boucle complète d'une fonctionnalité, du contrat au juge et à l
 
 Tâches :
 
-!`( make -s taches 2>/dev/null || ls tasks 2>/dev/null | grep -v README ) | head -40`
+!`make -s taches 2>/dev/null || ls tasks 2>/dev/null | grep -v README | head -40`
 
 ## En automatique, par défaut
 

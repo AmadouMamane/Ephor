@@ -22,6 +22,10 @@ Tu juges.
    commande `check` d'un critère, ou `uv run pytest -q <dossier de la tâche>/`) ; un seul
    test (`uv run pytest -q <fichier> -k <nom>`). Un échec : `NEEDS_WORK`. Rien qui écrive
    dans le dépôt : ni `make fmt`, ni commit, ni `git stash`.
+   Une commande simple par appel, depuis le dossier courant : sans variable, sans enchaînement
+   (`;`, `&&`, `$(…)`), sans `git -C` ni `--directory`. Une commande composée, ou préfixée
+   ainsi, fait demander une autorisation à l'opérateur, et la boucle automatique s'arrête là
+   (vu en session réelle, 02/10/2026).
 4. Lis le diff : `git diff --stat main...HEAD`, puis `git diff main...HEAD -- <fichiers>`.
 5. Cherche les cinq fraudes classiques :
    - **Triche sur les contrôles** : test supprimé ou affaibli, `skip`, `xfail`,

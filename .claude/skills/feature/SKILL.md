@@ -15,7 +15,7 @@ allowed-tools: Read Grep Glob Bash(make *) Bash(git status *) Bash(git diff *) B
 
 Tâches :
 
-!`( make -s taches 2>/dev/null || ls tasks 2>/dev/null | grep -v README ) | head -40`
+!`make -s taches 2>/dev/null || ls tasks 2>/dev/null | grep -v README | head -40`
 
 ## En automatique, par défaut
 

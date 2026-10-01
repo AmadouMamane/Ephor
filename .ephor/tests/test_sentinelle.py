@@ -432,3 +432,33 @@ def test_une_zone_cachee_a_git_diff_par_update_index_est_vue(tmp_path: Path, opt
     resultat = fin(repo)
     assert resultat.returncode == 1, resultat.stderr
     assert "Makefile (modifié)" in (repo / "AGENT_STOP").read_text(encoding="utf-8")
+
+
+def test_ce_que_claude_code_ecrit_lui_meme_ne_la_declenche_pas(tmp_path: Path) -> None:
+    """Claude Code 2.1.287 pose `.claude/scheduled_tasks.lock` pendant le tour et ajoute ses
+    motifs à `.git/info/exclude` : la sentinelle arrêtait l'agent à la fin de son premier tour,
+    dans chaque dossier de tâche (vu en session réelle, 02/10/2026). Ce qu'il écrit pour lui ne
+    compte pas ; une tâche planifiée gardée (`scheduled_tasks.json`) et toute autre exclusion,
+    si."""
+    repo = depot_surveille(tmp_path)
+    assert debut(repo).returncode == 0
+    (repo / ".claude" / "scheduled_tasks.lock").write_text('{"pid": 1}', encoding="utf-8")
+    (repo / ".claude" / "mailbox").mkdir()
+    (repo / ".claude" / "mailbox" / "x.json").write_text("{}", encoding="utf-8")
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(exist_ok=True)
+    with exclude.open("a", encoding="utf-8") as fichier:
+        fichier.write(
+            "# claude-code-runtime\n**/.claude/scheduled_tasks.lock\n**/.claude/mailbox/\n"
+        )
+    resultat = fin(repo)
+    assert resultat.returncode == 0, resultat.stderr
+    assert not (repo / "AGENT_STOP").exists()
+    assert debut(repo).returncode == 0
+    (repo / ".claude" / "scheduled_tasks.json").write_text("[]", encoding="utf-8")
+    with exclude.open("a", encoding="utf-8") as fichier:
+        fichier.write("*.secret\n")
+    assert fin(repo).returncode == 1
+    arret = (repo / "AGENT_STOP").read_text(encoding="utf-8")
+    assert ".claude/scheduled_tasks.json (ajouté)" in arret
+    assert "dossier git" in arret

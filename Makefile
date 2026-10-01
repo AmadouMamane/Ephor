@@ -168,7 +168,8 @@ gitlab-check: ## Les réglages GitLab qui font foi sont-ils en place ? (OPÉRATE
 	@$(EPHOR_PY) .ephor/gitlab_check.py
 
 checkpoints: ## Liste les points de reprise automatiques (hors historique de branche, gardés 30 jours)
-	@git for-each-ref --sort=-committerdate --format='  %(committerdate:relative)  %(refname:short)' refs/ephor/checkpoints | head -20
+	@liste="$$(git for-each-ref --sort=-committerdate --format='  %(committerdate:relative)  %(refname:short)' refs/ephor/checkpoints | head -20)"; \
+	 if [ -n "$$liste" ]; then printf '%s\n' "$$liste"; else echo "  aucun point de reprise : il s'en prend un à la fin de chaque tour d'agent où un fichier a changé"; fi
 
 checkpoints-purge: ## Supprime TOUS les points de reprise, sans attendre leurs 30 jours (OPÉRATEUR)
 	@$(EPHOR_PY) .ephor/operateur.py "make checkpoints-purge"

@@ -26,6 +26,11 @@ Tu relis un diff. Protocole en dix minutes, dans cet ordre — l'ordre compte :
 6. **Preuve** (1 min) : existe-t-il un test qui **échoue** sans ce changement ?
    Sinon, le changement n'est pas prouvé.
 
+Terminal : une commande simple par appel, depuis le dossier courant : sans variable, sans
+enchaînement (`;`, `&&`, `$(…)`), sans `git -C` ni `--directory`. Une commande composée, ou
+préfixée ainsi, fait demander une autorisation à l'opérateur, et la boucle automatique
+s'arrête là (vu en session réelle, 02/10/2026).
+
 ## Sortie
 
 ```

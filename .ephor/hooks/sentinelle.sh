@@ -107,6 +107,22 @@ EXCLUS=(
   ":(exclude).opencode/bun.lock"
   ":(exclude).claude/settings.local.json"
   ":(exclude,glob).claude/worktrees/**"
+  # Ce que Claude Code écrit lui-même dans .claude/ pendant une session, sans que l'agent le
+  # demande : le verrou de ses tâches planifiées, ses états, ses boîtes aux lettres. Mesuré le
+  # 02/10/2026 avec Claude Code 2.1.287 : « .claude/scheduled_tasks.lock (ajouté) » arrêtait
+  # l'agent à la fin de son premier tour, dans chaque dossier de tâche. Une tâche planifiée
+  # gardée d'une session à l'autre (`scheduled_tasks.json`), elle, reste regardée : une invite
+  # qui se relance à la session suivante est un point d'exécution différée.
+  ":(exclude).claude/scheduled_tasks.lock"
+  ":(exclude,glob).claude/routines/.state/**"
+  ":(exclude,glob).claude/checkpoints/**"
+  ":(exclude,glob).claude/mailbox/**"
+  ":(exclude).claude/agent-registry.json"
+  ":(exclude).claude/agent-memory-local"
+  ":(exclude,glob).claude/agent-memory-local/**"
+  ":(exclude).claude/first-run"
+  ":(exclude).claude/assistant-daemon-state.json"
+  ":(exclude,glob).claude/.cc-writes/**"
   # Zone de contrôle, mais l'opérateur l'écrit PENDANT le tour : c'est sa raison d'être. La
   # garde d'écriture, celle du terminal et le bac à sable de Claude Code en tiennent l'agent.
   ":(exclude)STEER.md"
@@ -139,7 +155,15 @@ etat_git() { # empreinte de ce que git exécute : configuration hors branches, h
     for fichier in "$commun"/hooks/* "$commun/info/attributes" "$commun/info/exclude"; do
       [ -f "$fichier" ] || continue
       case "$fichier" in *.sample) continue ;; esac
-      printf '%s %s\n' "${fichier#"$commun"/}" "$(git hash-object -- "$fichier" 2>/dev/null)"
+      if [ "$fichier" = "$commun/info/exclude" ]; then
+        # Claude Code y ajoute lui-même ses motifs pendant la session (« # claude-code-runtime »,
+        # puis des `**/.claude/…`) : « dossier git (modifié) » à chaque premier tour, mesuré avec
+        # Claude Code 2.1.287 le 02/10/2026. Ces motifs ne cachent rien à la sentinelle, qui lit
+        # aussi les fichiers ignorés ; toute autre ligne compte.
+        printf '%s %s\n' info/exclude "$(grep -v -e '^# claude-code-runtime$' -e '^\*\*/\.claude/' -- "$fichier" 2>/dev/null | git hash-object --stdin 2>/dev/null)"
+      else
+        printf '%s %s\n' "${fichier#"$commun"/}" "$(git hash-object -- "$fichier" 2>/dev/null)"
+      fi
     done
   } | git hash-object --stdin 2>/dev/null
 }

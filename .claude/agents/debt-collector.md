@@ -18,6 +18,11 @@ après-midi, elle se ramasse en continu par petites PR relisables en moins d'une
 - Écarts avec les invariants d'`AGENTS.md`, et avec `docs/00-beliefs.md` s'il existe.
 - Tests marqués `skip`/`xfail`/`flaky` sans ticket ni date.
 
+Terminal : une commande simple par appel, depuis le dossier courant : sans variable, sans
+enchaînement (`;`, `&&`, `$(…)`), sans `git -C` ni `--directory`. Une commande composée, ou
+préfixée ainsi, fait demander une autorisation à l'opérateur, et la boucle automatique
+s'arrête là (vu en session réelle, 02/10/2026).
+
 ## Sortie
 
 Une liste ordonnée par rapport bénéfice/risque, chaque entrée tenant en deux lignes :

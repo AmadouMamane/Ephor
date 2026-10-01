@@ -76,7 +76,9 @@ demander à sortir du bac à sable pour une commande, et un clic suffit.
   explique le refus avant que la commande ne parte, et elle sert opencode et Copilot.
 - **Le réseau des commandes passe par le mandataire du bac à sable** : un domaine nouveau
   (`uv sync` vers un dépôt de paquets, `git push`) fait poser une question. Un domaine
-  d'entreprise se déclare dans `sandbox.network.allowedDomains`.
+  d'entreprise se déclare dans `sandbox.network.allowedDomains`. Le juge, lui, installe
+  d'abord sur le cache d'uv, sans réseau (1.5.4) : lancé par l'agent, il ne pose la question
+  qu'à la première installation d'une dépendance nouvelle.
 - **`make judge RUNTIME=podman` lancé par l'agent ne joint plus Podman** (sa socket est hors
   du bac à sable). Le juge en conteneur est une commande de l'opérateur, lancée hors de
   l'agent ; l'agent juge en local.

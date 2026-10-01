@@ -1452,9 +1452,17 @@ def test_les_roles_recoivent_leurs_modeles_sous_opencode(
     assert adapters.main(["modeles", "FORT=p/autre"]) == 2, "un geste de l'opérateur"
     monkeypatch.delenv("OPENCODE")
     config.unlink()
-    (config.parent / "opencode.jsonc").write_text("// mes réglages\n{}\n")
-    assert adapters.main(["modeles", "FORT=p/fort"]) == 1, "un JSONC n'est pas réécrit"
+    jsonc = config.parent / "opencode.jsonc"
+    jsonc.write_text("// mes réglages\n{}\n")
+    assert adapters.main(["modeles", "FORT=p/fort"]) == 1, "un JSONC commenté n'est pas réécrit"
     assert '"planner"' in capsys.readouterr().out
+    assert jsonc.read_text() == "// mes réglages\n{}\n"
+    # Un `.jsonc` sans commentaire (celui qu'opencode écrit lui-même) est réglé comme l'autre :
+    # il était refusé, et `make doctor` disait ensuite « aucun modèle réglé » (02/10/2026).
+    jsonc.write_text('{"$schema": "https://opencode.ai/config.json"}\n')
+    assert adapters.main(["modeles", "FORT=p/fort"]) == 0
+    assert json.loads(jsonc.read_text())["agent"]["planner"]["model"] == "p/fort"
+    assert not config.exists(), "réglé dans le .jsonc, pas à côté"
 
 
 def test_l_installation_n_ecrase_pas_la_configuration_opencode_du_projet(tmp_path: Path) -> None:
@@ -1621,8 +1629,14 @@ def test_les_modeles_d_opencode_suivent_le_nom_du_fichier_et_nomment_les_oublies
 def test_les_blocs_en_ligne_des_skills_passent_le_controle_de_claude_code() -> None:
     """Claude Code 2.1.286 refuse un bloc `!`…`` qui mêle une accolade et un guillemet
     (« Contains brace with quote character (expansion obfuscation) ») : la skill /feature ne
-    démarrait plus du tout (vu en session réelle, 01/10/2026)."""
+    démarrait plus du tout (vu en session réelle, 01/10/2026). Et 2.1.287 refuse un sous-shell
+    entre parenthèses (« This command uses shell operators that require approval for safety ») :
+    même symptôme, vu le 02/10/2026 ; `||` et `|` entre commandes autorisées passent."""
     for skill in sorted((ROOT / ".claude" / "skills").glob("*/SKILL.md")):
         for bloc in re.findall(r"!`([^`]*)`", skill.read_text(encoding="utf-8")):
             melange = (set("{}") & set(bloc)) and (set("\"'") & set(bloc))
             assert not melange, f"{skill.relative_to(ROOT)} : accolade et guillemet dans « {bloc} »"
+            assert not (set("()") & set(bloc)), (
+                f"{skill.relative_to(ROOT)} : sous-shell dans « {bloc} »"
+                " (refusé par Claude Code 2.1.287)"
+            )

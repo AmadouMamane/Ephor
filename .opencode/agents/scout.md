@@ -18,6 +18,10 @@ produis reste dans TON contexte ; seule ta synthèse remonte. C'est la différen
   Ne lis un fichier entier que si tu as déjà prouvé qu'il est le bon.
 - Jamais de `cat` sur un fichier de plus de 200 lignes : `sed -n 'A,Bp'`.
 - Si la question porte sur la structure, lance `bash .ephor/scripts/repo_map.sh`.
+- Une commande simple par appel, depuis le dossier courant : sans variable, sans enchaînement
+  (`;`, `&&`, `$(…)`), sans `git -C` ni `--directory`. Une commande composée, ou préfixée
+  ainsi, fait demander une autorisation à l'opérateur, et la boucle automatique s'arrête là
+  (vu en session réelle, 02/10/2026).
 
 ## Sortie
 

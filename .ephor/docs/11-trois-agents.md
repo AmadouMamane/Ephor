@@ -131,8 +131,11 @@ des skills à entretenir.
   Elle lit ses zones dans le moteur, voit les fichiers ignorés par git, le dossier git, un
   réglage local qui coupe les hooks ou le bac à sable, et une dépendance ou un script ajouté
   à `.opencode/package.json`, qu'opencode installerait au démarrage suivant (le fichier, qu'il
-  écrit lui-même, n'est pas comparé ; ses fichiers de verrou non plus). Claude Code ne lance pas la fin de
-  tour quand on interrompt l'agent (mesuré le 25/09/2026) : un tour jamais contrôlé l'est
+  écrit lui-même, n'est pas comparé ; ses fichiers de verrou non plus). Ce que Claude Code écrit
+  lui-même dans `.claude/` pendant une session (le verrou de ses tâches planifiées, ses états)
+  et le bloc de motifs qu'il ajoute à `.git/info/exclude` ne comptent pas (2.1.287, mesuré le
+  02/10/2026) ; une tâche planifiée gardée d'une session à l'autre (`scheduled_tasks.json`),
+  si. Claude Code ne lance pas la fin de tour quand on interrompt l'agent (mesuré le 25/09/2026) : un tour jamais contrôlé l'est
   au début du suivant, et la demande est refusée si une zone a changé. Elle constate après
   coup, et un agent qui veut la faire taire y arrive encore ; le juge reste la barrière.
 - **Les points de reprise** : les trois outils les font dans une référence Git privée

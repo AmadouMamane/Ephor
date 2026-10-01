@@ -3,6 +3,76 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+## 1.5.4 — 2 octobre 2026
+
+Chaque fonctionnalité de la 1.5.3 rejouée sur un Mac avec les vrais outils, dans des projets neufs
+hors du dossier d'Ephor, avec Claude Code 2.1.287, sorti depuis : deux défauts qui rendaient la
+boucle `/feature` inutilisable sous cette version, fermés chacun par un test qui échoue sans son
+correctif ; et ce que la relecture a relevé.
+
+- **La skill `/feature` ne démarrait pas sous Claude Code 2.1.287.** Son bloc en ligne qui liste
+  les tâches tenait dans un sous-shell entre parenthèses ; Claude Code le refuse maintenant
+  (« This command uses shell operators that require approval for safety »), et la skill
+  s'arrêtait là, sans un mot à l'agent. Mesuré forme par forme : `||` et `|` entre commandes
+  autorisées passent, les parenthèses non. Le bloc est réécrit sans sous-shell, et le test
+  statique des skills refuse toute parenthèse dans un bloc en ligne.
+- **La sentinelle arrêtait l'agent à la fin de son premier tour, dans chaque dossier de tâche.**
+  Claude Code 2.1.287 pose lui-même `.claude/scheduled_tasks.lock` pendant la session et ajoute
+  ses motifs à `.git/info/exclude` : « zone de contrôle changée — .claude/scheduled_tasks.lock
+  (ajouté), dossier git (modifié) », AGENT_STOP posé, revue interrompue. Ce que Claude Code
+  écrit pour lui (ce verrou et ses états : `routines/.state/`, `checkpoints/`, `mailbox/`,
+  `agent-registry.json`, `agent-memory-local`, `first-run`, `assistant-daemon-state.json`,
+  `.cc-writes/`) ne compte plus, ni son bloc « claude-code-runtime » dans les exclusions de
+  git. Une tâche planifiée gardée d'une session à l'autre (`scheduled_tasks.json`) reste
+  regardée : c'est une invite qui se relance à la session suivante. Toute autre ligne ajoutée
+  aux exclusions, et toute autre écriture dans `.claude/`, arrêtent toujours l'agent.
+- **Le juge installe d'abord sur le cache d'uv, sans réseau.** Dans la copie jugée, `uv sync`
+  interroge l'index pour le moteur de construction du projet (hatchling) ; lancé par l'agent,
+  sous le bac à sable de Claude Code, cela fait poser à l'opérateur la question « ouvrir
+  pypi.org ? », et sans réponse l'installation échouait au bout de 47 s : verdict ÉCHEC, revue
+  interrompue (vu en session réelle, 02/10/2026). En local, l'installation tente maintenant
+  d'abord le cache (`UV_OFFLINE=1`) ; si uv dit que le réseau manque, elle recommence avec lui,
+  et le verdict le nomme (« relancée avec le réseau », première tentative gardée dans
+  `setup.hors-ligne.log`). Une installation qui échoue autrement n'est pas relancée. Le
+  conteneur n'a jamais eu ce détour : son installation a le réseau, le reste non.
+- **Les sous-agents et les demandes d'autorisation.** L'évaluateur a lancé une commande composée
+  avec une variable (`d=$(find …); cat $d/contract.json; …`) : Claude Code ne peut pas la
+  contrôler d'avance, demande à l'opérateur, et la boucle automatique attend. Les quatre
+  sous-agents qui ont un terminal (évaluateur, relecteur, éclaireur, ramasse-miettes) ont la
+  consigne : une commande simple par appel, depuis le dossier courant, sans variable ni
+  enchaînement, sans `git -C` ni `uv run --directory` (les règles d'autorisation du projet
+  reconnaissent `git diff …` et `uv run pytest …`, pas ces formes : chacune faisait demander).
+- **Petits.** `make doctor` conseillait `make verify` à un projet dont l'environnement n'était
+  pas installé (la réponse était « lancez make setup ») : il conseille `make setup && make
+  verify`, et, hors Python, d'adapter d'abord `verify.sh`. `make checkpoints` sans point de
+  reprise n'affichait rien : il le dit. `make map REPO=<nom>` sur un dépôt sans Python finissait
+  sans retour à la ligne. `make opencode-modeles` refusait tout `opencode.jsonc`, même sans
+  commentaire (celui qu'opencode écrit lui-même) : il le règle comme un `.json` ; un fichier
+  commenté reste à compléter à la main, et il le dit. `make task-new` disait « aucun critère ne
+  s'appuie sur un fichier de tasks/<ID>/ » à un contrat dont la preuve est un rapport JUnit
+  (`preuves`) sous ce dossier.
+- **Rejoué sur ce poste** (Mac, Claude Code 2.1.287, opencode 1.18.33, Podman 6.1.2) : la
+  recette du projet neuf (`doctor`, `setup`, `verify`, contrôle rouge, démonstration du juge en
+  local et sous Podman, quatre verdicts justes dans les deux cas) ; `make task-approve` d'un
+  geste (« oui » tapé, dossier de la tâche ouvert, ligne à coller) ; une session Claude Code
+  dans ce dossier (`/feature FEAT-001` : implémentation, `make verify`, juge VÉRIFIÉ,
+  évaluateur, `PROGRESS.md`) ; `make ci-image` sous Podman ; chaque cible `make` ;
+  `make fetch-docs` sur une vraie page ; un dépôt de référence déclaré, lu (`make refs`,
+  `make map REPO=`) et refusé à l'écriture ; l'installation sur un dépôt Node ; la mise à jour
+  d'un projet né de l'archive 1.5.0 ; opencode : lecture d'un `.env` par le terminal refusée,
+  bouton d'arrêt respecté ; `make copilot-install` (relais posé, essai à blanc passé). Dans la
+  session : `STEER.md` suivi en cours de route, la sentinelle sur une vraie écriture dans
+  `tasks/` pendant un tour (agent arrêté, juge qui refuse), `make stop` depuis la copie
+  principale, `/handoff`. Côté opérateur : `make review`, fusion, `make task-clore`, `make score`,
+  `make usage` (142 476 tokens facturables pour FEAT-001, deux évaluateurs compris), `make
+  task-ranger`, la démonstration après rangement. Et un dépôt **Node** de bout en bout, avec une
+  preuve JUnit (`node --test --test-reporter=junit`) : contrôle rouge (un import qui casse avant
+  le test est nommé « rouge pour une mauvaise raison »), juge VÉRIFIÉ, revue, fusion, fermeture,
+  manifeste de livraison. Copilot en session réelle reste à voir sur un poste (#39).
+
+**Après la mise à jour d'un projet** : rien d'autre que la mise à jour elle-même ; les
+sous-agents retouchés y passent si vous ne les aviez pas modifiés (sinon, le bilan les nomme).
+
 ## 1.5.3 — 1er octobre 2026
 
 Chaque fonctionnalité de la 1.5.2 évaluée de nouveau, par quatre relectures adverses menées

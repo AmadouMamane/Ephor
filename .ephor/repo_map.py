@@ -93,7 +93,7 @@ def carte(repo: Path, max_lignes: int, dossier_cache: Path | None = None) -> str
     TRAVAIL : celui d'un dépôt de référence, lu seulement, y aurait laissé un fichier."""
     chemins = fichiers(repo)
     if not chemins:
-        return "SKIP : aucun fichier Python, et la carte ne lit que le Python (rg --files, sinon)"
+        return "SKIP : aucun fichier Python, et la carte ne lit que le Python (rg --files, sinon)\n"
     dossier = dossier_cache or repo / ".verify" / "map"
     cache = dossier / f"{empreinte(chemins)}-{max_lignes}.txt"
     if cache.exists():

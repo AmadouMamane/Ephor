@@ -461,7 +461,16 @@ done
 
 echo
 if [ $FAIL -eq 0 ]; then
-  echo "  Rien ne bloque. Lancez : make verify"
+  # Le geste suivant, pas toujours le même : « make verify » sans environnement répondait
+  # « environnement absent — lancez make setup » (projet neuf, 02/10/2026) ; sur un dépôt qui
+  # n'est pas Python, il reste partiel tant que verify.sh n'est pas adapté.
+  if [ ! -f pyproject.toml ]; then
+    echo "  Rien ne bloque. Adaptez .ephor/projet/verify.sh aux commandes du projet, puis : make verify"
+  elif [ ! -d .venv ]; then
+    echo "  Rien ne bloque. Lancez : make setup && make verify"
+  else
+    echo "  Rien ne bloque. Lancez : make verify"
+  fi
 else
   echo "  Corrigez les [FAIL] ci-dessus dans l'ordre, puis relancez : make doctor"
 fi
