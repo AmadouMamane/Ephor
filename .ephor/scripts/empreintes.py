@@ -37,6 +37,10 @@ SORTIE = RACINE / ".ephor" / "empreintes.txt"
 MOTIFS = (
     "Makefile",
     "tasks/README.md",
+    # Les deux pointeurs vers AGENTS.md, posés s'ils manquent (jamais remplacés : un pointeur
+    # d'une ligne n'a pas de version à suivre, et un fichier du projet reste le sien).
+    "CLAUDE.md",
+    ".github/copilot-instructions.md",
     ".claude/settings.json",
     ".claude/agents/*.md",
     # Toute la skill, pas seulement son SKILL.md (#37) : `*` de fnmatch traverse les dossiers.
@@ -105,11 +109,34 @@ def sans_reglages(texte: bytes) -> bytes:
     return calcul(texte)
 
 
+def ecrites() -> dict[tuple[str, str], set[str]]:
+    """Les empreintes déjà écrites, par (chemin, genre) : « » ou « sans-reglages ». La marque
+    « actuelle » est retirée : c'est une version passée pour la liste suivante."""
+    lues: dict[tuple[str, str], set[str]] = {}
+    texte = SORTIE.read_text(encoding="utf-8") if SORTIE.exists() else ""
+    for ligne in texte.splitlines():
+        morceaux = ligne.split()
+        if ligne.startswith("#") or len(morceaux) not in (2, 3):
+            continue
+        genre = morceaux[2] if len(morceaux) == 3 and morceaux[2] == "sans-reglages" else ""
+        lues.setdefault((morceaux[1], genre), set()).add(morceaux[0])
+    return lues
+
+
+def histoire_complete() -> bool:
+    """Un clone superficiel n'a pas les versions passées : relues dedans, la liste perdait
+    toutes les versions livrées, et `check` la disait « à jour » (relecture du 01/10/2026)."""
+    return git("rev-parse", "--is-shallow-repository").strip() != b"true"
+
+
 def liste() -> str:
     lignes = [ENTETE.rstrip("\n")]
+    # Les versions déjà écrites restent : une histoire tronquée, un fichier renommé ou un
+    # commit perdu ne peuvent plus faire oublier une version qu'Ephor a livrée.
+    deja = ecrites()
     for chemin in chemins():
         passes = list(contenus(sorted(objets_passes(chemin))).values())
-        empreintes = {hashlib.sha256(c).hexdigest() for c in passes}
+        empreintes = {hashlib.sha256(c).hexdigest() for c in passes} | deja.get((chemin, ""), set())
         # La version du disque, commitée ou non : c'est elle que la livraison emporte.
         disque = (RACINE / chemin).read_bytes()
         actuelle = hashlib.sha256(disque).hexdigest()
@@ -119,9 +146,8 @@ def liste() -> str:
         # Un sous-agent dont le projet n'a changé que le modèle ou l'effort reste remplaçable :
         # la mise à jour garde ces deux lignes (#30).
         if fnmatch.fnmatchcase(chemin, ".claude/agents/*.md"):
-            for empreinte in sorted(
-                {hashlib.sha256(sans_reglages(c)).hexdigest() for c in [*passes, disque]}
-            ):
+            allegees = {hashlib.sha256(sans_reglages(c)).hexdigest() for c in [*passes, disque]}
+            for empreinte in sorted(allegees | deja.get((chemin, "sans-reglages"), set())):
                 lignes.append(f"{empreinte} {chemin} sans-reglages")
     return "\n".join(lignes) + "\n"
 
@@ -146,6 +172,27 @@ def ecarts() -> list[str]:
     ]
     en_trop = sorted(set(actuelles) - set(attendues))
     trouves += [f"{chemin} : n'est plus posé par Ephor" for chemin in en_trop]
+    # Une liste réécrite depuis une histoire tronquée perdait les versions passées, et passait
+    # ce contrôle : la liste commitée en est le témoin, chaque version qu'elle porte doit rester.
+    if histoire_complete():
+        try:
+            commitee = git("show", "HEAD:" + SORTIE.relative_to(RACINE).as_posix()).decode("utf-8")
+        except subprocess.CalledProcessError:
+            commitee = ""
+        maintenant = {
+            ligne.split()[:2][-1] + " " + ligne.split()[0]
+            for ligne in ecrit.splitlines()
+            if ligne and not ligne.startswith("#") and len(ligne.split()) >= 2
+        }
+        for ligne in commitee.splitlines():
+            morceaux = ligne.split()
+            if ligne.startswith("#") or len(morceaux) < 2 or morceaux[1] not in attendues:
+                continue
+            if morceaux[1] + " " + morceaux[0] not in maintenant:
+                courte = morceaux[0][:12]
+                trouves.append(
+                    f"{morceaux[1]} : une version livrée ({courte}…) a disparu de la liste"
+                )
     return trouves
 
 
@@ -164,6 +211,12 @@ def main(argv: list[str]) -> int:
         return 0
     if argv[1:]:
         print("usage : python3 .ephor/scripts/empreintes.py [check]")
+        return 2
+    if not histoire_complete():
+        print(
+            "dépôt superficiel : l'histoire d'Ephor manque, les versions passées ne peuvent pas "
+            "être relues. D'abord : git fetch --unshallow"
+        )
         return 2
     SORTIE.write_text(liste(), encoding="utf-8")
     print(f"écrit : {SORTIE.relative_to(RACINE)}")

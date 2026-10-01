@@ -165,9 +165,11 @@ export const ephor = async ({ worktree, directory, client }) => {
               content: args.content,
               patch: args.patchText ?? args.patch,
               new_string: args.newString ?? args.new_string,
-              edits: (args.edits ?? []).map((e) => ({
-                file_path: e.filePath ?? e.file_path,
-                new_string: e.newString ?? e.new_string,
+              // Un `edits` qui n'est pas une liste (ou dont un élément n'est pas un objet)
+              // faisait sortir une exception brute au lieu d'un verdict des gardes.
+              edits: (Array.isArray(args.edits) ? args.edits : []).map((e) => ({
+                file_path: e?.filePath ?? e?.file_path,
+                new_string: e?.newString ?? e?.new_string,
               })),
             }
           : args,

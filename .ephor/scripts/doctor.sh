@@ -71,6 +71,12 @@ if command -v uv >/dev/null 2>&1; then
   else
     ok "uv ($UV_PATH, $(uv --version 2>/dev/null | head -1))"
   fi
+elif [ ! -f pyproject.toml ]; then
+  # Sur un dépôt Node ou Go, uv absent n'arrête rien : le juge et les garde-fous marchent
+  # sans. Un [FAIL] ici contredisait le [WARN] « pas un projet Python — normal » trois lignes
+  # plus bas, et faisait sortir le diagnostic en échec (relecture du 01/10/2026).
+  warn "uv absent du PATH — inutile tant que ce dépôt n'a pas d'outillage Python" \
+       "pour un projet Python : curl -LsSf https://astral.sh/uv/install.sh | sh"
 else
   bad "uv absent du PATH" "export PATH=\"\$HOME/.local/bin:\$PATH\"  (installez-le : curl -LsSf https://astral.sh/uv/install.sh | sh)"
 fi
@@ -101,8 +107,10 @@ echo "== Réseau et dépôt de paquets (poste contraint) =="
 PROXY=""
 for v in HTTPS_PROXY https_proxy HTTP_PROXY http_proxy; do
   # Sans l'identifiant ni le mot de passe : `make doctor` est permis à l'agent, et sa sortie
-  # entre dans le prompt. Le mot de passe s'y affichait en clair (audit du 01/10/2026).
-  [ -n "${!v:-}" ] && PROXY="$v=$(printf '%s' "${!v}" | sed -E 's#(://)[^/@]*@#\1…@#')"
+  # entre dans le prompt. Le mot de passe s'y affichait en clair (audit du 01/10/2026) ; puis
+  # sa fin, après un `@` qu'il contenait, et seule la dernière variable était montrée.
+  [ -n "${!v:-}" ] || continue
+  PROXY="${PROXY:+$PROXY, }$v=$(printf '%s' "${!v}" | sed -E 's#(://).*@#\1…@#')"
 done
 [ -n "$PROXY" ] && ok "proxy configuré ($PROXY)" || printf '  [ -- ] aucun proxy dans l'"'"'environnement\n'
 IDX=""

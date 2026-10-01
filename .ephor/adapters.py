@@ -53,7 +53,29 @@ COULEURS = {
     "cyan": "accent",
     "magenta": "secondary",
 }
-REGLE = re.compile(r"^([A-Za-z]+)(?:\((.*)\))?$")
+# Un nom d'outil MCP porte des soulignés (`mcp__github__list_issues`) : la règle était
+# « illisible », et `make adapters` tombait, donc l'installation (relecture du 01/10/2026).
+REGLE = re.compile(r"^([A-Za-z][A-Za-z0-9_]*)(?:\((.*)\))?$")
+# Ce que les adaptateurs n'ont pas su traduire, dit une fois à la fin plutôt qu'en trace : une
+# règle inconnue, un bloc `!` sur plusieurs lignes, un en-tête sans description. Avant, chacun
+# arrêtait la génération entière, et aucun fichier dérivé n'était écrit.
+NOTES: list[str] = []
+
+
+def note(message: str) -> None:
+    if message not in NOTES:
+        NOTES.append(message)
+
+
+def description_de(source: Path, meta: dict[str, str]) -> str:
+    """La description de l'en-tête, ou le nom du fichier à défaut, en le disant."""
+    texte = meta.get("description", "").strip()
+    if texte:
+        return texte
+    note(f"{relatif(source)} : pas de `description:` dans son en-tête ; son nom en tient lieu")
+    return source.stem
+
+
 VERSION = re.compile(r"\b\d+\.\d+\.\d+\b")
 BLOC_SHELL = re.compile(r"```!\n(.+?)\n```", re.S)
 # Les points d'entrée que Copilot reçoit (ADR 0011). Ce qui ne vaut pas pour lui (le filtre de
@@ -178,7 +200,10 @@ def permissions(reglages: dict[str, object]) -> dict[str, object]:
         for entree in entrees:
             trouve = REGLE.match(str(entree).strip())
             if trouve is None:
-                raise ValueError(f"règle de permission illisible : {entree!r}")
+                note(
+                    f"règle de permission non traduite pour opencode ({entree!r}) : forme inconnue"
+                )
+                continue
             outil, motif = trouve.group(1), trouve.group(2)
             cle = OUTILS.get(outil)
             if cle is None:
@@ -222,6 +247,16 @@ def config_opencode(reglages: dict[str, object], existant: str | None = None) ->
             raise ValueError(message) from erreur
         if isinstance(lu, dict):
             config = lu
+            # Un opencode.json du projet, pas une génération d'Ephor (`share` est sa marque).
+            if (
+                "permission" in lu
+                and lu.get("share") != "disabled"
+                and lu["permission"] != permissions(reglages)
+            ):
+                note(
+                    ".opencode/opencode.json : votre bloc « permission » est remplacé par celui "
+                    "dérivé de .claude/settings.json, la source des permissions des trois outils"
+                )
     config.update(
         {
             "$schema": "https://opencode.ai/config.json",
@@ -268,10 +303,15 @@ def permissions_agent(meta: dict[str, str]) -> dict[str, object]:
 
 def agent_opencode(source: Path, meta: dict[str, str], corps: str) -> str:
     lignes = ["---", f"# {MARQUE} {relatif(source)} — ne pas modifier à la main"]
-    lignes.append("description: " + valeur_yaml(meta["description"]))
+    lignes.append("description: " + valeur_yaml(description_de(source, meta)))
     lignes.append("mode: subagent")
     if "maxTurns" in meta:
-        lignes.append("steps: " + str(int(meta["maxTurns"])))
+        # `maxTurns: "15"`, entre guillemets, faisait tomber la génération.
+        tours = meta["maxTurns"].strip().strip("'\"")
+        if tours.isdigit():
+            lignes.append("steps: " + tours)
+        else:
+            note(f"{relatif(source)} : maxTurns « {meta['maxTurns']} » n'est pas un entier, ignoré")
     couleur = COULEURS.get(meta.get("color", ""))
     if couleur is not None:
         lignes.append("color: " + couleur)
@@ -301,11 +341,17 @@ def commande_opencode(source: Path, meta: dict[str, str], corps: str) -> str:
     def convertit(trouve: re.Match[str]) -> str:
         commande = trouve.group(1).strip()
         if "\n" in commande:
-            raise ValueError(f"{source} : bloc `!` sur plusieurs lignes, non traduisible")
+            # opencode n'exécute qu'une ligne par `!`…`` : le bloc reste tel quel, en texte,
+            # et le bilan le dit, au lieu d'arrêter toute la génération.
+            note(
+                f"{relatif(source)} : bloc `!` sur plusieurs lignes, laissé en texte pour opencode "
+                "(une commande par bloc pour qu'il s'exécute)"
+            )
+            return trouve.group(0)
         return "!`" + commande + "`"
 
     lignes = ["---", f"# {MARQUE} {relatif(source)} — ne pas modifier à la main"]
-    lignes.append("description: " + valeur_yaml(meta["description"]))
+    lignes.append("description: " + valeur_yaml(description_de(source, meta)))
     lignes.append("---")
     return "\n".join(lignes) + BLOC_SHELL.sub(convertit, corps)
 
@@ -568,6 +614,7 @@ def relatif(chemin: Path) -> str:
 
 def fichiers() -> dict[str, str]:
     """Chemin relatif -> contenu attendu."""
+    NOTES.clear()
     reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
     config = ROOT / ".opencode" / "opencode.json"
     rendus = {
@@ -651,6 +698,8 @@ def ecrire() -> int:
     reglages = json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
     for hook in hooks_du_projet(reglages):
         print(f"  note     hook du projet, pas relayé sous Copilot (Claude Code seul) : {hook}")
+    for message in NOTES:
+        print(f"  note     {message}")
     print(f"adaptateurs : {len(attendus)} fichier(s) à jour, {ecrits} modifié(s)")
     return 0
 
@@ -662,6 +711,10 @@ def verifier() -> int:
         cible = ROOT / nom
         if not cible.exists():
             ecarts.append(nom + " (manquant)")
+        elif a_vous(nom, cible):
+            # Un sous-agent ou une commande du projet : `make adapters` le laisse, avec la
+            # version d'Ephor à côté ; le contrôle le disait « modifié », pour toujours.
+            continue
         elif cible.read_text(encoding="utf-8") != contenu:
             ecarts.append(nom + " (modifié à la main ou source changée)")
     ecarts.extend(nom + " (périmé)" for nom in perimes(attendus))
@@ -697,12 +750,25 @@ def modeles_opencode(valeurs: dict[str, str]) -> int:
     if not any(valeurs.values()):
         print("usage : make opencode-modeles FORT=<fournisseur/modèle> [STANDARD=…] [RAPIDE=…]")
         return 2
+    for niveau, modele in valeurs.items():
+        if modele and "/" not in modele:
+            # opencode nomme un modèle `fournisseur/modèle` : une autre forme casse l'agent.
+            print(
+                f"usage : {niveau}=<fournisseur/modèle> (par exemple anthropic/claude-sonnet-4-5),"
+                f" pas « {modele} »"
+            )
+            return 2
     roles: dict[str, str] = {}
+    sans_niveau: list[str] = []
     for source in sorted((ROOT / ".claude" / "agents").glob("*.md")):
         meta, _ = entete(source)
-        modele = valeurs.get(NIVEAUX.get(meta.get("model", ""), ""), "")
+        niveau = NIVEAUX.get(meta.get("model", ""), "")
+        modele = valeurs.get(niveau, "")
         if modele:
-            roles[meta.get("name", source.stem)] = modele
+            # La clé d'opencode est le nom du fichier dérivé, pas le `name:` de l'en-tête.
+            roles[source.stem] = modele
+        elif not niveau:
+            sans_niveau.append(f"{source.stem} (model: {meta.get('model') or 'absent'})")
     dossier = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "opencode"
     fichier = dossier / "opencode.json"
     ajout = {"agent": {role: {"model": modele} for role, modele in roles.items()}}
@@ -723,6 +789,13 @@ def modeles_opencode(valeurs: dict[str, str]) -> int:
     dossier.mkdir(parents=True, exist_ok=True)
     fichier.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"réglé dans {fichier} : " + ", ".join(f"{r} -> {m}" for r, m in sorted(roles.items())))
+    if sans_niveau:
+        # Un rôle dont `model:` n'est pas un niveau (opus, sonnet, haiku) restait muet.
+        print(
+            "non réglés, leur `model:` n'est pas un niveau (opus, sonnet, haiku) : "
+            + ", ".join(sans_niveau)
+            + " — réglez-les vous-même dans ce fichier"
+        )
     print("Relancez opencode.")
     return 0
 

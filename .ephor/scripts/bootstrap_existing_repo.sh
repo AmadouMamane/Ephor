@@ -108,11 +108,17 @@ reglages_seuls() { # reglages_seuls <relatif> : un sous-agent qui ne diffère d'
 }
 inchange_dans_ephor() { # inchange_dans_ephor <relatif> : Ephor livre-t-il ce fichier tel que
   # la version en place le livrait ? Alors une retouche du projet (le Makefile et les réglages
-  # fusionnés au geste 0) a déjà tout ce qu'Ephor y met : rien à reprendre. Avant, chaque mise
-  # à jour les disait « À REPRENDRE », .ephor-new compris, même inchangés (01/10/2026).
+  # fusionnés au geste 0, un sous-agent, une skill) a déjà tout ce qu'Ephor y met : rien à
+  # reprendre. Avant, chaque mise à jour les disait « À REPRENDRE », .ephor-new compris, même
+  # inchangés (01/10/2026) ; et seuls le Makefile et les réglages y échappaient, un sous-agent
+  # retouché l'était à chaque passage, pour toujours (relecture du 01/10/2026).
   local ancienne
   ancienne="$(printf '%s\n' "$ANCIENNES" | awk -v p="$1" '$2 == p { print $1; exit }')"
-  [ -n "$ancienne" ] && [ "$ancienne" = "$(empreinte "$SRC/$1" 2>/dev/null)" ] && contenu_d_ephor_present "$1"
+  { [ -n "$ancienne" ] && [ "$ancienne" = "$(empreinte "$SRC/$1" 2>/dev/null)" ]; } || return 1
+  case "$1" in
+    Makefile | .claude/settings.json) contenu_d_ephor_present "$1" ;;
+    *) return 0 ;;
+  esac
 }
 contenu_d_ephor_present() { # contenu_d_ephor_present <relatif> : la retouche du projet garde-t-elle
   # ce qu'Ephor y met ? Toutes ses cibles pour le Makefile, tous ses hooks pour les réglages de
@@ -357,6 +363,18 @@ for f in PROGRESS.md STEER.md; do
   if [ -e "$f" ]; then continue; fi
   copy "$f"
 done
+# Les deux pointeurs vers AGENTS.md : Claude Code lit CLAUDE.md, Copilot lit
+# .github/copilot-instructions.md. Sans eux, un projet équipé par ce script travaillait sans
+# contrat de travail chargé sous ces deux outils (relecture du 01/10/2026). Posés s'ils
+# manquent ; un fichier du projet reste le sien, avec une note s'il ne cite pas AGENTS.md.
+for f in CLAUDE.md .github/copilot-instructions.md; do
+  if [ -e "$f" ]; then
+    grep -q 'AGENTS.md' "$f" 2>/dev/null || echo "  note : $f existe et ne cite pas AGENTS.md — ajoutez-y « @AGENTS.md » (Claude Code) ou « Suis AGENTS.md » (Copilot)"
+    continue
+  fi
+  copy "$f"
+done
+[ -e AGENTS.md ] || echo "  note : AGENTS.md absent — le contrat de travail des agents, à écrire à la main (geste 2 ci-dessous)"
 touch .gitignore
 # Sans saut de ligne final, la première ligne ajoutée se collait à la dernière du projet :
 # `dist` devenait `dist.verify/`, et ni l'un ni l'autre n'était plus ignoré (01/10/2026).
@@ -366,8 +384,18 @@ if [ -s .gitignore ] && [ -n "$(tail -c 1 .gitignore)" ]; then printf '\n' >> .g
 # Les réglages locaux de Claude Code sont propres au poste : non ignorés, un `git add -A` de
 # l'agent les commitait, et le juge refusait la tâche (zone). Claude Code les ignore pour
 # qui l'a installé ; pas sur un poste qui n'a qu'opencode ou Copilot (vu en CI, 30/09/2026).
+# Rien n'est ajouté que le projet n'ignore pas déjà : né de l'archive d'Ephor, il ignore
+# `__pycache__/` partout, et la mise à jour lui ajoutait quand même la ligne d'Ephor (vu en
+# relecture le 01/10/2026 : « fichiers suivis modifiés par l'installation : .gitignore »).
+deja_ignore() { [ "$A_UN_COMMIT" = "1" ] && git check-ignore -q -- "$1" 2>/dev/null; }
 for line in ".verify/" "AGENT_STOP" "mutants/" ".ephor/**/__pycache__/" ".claude/settings.local.json"; do
-  grep -qxF "$line" .gitignore || { printf '%s\n' "$line" >> .gitignore; echo "  + .gitignore : $line"; }
+  grep -qxF "$line" .gitignore && continue
+  case "$line" in
+    .ephor/**/__pycache__/) deja_ignore ".ephor/hooks/__pycache__/x.pyc" && continue ;;
+    */) deja_ignore "${line}x" && continue ;;
+    *) deja_ignore "$line" && continue ;;
+  esac
+  printf '%s\n' "$line" >> .gitignore; echo "  + .gitignore : $line"
 done
 
 echo "[5/6] documentation du projet"
@@ -382,7 +410,26 @@ fi
 
 echo "[6/6] adaptateurs opencode et Copilot, dérivés du .claude/ de CE dépôt"
 copy .opencode/plugins/ephor.js
-python3 .ephor/adapters.py write || echo "  (à relancer à la main : python3 .ephor/adapters.py write)"
+# Un échec des adaptateurs était avalé (« à relancer à la main ») et le bilan disait « 0 à
+# fusionner », code de sortie 0 : opencode et Copilot restaient sans réglages, sans un mot
+# (relecture du 01/10/2026). Il est nommé en tête du bilan, et fait sortir en 1.
+ADAPTATEURS_KO=0
+if SORTIE_ADAPT="$(python3 .ephor/adapters.py write 2>&1)"; then
+  printf '%s\n' "$SORTIE_ADAPT"
+  # Les .ephor-new que les adaptateurs posent (un sous-agent opencode du projet) comptent
+  # dans le bilan comme les autres.
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    SIDE=$((SIDE+1)); COTE="$COTE $f"
+  done <<ADAPT_COTE
+$(printf '%s\n' "$SORTIE_ADAPT" | sed -n 's/^  à côté   \([^ ]*\)\.ephor-new .*/\1/p')
+ADAPT_COTE
+else
+  printf '%s\n' "$SORTIE_ADAPT" | tail -n 5
+  echo "  ÉCHEC des adaptateurs : rien n'a été dérivé pour opencode ni Copilot."
+  echo "  À relancer après correction : python3 .ephor/adapters.py write"
+  ADAPTATEURS_KO=1
+fi
 chmod +x .ephor/greffon-copilot/hooks/relais.sh 2>/dev/null || true
 
 # Ce qu'Ephor posait hors du moteur et ne pose plus : un sous-agent, une skill, une commande.
@@ -422,6 +469,7 @@ echo
 REMPL=""
 [ "$MAJ" = "1" ] && REMPL="$(printf '%s' "$REMPLACES$HORS_MOTEUR" | wc -w | tr -d ' ') remplacé(s), "
 echo "Bilan : $ADDED ajouté(s), $REMPL$SAME identique(s), $KEPT réglage(s) du projet gardé(s), $SIDE à fusionner à la main (.ephor-new)."
+[ "$ADAPTATEURS_KO" = "1" ] && echo "  ADAPTATEURS EN ÉCHEC : opencode et Copilot n'ont pas leurs réglages (étape 6 ci-dessus) — à corriger avant tout."
 [ -n "$COTE" ] && echo "  à fusionner :$COTE"
 # Ce que la racine du dépôt a gagné : c'était l'encombrement le plus visible (dix-sept
 # entrées avant la 0.9). On le montre au lieu de le laisser découvrir.
@@ -706,7 +754,7 @@ if [ "$MAJ" = "1" ]; then
   if [ -n "$HORS_MOTEUR" ]; then
     echo "Et relancez opencode ou Claude Code : ils ne relisent leur greffon et leurs réglages qu'au démarrage."
   fi
-  exit 0
+  exit "$ADAPTATEURS_KO"
 fi
 
 # Sans pyproject.toml, `make setup` refuse — et le diagnostic renvoyait vers `make setup`.
@@ -745,3 +793,4 @@ pylint, black) ne sait pas faire ça : ajoutez « .ephor/ » à ses exclusions.
 Non installé volontairement : la CI et pyproject.toml. Ils dépendent trop de l'existant :
 reprenez les étapes de .gitlab-ci.yml d'Ephor dans la CI du dépôt, une par une.
 NEXT
+exit "$ADAPTATEURS_KO"

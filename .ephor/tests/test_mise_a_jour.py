@@ -649,3 +649,137 @@ def test_le_doctor_dit_qu_une_mise_a_jour_n_est_pas_finie(tmp_path: Path) -> Non
     sortie = doctor()
     assert "1 fichier(s) .ephor-new en attente" in sortie and "(.claude/settings.json)" in sortie
     assert "greffon opencode (.opencode/plugins/ephor.js) différent" in sortie
+
+
+# ------------------------------------------------- relecture adverse de la 1.5.2 (01/10/2026)
+
+
+def test_l_installation_pose_les_pointeurs_vers_agents_md(tmp_path: Path) -> None:
+    """Claude Code lit CLAUDE.md, Copilot .github/copilot-instructions.md : sans eux, un projet
+    équipé par le script travaillait sans contrat de travail chargé. Un fichier du projet reste
+    le sien, avec une note s'il ne cite pas AGENTS.md."""
+    cible = tmp_path / "noderepo"
+    depot_node(cible)
+    sortie = bootstrap(cible)
+    assert (cible / "CLAUDE.md").read_text(encoding="utf-8").strip() == "@AGENTS.md"
+    assert "AGENTS.md" in (cible / ".github" / "copilot-instructions.md").read_text(
+        encoding="utf-8"
+    )
+    assert "AGENTS.md absent" in sortie
+    autre = tmp_path / "avec-le-sien"
+    depot_node(autre)
+    (autre / "CLAUDE.md").write_text("# Nos consignes\n")
+    sortie = bootstrap(autre)
+    assert (autre / "CLAUDE.md").read_text(encoding="utf-8") == "# Nos consignes\n"
+    assert not (autre / "CLAUDE.md.ephor-new").exists()
+    assert "CLAUDE.md existe et ne cite pas AGENTS.md" in sortie
+
+
+def test_le_gitignore_ne_recoit_que_ce_que_le_projet_n_ignore_pas_deja(tmp_path: Path) -> None:
+    """Né de l'archive d'Ephor, un projet ignore déjà `__pycache__/` partout : la mise à jour
+    lui ajoutait quand même `.ephor/**/__pycache__/`, et le bilan disait « fichiers suivis
+    modifiés par l'installation : .gitignore »."""
+    cible = tmp_path / "noderepo"
+    depot_node(cible)
+    (cible / ".gitignore").write_text("node_modules/\n__pycache__/\n.verify/\n")
+    git(cible, "commit", "-qam", "ignore")
+    bootstrap(cible)
+    ignore = (cible / ".gitignore").read_text(encoding="utf-8")
+    assert ".ephor/**/__pycache__/" not in ignore
+    assert ignore.count(".verify/") == 1
+    assert "mutants/" in ignore and "AGENT_STOP" in ignore
+
+
+def test_un_echec_des_adaptateurs_est_dit_et_fait_echouer_l_installation(tmp_path: Path) -> None:
+    """Avalé par un « à relancer à la main », l'échec laissait opencode et Copilot sans réglages,
+    et le bilan disait « 0 à fusionner », code de sortie 0."""
+    cible = tmp_path / "noderepo"
+    depot_node(cible)
+    bootstrap(cible)
+    (cible / ".claude" / "agents" / "casse.md").write_text("pas d'en-tête YAML\n")
+    resultat = subprocess.run(
+        ["bash", str(ROOT / ".ephor" / "scripts" / "bootstrap_existing_repo.sh"), str(cible)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert resultat.returncode == 1
+    assert "ÉCHEC des adaptateurs" in resultat.stdout
+    assert "ADAPTATEURS EN ÉCHEC" in resultat.stdout
+
+
+def test_un_sous_agent_retouche_que_la_version_ne_change_pas_n_est_pas_a_reprendre(
+    tmp_path: Path, version_suivante: Path
+) -> None:
+    """Un sous-agent ou une skill retouchés par le projet étaient « À REPRENDRE, c'est encore leur
+    ANCIENNE version qui tourne », avec un .ephor-new à chaque passage et un WARN du diagnostic
+    pour toujours — alors qu'Ephor ne les avait pas changés entre les deux versions."""
+    cible = projet_equipe(tmp_path / "noderepo")
+    for rel in (".claude/agents/scout.md", ".claude/skills/feature/SKILL.md"):
+        ajoute(cible / rel, "\nUne consigne propre au projet.\n")
+    git(cible, "commit", "-qam", "nos retouches")
+    for _ in range(2):
+        sortie = mettre_a_jour(cible, version_suivante, "--mettre-a-jour")
+        assert "rien à reprendre" in sortie
+        assert ".claude/agents/scout.md" in sortie.split("rien à reprendre")[1]
+        assert "À REPRENDRE" not in sortie
+        assert not (cible / ".claude" / "agents" / "scout.md.ephor-new").exists()
+        assert not (cible / ".claude" / "skills" / "feature" / "SKILL.md.ephor-new").exists()
+    assert (
+        "Une consigne propre au projet." in (cible / ".claude" / "agents" / "scout.md").read_text()
+    )
+
+
+def _clone_complet(tmp_path: Path, nom: str, *options: str) -> Path | None:
+    if git(ROOT, "rev-parse", "--is-shallow-repository").strip() == "true":
+        return None
+    clone = tmp_path / nom
+    subprocess.run(
+        ["git", "clone", "-q", *options, f"file://{ROOT}", str(clone)],
+        check=True,
+        capture_output=True,
+    )
+    # Le script tel qu'il est sur le disque, pas celui du dernier commit : un correctif pas
+    # encore commité doit pouvoir être testé.
+    shutil.copy(ROOT / ".ephor" / "scripts" / "empreintes.py", clone / ".ephor" / "scripts")
+    shutil.copy(ROOT / ".ephor" / "adapters.py", clone / ".ephor")
+    return clone
+
+
+def test_les_empreintes_refusent_une_histoire_tronquee(tmp_path: Path) -> None:
+    """Réécrite depuis un clone superficiel, la liste perdait toutes les versions passées
+    (98 lignes -> 23), et `check` la disait « à jour » : une livraison faite ainsi aurait rendu
+    les mises à jour incapables de remplacer quoi que ce soit hors du moteur."""
+    clone = _clone_complet(tmp_path, "superficiel", "--depth", "1")
+    if clone is None:
+        pytest.skip("le dépôt d'Ephor est lui-même superficiel ici")
+    script = clone / ".ephor" / "scripts" / "empreintes.py"
+    avant = (clone / ".ephor" / "empreintes.txt").read_text(encoding="utf-8")
+    resultat = subprocess.run(
+        [sys.executable, "-B", str(script)], capture_output=True, text=True, check=False
+    )
+    assert resultat.returncode == 2
+    assert "superficiel" in resultat.stdout
+    assert (clone / ".ephor" / "empreintes.txt").read_text(encoding="utf-8") == avant
+
+
+def test_les_empreintes_gardent_les_versions_deja_ecrites_et_voient_celles_qui_manquent(
+    tmp_path: Path,
+) -> None:
+    clone = _clone_complet(tmp_path, "complet")
+    if clone is None:
+        pytest.skip("le dépôt d'Ephor est lui-même superficiel ici")
+    script = clone / ".ephor" / "scripts" / "empreintes.py"
+    liste = clone / ".ephor" / "empreintes.txt"
+    fausse = "ab" * 32 + " Makefile\n"
+    liste.write_text(liste.read_text(encoding="utf-8") + fausse, encoding="utf-8")
+    subprocess.run([sys.executable, "-B", str(script)], check=True, capture_output=True)
+    assert fausse in liste.read_text(encoding="utf-8"), "une version écrite n'est jamais oubliée"
+    toutes = liste.read_text(encoding="utf-8").splitlines()
+    retiree = next(x for x in toutes if " Makefile" in x)
+    liste.write_text("\n".join(x for x in toutes if x != retiree) + "\n", encoding="utf-8")
+    controle = subprocess.run(
+        [sys.executable, "-B", str(script), "check"], capture_output=True, text=True, check=False
+    )
+    assert controle.returncode == 1
+    assert "a disparu de la liste" in controle.stdout

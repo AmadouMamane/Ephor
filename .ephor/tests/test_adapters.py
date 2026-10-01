@@ -1483,3 +1483,136 @@ def test_l_installation_n_ecrase_pas_la_configuration_opencode_du_projet(tmp_pat
         assert adapters.MARQUE in (dossier / f"{nom}.ephor-new").read_text(encoding="utf-8")
         assert f".opencode/{nom}" in sortie
     assert adapters.MARQUE in (dossier / "agents" / "planner.md").read_text(encoding="utf-8")
+
+
+# ------------------------------------------------- relecture adverse de la 1.5.2 (01/10/2026)
+
+
+def _claude_minimal(racine: Path, reglages: dict[str, Any] | None = None) -> None:
+    """Un .claude/ de projet : réglages, un sous-agent, une skill."""
+    (racine / ".claude" / "agents").mkdir(parents=True)
+    (racine / ".claude" / "skills" / "verif").mkdir(parents=True)
+    (racine / ".claude" / "settings.json").write_text(
+        json.dumps(reglages or {"permissions": {"allow": ["Bash(make *)"]}, "hooks": {}})
+    )
+    (racine / ".claude" / "agents" / "scout.md").write_text(
+        "---\nname: scout\ndescription: éclaireur\nmodel: haiku\n---\nCherche.\n"
+    )
+    (racine / ".claude" / "skills" / "verif" / "SKILL.md").write_text(
+        "---\nname: verif\ndescription: vérifie\n---\n```!\nmake verify || true\n```\n"
+    )
+
+
+def test_une_regle_mcp_ou_inconnue_n_arrete_plus_la_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`"allow": ["mcp__github__list_issues"]` : « règle de permission illisible », vingt lignes de
+    trace, aucun fichier dérivé, et l'installation disait « 0 à fusionner », code 0."""
+    _claude_minimal(
+        tmp_path,
+        {"permissions": {"allow": ["mcp__github__list_issues", "Bash(make *)", "Zut:(x)"]}},
+    )
+    monkeypatch.setattr(adapters, "ROOT", tmp_path)
+    rendus = adapters.fichiers()
+    assert ".opencode/opencode.json" in rendus
+    config = json.loads(rendus[".opencode/opencode.json"])
+    assert config["permission"]["bash"]["make *"] == "allow"
+    assert any("Zut:(x)" in note for note in adapters.NOTES)
+    assert not any("mcp__github__list_issues" in note for note in adapters.NOTES), (
+        "un outil MCP se lit ; opencode ne sait juste pas le restreindre"
+    )
+
+
+def test_un_en_tete_sans_description_ou_un_maxturns_cite_passent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _claude_minimal(tmp_path)
+    (tmp_path / ".claude" / "agents" / "muet.md").write_text(
+        '---\nname: muet\nmodel: sonnet\nmaxTurns: "15"\n---\nRelis.\n'
+    )
+    monkeypatch.setattr(adapters, "ROOT", tmp_path)
+    rendus = adapters.fichiers()
+    agent = rendus[".opencode/agents/muet.md"]
+    assert re.search(r'description: "?muet"?', agent)
+    assert "steps: 15" in agent
+    assert any("muet.md : pas de `description:`" in note for note in adapters.NOTES)
+
+
+def test_un_bloc_shell_sur_plusieurs_lignes_est_garde_et_dit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ValueError: bloc ! sur plusieurs lignes, non traduisible` arrêtait tout ; le bloc reste en
+    texte, les autres fichiers s'écrivent, et la note le dit."""
+    _claude_minimal(tmp_path)
+    (tmp_path / ".claude" / "skills" / "verif" / "SKILL.md").write_text(
+        "---\nname: verif\ndescription: vérifie\n---\n```!\nmake verify || true\necho fini\n```\n"
+    )
+    monkeypatch.setattr(adapters, "ROOT", tmp_path)
+    rendus = adapters.fichiers()
+    assert "```!\nmake verify || true\necho fini\n```" in rendus[".opencode/commands/verif.md"]
+    assert any("plusieurs lignes" in note for note in adapters.NOTES)
+
+
+def test_le_controle_des_derives_laisse_un_fichier_qui_est_au_projet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`adapters.py check` disait « modifié à la main » d'un sous-agent opencode du projet, pour
+    toujours, et renvoyait vers `make adapters`, qui le laisse exprès."""
+    _claude_minimal(tmp_path)
+    monkeypatch.setattr(adapters, "ROOT", tmp_path)
+    assert adapters.ecrire() == 0
+    assert adapters.verifier() == 0
+    (tmp_path / ".opencode" / "agents" / "scout.md").write_text(
+        "---\ndescription: le nôtre\n---\nCherche à notre façon.\n"
+    )
+    assert adapters.verifier() == 0, "un fichier à vous n'est pas une dérive"
+    (tmp_path / ".opencode" / "commands" / "verif.md").write_text(
+        (tmp_path / ".opencode" / "commands" / "verif.md").read_text() + "\nretouche\n"
+    )
+    assert adapters.verifier() == 1, "un fichier dérivé retouché, lui, l'est"
+
+
+def test_le_bloc_permission_d_un_opencode_json_du_projet_est_annonce(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _claude_minimal(tmp_path)
+    (tmp_path / ".opencode").mkdir()
+    (tmp_path / ".opencode" / "opencode.json").write_text(
+        json.dumps({"model": "p/m", "permission": {"bash": {"npm run build": "allow"}}})
+    )
+    monkeypatch.setattr(adapters, "ROOT", tmp_path)
+    config = json.loads(adapters.fichiers()[".opencode/opencode.json"])
+    assert config["model"] == "p/m", "ses clés restent"
+    assert any("bloc « permission »" in note for note in adapters.NOTES)
+    # Une génération d'Ephor relue (sa marque `share`) n'est pas « votre bloc ».
+    (tmp_path / ".opencode" / "opencode.json").write_text(
+        json.dumps({"share": "disabled", "permission": {"bash": {"x": "deny"}}})
+    )
+    adapters.fichiers()
+    assert not any("bloc « permission »" in note for note in adapters.NOTES)
+
+
+def test_les_modeles_d_opencode_suivent_le_nom_du_fichier_et_nomment_les_oublies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`make opencode-modeles` réglait `agent.relecteur` pour un fichier relecteur-maison.md
+    (opencode nomme l'agent par son fichier), taisait un rôle dont `model:` n'est pas un
+    niveau, et prenait n'importe quelle valeur."""
+    _claude_minimal(tmp_path)
+    (tmp_path / ".claude" / "agents" / "relecteur-maison.md").write_text(
+        "---\nname: relecteur\ndescription: relit\nmodel: sonnet\n---\nRelis.\n"
+    )
+    (tmp_path / ".claude" / "agents" / "reviewer.md").write_text(
+        "---\nname: reviewer\ndescription: relit\nmodel: claude-sonnet-4-5\n---\nRelis.\n"
+    )
+    monkeypatch.setattr(adapters, "ROOT", tmp_path)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    assert adapters.modeles_opencode({"FORT": "sans-barre", "STANDARD": "", "RAPIDE": ""}) == 2
+    assert "fournisseur/modèle" in capsys.readouterr().out
+    assert adapters.modeles_opencode({"FORT": "", "STANDARD": "p/std", "RAPIDE": "p/vite"}) == 0
+    sortie = capsys.readouterr().out
+    reglee = json.loads((tmp_path / "config" / "opencode" / "opencode.json").read_text())
+    assert reglee["agent"]["relecteur-maison"]["model"] == "p/std"
+    assert "relecteur" not in reglee["agent"]
+    assert reglee["agent"]["scout"]["model"] == "p/vite"
+    assert "reviewer (model: claude-sonnet-4-5)" in sortie
