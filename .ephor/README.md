@@ -9,7 +9,7 @@
 | Chemin | Ce que c'est | À qui |
 |---|---|---|
 | `.ephor/projet/` | ce que **ce** projet règle : ses étapes de vérification (`verify.sh`), les exceptions du contrôle des données personnelles, les dépôts qu'on a le droit de lire ; plus tard sa politique de livraison et le scanner de sécurité de l'entreprise | **au projet** — une mise à jour d'Ephor n'y touche jamais |
-| `.ephor/*.py`, `.ephor/contract.schema.json` | le juge (`judge.py`) et la forme d'un contrat ; ses outils : compteur de tokens (`usage.py`), contrôle des réglages GitLab (`gitlab_check.py`), tableau de bord (`score.py`), carte du code (`repo_map.py`), dépôts de référence (`refs.py`), aspirateur de docs (`fetch_docs.py`), contrôle des données personnelles (`personal_data.py`), adaptateurs opencode et Copilot (`adapters.py`) | Ephor |
+| `.ephor/*.py`, `.ephor/contract.schema.json` | le juge (`judge.py`) et la forme d'un contrat ; ses outils : compteur de tokens (`usage.py`), contrôle des réglages GitLab (`gitlab_check.py`), tableau de bord (`score.py`), carte du code (`repo_map.py`), dépôts de référence (`refs.py`), aspirateur de docs (`fetch_docs.py`), contrôle des données personnelles (`personal_data.py`), adaptateurs opencode et Copilot (`adapters.py`), refus des gestes d'opérateur à un agent (`operateur.py`), rappel de `PROGRESS.md` (`progres.py`) | Ephor |
 | `.ephor/zones.txt` | la liste des zones de contrôle, la seule : juge, gardes, sentinelle et CI la lisent ; les réglages du projet peuvent l'allonger, jamais la raccourcir | Ephor |
 | `.ephor/hooks/` | les garde-fous, communs aux trois agents ; les outils n'en appellent que les quatre points d'entrée (`avant-outil.sh`, `apres-outil.sh`, `debut-tour.sh`, `fin-tour.sh`), qui choisissent les gardes (ADR 0011) | Ephor |
 | `.ephor/opencode/` | le greffon d'opencode ; `.opencode/plugins/ephor.js`, dans le projet, ne fait que l'importer | Ephor |
@@ -17,7 +17,7 @@
 | `.ephor/deploy/` | manifeste de livraison, image de CI, principes de livraison | Ephor |
 | `.ephor/greffon-copilot/` | le relais que `make copilot-install` pose sur le poste | Ephor (deux fichiers régénérés par `make adapters`) |
 | `.ephor/docs/` | la documentation d'Ephor : exploitation, tokens, outillage, évaluation, installation, trois agents, GitLab, décisions | Ephor |
-| `.ephor/tests/` | les tests d'Ephor (`make ephor-test`) — seulement dans le dépôt d'Ephor | Ephor |
+| `.ephor/tests/` | les tests d'Ephor (`make ephor-test`) : dans son dépôt et dans un projet né de son archive ; le script d'installation ne les pose pas, et `make ephor-test` le dit | Ephor |
 | `.ephor/ruff.toml` | les règles de lint d'Ephor, appliquées à ce dossier seul | Ephor |
 | `.ephor/VERSION`, `.ephor/CHANGELOG.md` | la version en place, et ce que chacune a changé | Ephor |
 | `.ephor/empreintes.txt` | les versions livrées de ce qu'Ephor pose hors du moteur (greffon d'opencode, réglages et sous-agents de Claude Code, skills, `Makefile`) : une mise à jour remplace un tel fichier s'il est l'une d'elles, donc jamais retouché (ADR 0010) | Ephor |
@@ -233,7 +233,7 @@ qu'il est allé au bout, et le juge dit, critère par critère, comment :
 
 | Forme du critère | Ce que le juge exige |
 |---|---|
-| Script Python (`{python} tasks/X/check.py`) | un jeton tiré au hasard, imprimé à la fin du script |
+| Script Python (`{python} tasks/X/check.py` ; `{python}` est l'interpréteur de la copie installée, `.venv`, sinon celui du juge) | un jeton tiré au hasard, imprimé à la fin du script |
 | Test pytest (`uv run pytest tasks/X/test_x.py::test_a`) | un rapport de tests neuf, complet, où chaque test désigné a tourné et réussi — ni sauté, ni « échec attendu » |
 | Sortie attendue (`expected_output`) | la sortie exacte, comparée de l'extérieur du processus |
 | Toute autre commande | son code de retour, et rien d'autre : le verdict le signale |

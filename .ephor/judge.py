@@ -642,8 +642,9 @@ def verifier_rapport_pytest(
 # Ce qu'un agent ajoute pour faire taire un contrôle au lieu de le satisfaire. Tout
 # silencieux ajouté par le patch est nommé au verdict, et refusé sur une tâche à risque
 # élevé.
-# Les formes courantes, pas seulement celles de pytest : `# ruff: noqa`, un `@skip` importé de
-# unittest ou `self.skipTest` passaient en risque élevé, et VÉRIFIÉ (audit du 01/10/2026).
+# Les formes courantes, pas seulement celles de pytest : `ruff: noqa` derrière son dièse, un
+# `@skip` importé de unittest ou `self.skipTest` passaient en risque élevé, et VÉRIFIÉ (audit
+# du 01/10/2026).
 SILENCIEUX = (
     ("noqa", re.compile(r"#\s*(?:(?:ruff|flake8)\s*:\s*)?noqa\b", re.I)),
     ("type: ignore", re.compile(r"#\s*type:\s*ignore\b")),
@@ -665,7 +666,13 @@ SILENCIEUX = (
     ("ts-ignore", re.compile(r"@ts-(?:ignore|nocheck|expect-error)")),
     ("nolint", re.compile(r"//\s*nolint\b")),
 )
-TEXTE_SEUL = (".md", ".rst", ".txt")
+# Ce qui n'éteint aucun contrôle : du texte, et des données ou du balisage (un `noqa` derrière
+# son dièse dans un JSON de test était refusé en risque élevé, relecture du 01/10/2026).
+TEXTE_SEUL = (".md", ".rst", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".xml",
+              ".html", ".htm", ".svg", ".ini", ".cfg", ".lock", ".po", ".pot")  # fmt: skip
+# Une ligne de code qui n'est qu'une chaîne (une docstring qui cite le mot noqa) n'en est pas un
+# non plus : lue à la ligne, sans analyse du fichier entier, c'est la limite assumée.
+LIGNE_DE_CHAINE = re.compile(r"""^\s*[rbuf]{0,2}("|')""", re.I)
 
 
 ECHAPPEMENTS_C = {"n": 10, "t": 9, "a": 7, "b": 8, "f": 12, "v": 11, "r": 13, '"': 34, "\\": 92}
@@ -704,14 +711,14 @@ def silencieux_ajoutes(patch: bytes) -> list[str]:
     precedente = ""
     # Ce qui reste à lire du bloc en cours, d'après son en-tête `@@ -a,b +c,d @@`. Dans un
     # bloc, `--- a` puis `+++ b/README.md` sont une ligne retirée et une ligne ajoutée, pas
-    # l'en-tête d'un fichier texte : lus ainsi, ils cachaient le `# noqa` qui suivait (audit
-    # du 01/10/2026).
+    # l'en-tête d'un fichier texte : lus ainsi, ils cachaient le silencieux `noqa` qui suivait
+    # (audit du 01/10/2026).
     ancien = nouveau = 0
     for brute in patch.decode("utf-8", errors="replace").splitlines():
         if ancien > 0 or nouveau > 0:
             if brute.startswith("+"):
                 nouveau -= 1
-                if fichier is not None:
+                if fichier is not None and not LIGNE_DE_CHAINE.match(brute[1:]):
                     for nom, motif in SILENCIEUX:
                         if motif.search(brute[1:]):
                             trouves.append(f"{fichier}:{ligne} {nom}")
@@ -1139,10 +1146,18 @@ def parse_contract(data: Any, expected_id: str | None = None, dossier: str = "")
         for rule in allowed:
             if not isinstance(rule, str) or not safe_path(rule):
                 errors.append(f"chemin autorisé invalide : {rule!r}")
+            elif rule != rule.strip() or "//" in rule or rule.startswith("~"):
+                # `src//app/`, `src/ ` : aucun fichier ne correspondra, et tout le travail de
+                # l'agent sortira « hors du périmètre » ; `~/x` est un chemin du poste.
+                errors.append(f"chemin autorisé mal formé (espace, double barre ou ~) : {rule!r}")
             elif any(
-                matches(rule.rstrip("/"), protected) or matches(protected.rstrip("/"), rule)
+                matches(rule.rstrip("/"), protected)
+                or matches(protected.rstrip("/"), rule)
+                or matches(rule.rstrip("/").lower(), protected.lower())
                 for protected in zones()
             ):
+                # Sans tenir compte de la casse : `MAKEFILE` est le Makefile sur le système de
+                # fichiers d'un Mac.
                 errors.append(f"chemin autorisé qui touche une zone de contrôle : {rule}")
             elif rule in rules:
                 errors.append(f"chemin autorisé en double : {rule}")
@@ -1231,6 +1246,11 @@ def parse_contract(data: Any, expected_id: str | None = None, dossier: str = "")
     verify: tuple[str, ...] = ("bash", ".ephor/projet/verify.sh")
     if data.get("verify") is not None:
         verify = _argv(data["verify"], "verify", errors)
+    # `"verify": null` passait pour « absent » et prenait la vérification par défaut, là où le
+    # schéma exige une liste (relecture du 01/10/2026) : le dire, plutôt que deviner.
+    for cle in ("setup", "verify"):
+        if cle in data and data[cle] is None:
+            errors.append(f"{cle} doit être une liste de mots (ou absent), pas null")
 
     timeout = data.get("timeout_seconds", DEFAULT_TIMEOUT)
     if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 7200:
@@ -1424,12 +1444,22 @@ def branche_du_serveur(repo: Path) -> str | None:
 
 
 def principales(repo: Path) -> set[str]:
-    """Les branches où l'approbation se lit : main, master, et celle que le serveur désigne."""
+    """Les branches où l'approbation se lit : main, master, et celle que le serveur désigne.
+
+    Sauf une branche de tâche : `git symbolic-ref refs/remotes/origin/HEAD` pointé sur
+    `origin/task/X` faisait lire l'approbation sur la branche de l'agent (relecture du
+    01/10/2026)."""
     noms = {"main", "master"}
     distante = branche_du_serveur(repo)
-    if distante:
+    if distante and not distante.startswith("task/"):
         noms.add(distante)
     return noms
+
+
+def serveur_detourne(repo: Path) -> str | None:
+    """La branche de tâche que `origin/HEAD` désigne, s'il en désigne une : à dire au verdict."""
+    distante = branche_du_serveur(repo)
+    return distante if distante and distante.startswith("task/") else None
 
 
 def base_d_approbation(repo: Path, base: str) -> bool:
@@ -1438,14 +1468,15 @@ def base_d_approbation(repo: Path, base: str) -> bool:
     nom = base[len("refs/heads/") :] if base.startswith("refs/heads/") else base
     if nom in principales(repo):
         return True
-    # Une branche du serveur, sauf celle d'une tâche : `origin/task/T-001`, la branche de
-    # l'agent poussée puis rapportée par un fetch, faisait lire « approuvé » le contrat qu'il
-    # s'y était écrit (audit du 01/10/2026).
+    # Une branche du serveur, mais seulement une branche PRINCIPALE : `origin/task/T-001`
+    # (audit du 01/10/2026), puis `origin/approb2`, n'importe quelle branche poussée par
+    # l'agent (relecture du 01/10/2026), faisaient lire « approuvé » le contrat qu'il s'y
+    # était écrit. En CI, la branche cible est toujours l'une d'elles.
     distante = re.fullmatch(r"(?:refs/remotes/)?[^/]+/(.+)", base)
     return (
         base.startswith(("origin/", "refs/remotes/"))
         and distante is not None
-        and not distante.group(1).startswith("task/")
+        and distante.group(1) in principales(repo)
     )
 
 
@@ -1480,14 +1511,22 @@ def resolve_base(repo: Path, base: str | None) -> tuple[str, str]:
     if base and not base_d_approbation(repo, base):
         raise JudgeError(
             f"base choisie à la main ({base}) : un contrat n'est approuvé que commité sur la "
-            f"branche principale ({', '.join(sorted(principales(repo)))}) ; pour juger contre "
-            "une autre branche du serveur, passez origin/<branche>"
+            f"branche principale ({', '.join(sorted(principales(repo)))}), en local ou sur le "
+            "serveur (origin/<branche principale>)"
         )
     # La branche que le serveur désigne d'abord : `principales` l'acceptait pour approuver et
     # ranger, et `make taches`, `make task-check` ou `make judge` ne la cherchaient pas
     # (« base introuvable » sur un dépôt en `develop`, audit du 01/10/2026).
+    # Sauf quand il désigne une branche de tâche : `make judge` sans BASE lisait alors
+    # l'approbation sur la branche de l'agent (relecture du 01/10/2026).
     distante = branche_du_serveur(repo)
-    designee = [distante, f"origin/{distante}"] if distante not in (None, "main", "master") else []
+    designee: list[str] = (
+        [distante, f"origin/{distante}"]
+        if isinstance(distante, str)
+        and distante not in ("main", "master")
+        and not distante.startswith("task/")
+        else []
+    )
     candidates = [base] if base else [*designee, "main", "master", "origin/main", "origin/master"]
     for ref in candidates:
         try:
@@ -2951,6 +2990,21 @@ class Banc:
     preuves_abimees: list[str] = field(default_factory=list)
     any_timeout: bool = False
 
+    def python_du_contrat(self) -> str:
+        """`{python}` : l'interpréteur du projet, celui que `setup` vient de poser dans la copie
+        (`.venv`), quand il existe ; sinon celui qui lance le juge. Avec le python3 du
+        système, la forme documentée `{python} tasks/<ID>/check.py` ne pouvait jamais passer
+        dans un projet uv : « No module named 'app' », et le contrôle rouge prenait ce rouge-là
+        pour un vrai (relecture du 01/10/2026)."""
+        if self.runtime.kind == "local":
+            for candidat in (
+                self.copy / ".venv" / "bin" / "python",
+                self.copy / ".venv" / "Scripts" / "python.exe",
+            ):
+                if candidat.is_file():
+                    return str(candidat)
+        return self.runtime.python()
+
     def execute(
         self,
         label: str,
@@ -2960,7 +3014,7 @@ class Banc:
         max_seconds: float | None = None,
         critere: Criterion | None = None,
     ) -> dict[str, Any]:
-        resolved = [self.runtime.python() if part == "{python}" else part for part in argv]
+        resolved = [self.python_du_contrat() if part == "{python}" else part for part in argv]
         annonce = list(resolved)  # ce que le rapport montre : la commande du contrat
         forme = forme_de_preuve(critere) if critere is not None else "étape"
         jeton = ""
@@ -4343,12 +4397,14 @@ def lancer_en_rouge(
             travers = rouge_de_travers(
                 banc.logs / f"{critere.id}.junit.xml", tests_attendus(critere.check)
             )
-            if travers is None and SQUELETTE in journal.read_text("utf-8", "replace"):
-                travers = "test encore à écrire : c'est celui du squelette de make task-new"
         elif issue["forme"] == "junit" and critere.rapport_junit:
             travers = rouge_junit_de_travers(
                 banc.logs / f"{critere.id}.junit", critere.rapport_junit
             )
+        if travers is None and SQUELETTE in journal.read_text("utf-8", "replace"):
+            travers = "preuve encore à écrire : c'est le squelette de make task-new"
+        if travers is None and issue["forme"] in ("jeton", "sortie", "code"):
+            travers = rouge_technique(banc.copy, journal)
         if travers is not None:
             refus.append(f"{critere.id} échoue pour une mauvaise raison : {travers}")
             print(f"  FAUX   {titre} : rouge pour une mauvaise raison\n         -> {travers}")
@@ -4359,7 +4415,62 @@ def lancer_en_rouge(
     return criteres, verts, refus
 
 
+MODULE_ABSENT = re.compile(r"ModuleNotFoundError: No module named '([A-Za-z_]\w*)'\s*$", re.M)
+SYNTAXE_DE_PREUVE = re.compile(
+    r'File "[^"\n]*tasks/[^"\n]+", line \d+(?:\n(?![ \t]*File ")[^\n]*){1,4}\n'
+    r"(?:SyntaxError|IndentationError)"
+)
+
+
+def rouge_technique(copie: Path, journal: Path) -> str | None:
+    """Un rouge qui ne dit rien du comportement : le paquet même du projet introuvable (mauvais
+    interpréteur, installation absente), ou une erreur de syntaxe dans la preuve. Accepté comme
+    un vrai rouge, il approuvait un critère que l'agent honnête ne pouvait jamais faire passer
+    (relecture du 01/10/2026). Un sous-module manquant (`app.nouveau`), lui, est un vrai rouge :
+    c'est le comportement qui n'existe pas encore."""
+    texte = journal.read_text("utf-8", "replace") if journal.is_file() else ""
+    for module in MODULE_ABSENT.findall(texte):
+        if any(
+            (copie / dossier / module).is_dir() or (copie / dossier / f"{module}.py").is_file()
+            for dossier in (".", "src", "lib")
+        ):
+            return (
+                f"le paquet du projet « {module} » est introuvable pour l'interpréteur du"
+                " critère : ce n'est pas le comportement qui manque, c'est l'installation"
+                " (setup) ou l'interpréteur ({python} prend celui de la copie, .venv)"
+            )
+    if SYNTAXE_DE_PREUVE.search(texte):
+        return "erreur de syntaxe dans la preuve elle-même : le critère échoue avant de rien tester"
+    return None
+
+
 TEST_NAME = re.compile(r"^test_[A-Za-z0-9_]*$")
+
+
+def skeleton_script(task_id: str) -> str:
+    """Une preuve lancée comme un script (`{python} tasks/<ID>/check.py`) : un squelette pytest
+    n'en est pas un, il ne définit qu'une fonction et sortirait « vert » (relecture du
+    01/10/2026)."""
+    return (
+        f'"""Preuve de {task_id}, lancée comme un script : elle doit aller jusqu\'à sa dernière'
+        " ligne.\n\n"
+        "Écrite et validée AVANT le travail de l'agent, commitée avec le contrat.\n"
+        '"""\n'
+        "\n"
+        "import sys\n"
+        "\n"
+        f'sys.exit("{SQUELETTE} : preuve à écrire")\n'
+    )
+
+
+def scripts_cites(contract: Contract) -> set[str]:
+    """Les preuves lancées comme scripts, pas par pytest."""
+    cites: set[str] = set()
+    for criterion in contract.criteria:
+        index = position_script(criterion.check)
+        if index is not None and position_pytest(criterion.check) is None:
+            cites.add(criterion.check[index + 1])
+    return cites
 
 
 def skeleton_test(task_id: str, tests: list[str]) -> str:
@@ -4524,8 +4635,10 @@ def cmd_new(args: argparse.Namespace) -> int:
                 print(f"  REFUS {message}")
             return 2
         tests = wanted_tests(task_id, contract)
+        scripts = scripts_cites(contract)
     else:
         tests = {f"tasks/{task_id}/{test_name}": ["test_c1"]}
+        scripts = set()
 
     folder.mkdir(parents=True)
     ordered = {key: data[key] for key in CONTRACT_ORDER if key in data}
@@ -4547,7 +4660,11 @@ def cmd_new(args: argparse.Namespace) -> int:
         if target.exists():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(skeleton_test(task_id, names or ["test_a_ecrire"]), encoding="utf-8")
+        if path in scripts:
+            contenu_squelette = skeleton_script(task_id)
+        else:
+            contenu_squelette = skeleton_test(task_id, names or ["test_a_ecrire"])
+        target.write_text(contenu_squelette, encoding="utf-8")
         written.append(reel)
         squelettes.append(reel)
     print("créé : " + ", ".join(written))

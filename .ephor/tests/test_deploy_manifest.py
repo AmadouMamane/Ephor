@@ -232,3 +232,34 @@ def test_le_modele_recopie_sans_etre_rempli_dit_quoi_faire(tmp_path: Path) -> No
     erreurs = delivery_manifest.check_manifest(manifeste, politique)
     assert erreurs and "encore le modèle" in erreurs[0]
     assert "Sa place" not in erreurs[0]
+
+
+# ------------------------------------------------- relecture adverse de la 1.5.2 (01/10/2026)
+
+
+def test_un_manifeste_illisible_est_un_refus_pas_une_trace(tmp_path: Path) -> None:
+    manifeste = tmp_path / "manifest.json"
+    manifeste.write_text("pas du json")
+    politique = tmp_path / "policy.json"
+    politique.write_text('{"required_evidence": ["judge_status"]}')
+    erreurs = delivery_manifest.check_manifest(manifeste, politique)
+    assert erreurs and "Manifeste illisible" in erreurs[0]
+    manifeste.write_text("[]")
+    assert "pas un objet JSON" in delivery_manifest.check_manifest(manifeste, politique)[0]
+
+
+def test_le_controle_recompare_l_empreinte_du_rapport_quand_on_le_lui_donne(tmp_path: Path) -> None:
+    """« Manifeste conforme » sortait avec des empreintes fausses : le contrôle ne lisait que la
+    présence des champs."""
+    depot, rapport = _depot_juge(tmp_path)
+    sortie = tmp_path / "manifest.json"
+    delivery_manifest.generate_manifest(depot, "T-1", DIGEST_OK, sortie, rapport)
+    politique = tmp_path / "policy.json"
+    politique.write_text('{"required_evidence": ["judge_report_sha256", "judge_status"]}')
+    assert delivery_manifest.check_manifest(sortie, politique, rapport) == []
+    manifeste = json.loads(sortie.read_text())
+    manifeste["judge_report_sha256"] = "0" * 64
+    sortie.write_text(json.dumps(manifeste))
+    assert delivery_manifest.check_manifest(sortie, politique) == [], "sans le rapport : la forme"
+    erreurs = delivery_manifest.check_manifest(sortie, politique, rapport)
+    assert erreurs and "empreinte de ce rapport" in erreurs[0]

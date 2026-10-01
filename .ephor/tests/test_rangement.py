@@ -29,6 +29,7 @@ from conftest import ROOT, bootstrap, depot_node, git
 # exprès, c'est elle qu'on touche tous les jours. Le Makefile et le .gitignore ne sont
 # nouveaux que si le dépôt n'en avait pas ; sinon Ephor se range à côté ou ajoute des lignes.
 RACINE_ATTENDUE = {
+    "CLAUDE.md",  # le pointeur vers AGENTS.md, posé s'il manque (1.5.3)
     ".claude",
     ".opencode",
     ".github",

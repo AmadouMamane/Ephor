@@ -39,11 +39,15 @@ Une petite correction sans enjeu n'a pas besoin de contrat : `make verify` et la
 4. **Travailler.** L'agent travaille sur la branche `task/FEAT-001`, dans le périmètre
    `allowed_paths`, et dans le dossier de la tâche : une tâche, un dossier (un worktree git),
    une session d'agent. `make task-approve` l'ouvre (sauf `DOSSIER=non`) et donne la ligne à
-   coller ; sinon `make task-worktree ID=FEAT-001`. Deux sessions dans un même dossier
+   coller ; sinon `make task-worktree ID=FEAT-001`. Le verdict qui compte se lance depuis
+   VOTRE copie (`make judge TASK=FEAT-001`, `make review TASK=FEAT-001`) : dans le dossier
+   de la tâche, un `GNUmakefile` ou un `makefile` posé par l'agent détournerait un `make`
+   lancé là (GNU make les lit avant `Makefile`). Deux sessions dans un même dossier
    partagent la branche et les fichiers, et se marchent dessus : Ephor le signale au début du
    tour. L'agent ne peut modifier ni ce dossier `tasks/`, ni les zones de contrôle. Une fois la
    tâche fusionnée : `make task-clore ID=FEAT-001` retire son dossier et sa branche locale,
-   après avoir gardé son verdict et sa mesure de tokens dans le dossier principal.
+   après avoir gardé son verdict, son dernier rapport du juge (celui que lit
+   `make delivery-manifest`) et sa mesure de tokens dans le dossier principal.
 5. **Juger.** `make judge TASK=FEAT-001` en local, puis le job `juge` de la CI sur la merge request.
 
 **D'un seul geste.** `make task-approve ID=FEAT-001 FROM=.verify/plans/FEAT-001.md` fait
@@ -128,7 +132,8 @@ qui le prouvent, et dit pour chaque critère laquelle il a vue :
   le juge exige un rapport de tests complet où ce test a tourné et réussi. C'est la forme
   de `make task-new`, à préférer. N'ajoutez pas `--junitxml` : le juge le fait lui-même ;
 - un **script Python** (`{python} tasks/FEAT-001/check_c1.py`) : il doit aller jusqu'à sa
-  dernière ligne ;
+  dernière ligne. `{python}` est l'interpréteur du projet, celui que `setup` pose dans la
+  copie jugée (`.venv`), quand il existe ; sinon celui qui lance le juge ;
 - une **sortie attendue**, comparée à l'octet près de l'extérieur du processus — la plus
   solide, idéale pour un outil en ligne de commande :
 

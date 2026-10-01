@@ -1101,6 +1101,40 @@ def test_une_image_de_registre_prive_dit_quoi_faire(
     assert "login" not in str(simple.value)
 
 
+SIGNES_RESEAU = re.compile(
+    r"Forbidden|\b40[37]\b|timed? ?out|no such host|connection refused|network is unreachable"
+    r"|TLS handshake|proxyconnect|dial tcp|unexpected EOF",
+    re.IGNORECASE,
+)
+
+
+def base_injoignable(moteur: str) -> str | None:
+    """La raison de sauter quand une base de l'image n'est pas joignable d'ici : derrière un
+    proxy qui refuse ghcr.io ou Docker Hub, le test disait « recette fausse » pour « réseau
+    coupé » (vu le 01/10/2026). Une base déjà sur le poste suffit ; une base refusée pour une
+    autre raison (étiquette disparue) reste un échec. Mêmes variables que `make ci-image`."""
+    recette = (ROOT / ".ephor" / "deploy" / "Containerfile.ci").read_text()
+    for variable, argument in (("EPHOR_CI_BASE", "BASE"), ("EPHOR_CI_GITLEAKS", "GITLEAKS")):
+        declaree = re.search(rf"^ARG {argument}=(\S+)", recette, re.MULTILINE)
+        assert declaree, f"la recette doit déclarer ARG {argument}"
+        base = os.environ.get(variable) or declaree.group(1)
+        presente = subprocess.run(
+            [moteur, "image", "inspect", base], capture_output=True, check=False
+        )
+        if presente.returncode == 0:
+            continue
+        tirage = subprocess.run(
+            [moteur, "pull", "--quiet", base],
+            capture_output=True,
+            text=True,
+            timeout=900,
+            check=False,
+        )
+        if tirage.returncode != 0 and SIGNES_RESEAU.search(tirage.stdout + tirage.stderr):
+            return f"base {base} injoignable d'ici (réseau filtré) : {variable}=<miroir>"
+    return None
+
+
 def bases_miroir() -> list[str]:
     """Les bases de l'image, prises sur un miroir quand le poste le dit : derrière un réseau
     filtré, ni Docker Hub ni ghcr.io ne répondent. Mêmes variables que `make ci-image`."""
@@ -1120,6 +1154,8 @@ def test_l_image_de_ci_porte_les_outils_qu_elle_promet() -> None:
     le porter serait pire que pas d'image du tout, donc on construit et on demande."""
     moteur = engine()
     assert moteur is not None
+    if raison := base_injoignable(moteur):
+        pytest.skip(raison)
     recette = ROOT / ".ephor" / "deploy" / "Containerfile.ci"
     epingle = re.search(r"GITLEAKS=\S+:v([0-9][0-9.]*)", recette.read_text())
     assert epingle, "la version de gitleaks doit être épinglée dans la recette"
@@ -1157,6 +1193,8 @@ def test_l_image_de_ci_reconnait_l_autorite_de_l_entreprise(tmp_path: Path) -> N
     fichier qui n'est pas du PEM doit faire échouer la construction, pas passer en silence."""
     moteur = engine()
     assert moteur is not None
+    if raison := base_injoignable(moteur):
+        pytest.skip(raison)
     contexte = tmp_path / "contexte"
     shutil.copytree(ROOT / ".ephor" / "deploy", contexte)
     ca = tmp_path / "ca"
@@ -2247,3 +2285,130 @@ def test_une_ligne_qui_ressemble_a_un_en_tete_dans_un_bloc_reste_une_ligne() -> 
         b"@@ -1,2 +1,3 @@\n--- a\n+++ b/README.md\n+x = 1  # noqa\n y\n"
     )
     assert judge.silencieux_ajoutes(patch) == ["src/a.py:2 noqa"]
+
+
+# ------------------------------------------------- relecture adverse de la 1.5.2 (01/10/2026)
+
+
+def test_python_du_contrat_est_celui_de_la_copie_installee(
+    make_repo: Callable[..., Path], run_judge: Runner
+) -> None:
+    """`{python}` était le python3 du système, celui qui lance le juge : dans un projet uv, la
+    forme documentée `{python} tasks/<ID>/check.py` ne pouvait jamais passer (« No module named
+    'app' »). C'est l'interpréteur que `setup` pose dans la copie (.venv) quand il existe."""
+    repo = make_repo(
+        setup=[
+            "{python}",
+            "-c",
+            "import os, sys; os.makedirs('.venv/bin');"
+            " os.symlink(sys.executable, '.venv/bin/python')",
+        ]
+    )
+    (repo / "src" / "metrics.py").write_text(FIX)
+    code, report = run_judge(repo)
+    assert code == 0, report
+    lances = {step["name"]: step["argv"] for step in report["steps"]}
+    assert lances["setup"][0] == sys.executable, "avant l'installation, celui du juge"
+    assert lances["C1"][0].endswith(".venv/bin/python"), "après, celui du projet"
+
+
+def test_un_rouge_technique_est_nomme_comme_tel(tmp_path: Path) -> None:
+    """Le paquet du projet introuvable, ou une erreur de syntaxe dans la preuve : le contrôle
+    rouge acceptait ces rouges-là comme de vrais rouges, et l'agent honnête était refusé."""
+    copie = tmp_path / "copie"
+    (copie / "src" / "app").mkdir(parents=True)
+    (copie / "src" / "app" / "__init__.py").write_text("")
+    journal = tmp_path / "C1.log"
+    journal.write_text("Traceback\nModuleNotFoundError: No module named 'app'\n")
+    assert "paquet du projet « app »" in (judge.rouge_technique(copie, journal) or "")
+    journal.write_text("ModuleNotFoundError: No module named 'app.nouveau'\n")
+    assert judge.rouge_technique(copie, journal) is None, "un sous-module qui manque : vrai rouge"
+    journal.write_text("ModuleNotFoundError: No module named 'requests'\n")
+    assert judge.rouge_technique(copie, journal) is None, "une dépendance absente : à l'agent"
+    erreur = '  File "{}", line 3\n    def (:\n        ^\nSyntaxError: invalid syntax\n'
+    journal.write_text(erreur.format("/w/copy/tasks/T-1/check.py"))
+    assert "erreur de syntaxe dans la preuve" in (judge.rouge_technique(copie, journal) or "")
+    journal.write_text(erreur.format("/w/copy/src/app/x.py"))
+    assert judge.rouge_technique(copie, journal) is None, "dans le code : à l'agent de corriger"
+
+
+def test_un_contrat_n_est_approuve_que_sur_une_branche_principale(repo: Path) -> None:
+    """`BASE=origin/approb2` (n'importe quelle branche poussée par l'agent) et `origin/HEAD`
+    pointé sur sa branche de tâche faisaient lire « approuvé » le contrat qu'il s'y était écrit."""
+    assert judge.base_d_approbation(repo, "main")
+    assert judge.base_d_approbation(repo, "origin/main")
+    assert judge.base_d_approbation(repo, "refs/remotes/origin/master")
+    assert not judge.base_d_approbation(repo, "origin/approb2")
+    assert not judge.base_d_approbation(repo, "origin/task/T-001")
+    git(repo, "update-ref", "refs/remotes/origin/task/T-001", "HEAD")
+    git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/task/T-001")
+    assert "task/T-001" not in judge.principales(repo)
+    assert judge.serveur_detourne(repo) == "task/T-001"
+    assert not judge.base_d_approbation(repo, "origin/task/T-001")
+    assert judge.resolve_base(repo, None)[0] == "main", "sans BASE, jamais la branche de l'agent"
+
+
+def test_un_silencieux_dans_des_donnees_ou_une_chaine_n_en_est_pas_un() -> None:
+    """`{"note": "# noqa"}` dans un JSON de test, ou une docstring qui cite le mot : refusés en
+    risque élevé comme des silencieux."""
+
+    def patch(fichier: str, ligne: str) -> bytes:
+        return f"--- a/{fichier}\n+++ b/{fichier}\n@@ -0,0 +1 @@\n+{ligne}\n".encode()
+
+    assert judge.silencieux_ajoutes(patch("tests/data.json", '{"note": "# noqa"}')) == []
+    assert judge.silencieux_ajoutes(patch("tests/x.yaml", "note: '# type: ignore'")) == []
+    assert judge.silencieux_ajoutes(patch("tests/test_d.py", '"""Jamais de # noqa ici."""')) == []
+    assert judge.silencieux_ajoutes(patch("tests/test_d.py", "x = 1  # noqa")) == [
+        "tests/test_d.py:1 noqa"
+    ]
+
+
+def test_un_contrat_mal_forme_est_refuse_avant_le_travail() -> None:
+    """`"verify": null` prenait la vérification par défaut ; `src//app/`, `src/ ` et `~/x` ne
+    désigneront jamais rien ; `MAKEFILE` est le Makefile sur le disque d'un Mac."""
+    with pytest.raises(judge.JudgeError, match="pas null"):
+        judge.parse_contract(contract(verify=None), "T-001")
+    for chemin in ("src//app/", "src/ ", "~/x"):
+        with pytest.raises(judge.JudgeError, match="mal formé"):
+            judge.parse_contract(contract(allowed_paths=[chemin]), "T-001")
+    with pytest.raises(judge.JudgeError, match="zone de contrôle"):
+        judge.parse_contract(contract(allowed_paths=["MAKEFILE"]), "T-001")
+    judge.parse_contract(contract(allowed_paths=["src/", "tests/"]), "T-001")
+
+
+def test_make_task_new_ecrit_un_squelette_de_script_pour_une_preuve_script(
+    repo: Path, tmp_path: Path
+) -> None:
+    """Pour `{python} tasks/<ID>/check.py`, le squelette était un test pytest : une fonction, et
+    « vert » dès que pytest s'importe. Un script qui sort en erreur jusqu'à ce qu'on l'écrive."""
+    git(repo, "switch", "-q", "main")
+    plan = tmp_path / "plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                **contract(id="T-002"),
+                "criteria": [
+                    {
+                        "id": "C1",
+                        "description": "script",
+                        "check": ["{python}", "tasks/T-002/check_c1.py"],
+                    },
+                    {
+                        "id": "C2",
+                        "description": "pytest",
+                        "check": [
+                            "{python}",
+                            "-m",
+                            "pytest",
+                            "-q",
+                            "tasks/T-002/test_t2.py::test_b",
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+    assert judge.main(["new", "--task-id", "T-002", "--repo", str(repo), "--from", str(plan)]) == 0
+    script = (repo / "tasks" / "T-002" / "check_c1.py").read_text()
+    assert "sys.exit(" in script and judge.SQUELETTE in script and "pytest" not in script
+    assert "def test_b" in (repo / "tasks" / "T-002" / "test_t2.py").read_text()

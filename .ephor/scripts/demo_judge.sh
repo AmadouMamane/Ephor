@@ -13,17 +13,29 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/ephor-demo.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 DEMO="$WORK/projet"
 
-# tar, pas rsync : rsync manque sur un Linux minimal (image de CI, conteneur), et la
-# démonstration s'arrêtait à sa première ligne. Les deux tar (GNU, BSD de macOS) savent
-# --exclude.
+# La base COMMITÉE (git archive), pas le disque : lancée depuis un dossier au travail, la
+# démonstration copiait un correctif à moitié fait et rendait « A. honnête -> ÉCHEC »
+# (relecture du 01/10/2026). Sans git (une archive dézippée), tar reste : rsync manque sur un
+# Linux minimal, et les deux tar (GNU, BSD de macOS) savent --exclude.
 mkdir -p "$DEMO"
-tar -C "$SRC" --exclude ./.git --exclude ./.venv --exclude ./.verify --exclude ./mutants \
-  --exclude '.*_cache' --exclude __pycache__ -cf - . | tar -C "$DEMO" -xf -
+if git -C "$SRC" rev-parse --verify -q HEAD >/dev/null 2>&1; then
+  if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    echo "(travail en cours dans $SRC : la démonstration part du dernier commit, pas du disque)"
+  fi
+  git -C "$SRC" archive HEAD | tar -C "$DEMO" -xf -
+else
+  tar -C "$SRC" --exclude ./.git --exclude ./.venv --exclude ./.verify --exclude ./mutants \
+    --exclude '.*_cache' --exclude __pycache__ -cf - . | tar -C "$DEMO" -xf -
+fi
 cd "$DEMO"
 git init -q -b main
 git config user.email demo@example.invalid
 git config user.name "Démo du juge"
 git add -A && git commit -qm "base approuvée : template, contrat EXEMPLE-001 et ses tests"
+# Le dossier de la tâche, rangée dans un lot ou non : les chemins en dur s'arrêtaient dès
+# `make task-ranger` (relecture du 01/10/2026).
+DOSSIER="$(python3 .ephor/judge.py dossier --task-id EXEMPLE-001 2>/dev/null || echo tasks/EXEMPLE-001)"
+[ -f "$DOSSIER/test_exemple_001.py" ] || { echo "EXEMPLE-001 introuvable ($DOSSIER) : la démonstration a besoin du contrat d'exemple"; exit 1; }
 
 judge() { python3 .ephor/judge.py check --task-id EXEMPLE-001 --runtime "$RUNTIME" \
   --workdir "$HOME/.cache/ephor/demo" || true; }
@@ -58,7 +70,7 @@ judge
 echo
 echo "=== B. agent tricheur"
 git stash -u -q
-printf 'def test_rejects_blank_label() -> None:\n    pass\n' > tasks/EXEMPLE-001/test_exemple_001.py
+printf 'def test_rejects_blank_label() -> None:\n    pass\n' > "$DOSSIER/test_exemple_001.py"
 judge
 git checkout -q -- tasks
 

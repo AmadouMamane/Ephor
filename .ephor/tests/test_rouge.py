@@ -424,7 +424,7 @@ def test_le_squelette_de_task_new_n_est_pas_approuvable(
     )
     assert code == 1
     sortie = capsys.readouterr().out
-    assert "FAUX   C1" in sortie and "test encore à écrire" in sortie
+    assert "FAUX   C1" in sortie and "preuve encore à écrire" in sortie
 
 
 def test_une_commande_introuvable_est_un_faux_rouge(
@@ -903,7 +903,11 @@ def test_un_verdict_rendu_dans_le_dossier_de_la_tache_se_voit_du_dossier_princip
     assert "T-001" in usage.rapport(repo) and "1 200" in usage.rapport(repo)
     git(repo, "merge", "-q", "--ff-only", "task/T-001")
     assert "1 fusionnée(s)" in tableau(), "vérifiée puis entrée dans main : fusionnée"
-    assert usage.rapatrier(dossier, repo) == ["1 jugement(s)", "la mesure de tokens de T-001"]
+    assert usage.rapatrier(dossier, repo) == [
+        "1 jugement(s)",
+        "la mesure de tokens de T-001",
+        "le rapport du juge de T-001",
+    ]
     assert usage.rapatrier(dossier, repo)[0] == "la mesure de tokens de T-001", "sans doublon"
     git(repo, "worktree", "remove", "--force", str(dossier))
     assert len(score.read_journal(repo)) == 1, "le verdict reste après le dossier"

@@ -22,8 +22,14 @@ import usage  # même dossier : les deux modules mesurent, autant partager leurs
 
 
 def entier(valeur: Any) -> int:
-    """Un compte qui n'en est pas un vaut zéro : un journal abîmé ne fausse pas le total."""
-    return valeur if isinstance(valeur, int) and not isinstance(valeur, bool) else 0
+    """Un compte qui n'en est pas un vaut zéro : un journal abîmé ne fausse pas le total. Un
+    compte négatif non plus (« -5 s », relecture du 01/10/2026)."""
+    return valeur if isinstance(valeur, int) and not isinstance(valeur, bool) and valeur >= 0 else 0
+
+
+# Au-delà, ce n'est plus une durée de jugement : un journal écrit à la main (`1e300`) faisait
+# une colonne de trois cents chiffres.
+DUREE_MAX = 7 * 24 * 3600.0
 
 
 def duree(valeur: Any) -> float:
@@ -34,12 +40,14 @@ def duree(valeur: Any) -> float:
         isinstance(valeur, bool)
         or not isinstance(valeur, (int, float))
         or not math.isfinite(valeur)
+        or valeur < 0
     ):
         return 0.0
-    return float(valeur)
+    return min(float(valeur), DUREE_MAX)
 
 
 VERIFIED = "verified_needs_review"
+NIVEAUX_CONNUS = {"rapide", "standard", "fort"}
 # Tout n'est pas un échec de l'agent : un contrat refusé et un dépôt inchangé disent
 # autre chose, et les confondre fausserait la tendance qu'on regarde.
 SYMBOLS = {VERIFIED: "✓", "rejected": "·", "no_change": "~", "stale": "~"}
@@ -53,9 +61,22 @@ def read_journal(repo: Path, task: str | None = None) -> list[dict[str, Any]]:
     return usage.journal_des_jugements(repo, task)
 
 
+def texte_sur(valeur: Any, longueur: int = 40) -> str:
+    """Un identifiant ou un niveau lu dans le journal : du texte, sans caractère de contrôle
+    (un saut de ligne cassait le tableau), et borné."""
+    propre = "".join(c for c in str(valeur) if c.isprintable())
+    return propre[:longueur] + ("…" if len(propre) > longueur else "")
+
+
+def satisfaits(entry: dict[str, Any]) -> int:
+    """Les critères satisfaits d'un jugement, jamais plus que ses critères : « 20 / 13,
+    153 % » sortait d'un journal écrit à la main (relecture du 01/10/2026)."""
+    return min(entier(entry.get("criteria_passed")), entier(entry.get("criteria_total")))
+
+
 def tache(entry: dict[str, Any]) -> str:
     """L'identifiant de la tâche, toujours en texte : un journal abîmé ne la dédouble pas."""
-    return str(entry.get("task_id", "?"))
+    return texte_sur(entry.get("task_id", "?"))
 
 
 def percent(part: int, whole_count: int) -> str:
@@ -73,7 +94,7 @@ def cost_per_criterion(entries: list[dict[str, Any]]) -> tuple[int, int, int]:
         if entier(entry.get("billable_tokens")):
             last[tache(entry)] = entry
     tokens = sum(entier(entry.get("billable_tokens")) for entry in last.values())
-    passed = sum(entier(entry.get("criteria_passed")) for entry in last.values())
+    passed = sum(satisfaits(entry) for entry in last.values())
     return tokens, passed, len(last)
 
 
@@ -94,7 +115,7 @@ def report(entries: list[dict[str, Any]]) -> str:
     finals = list(dernier.values())
     verified = sum(1 for entry in finals if entry.get("status") == VERIFIED)
     criteria = sum(entier(entry.get("criteria_total")) for entry in finals)
-    passed = sum(entier(entry.get("criteria_passed")) for entry in finals)
+    passed = sum(satisfaits(entry) for entry in finals)
     tokens, billed_passed, measured = cost_per_criterion(entries)
     trend = "".join(SYMBOLS.get(str(entry.get("status")), "✗") for entry in entries[-12:])
     since = str(entries[0].get("finished_at") or "?")[:10]
@@ -126,8 +147,8 @@ def report(entries: list[dict[str, Any]]) -> str:
     par_niveau: dict[str, list[dict[str, Any]]] = {}
     for entry in entries:
         niveau = dernier[tache(entry)].get("niveau")
-        if niveau:
-            par_niveau.setdefault(str(niveau), []).append(entry)
+        if isinstance(niveau, str) and niveau in NIVEAUX_CONNUS:
+            par_niveau.setdefault(niveau, []).append(entry)
     if par_niveau:
         lines.append("  par niveau d'implémentation")
         for niveau, groupe in sorted(par_niveau.items()):

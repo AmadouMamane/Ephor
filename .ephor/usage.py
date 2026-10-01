@@ -33,9 +33,11 @@ import json
 import math
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 from collections import Counter
 from contextlib import suppress
 from datetime import datetime
@@ -700,7 +702,9 @@ def dossiers_du_depot(repo: Path) -> list[Path]:
 def lire_journal(chemin: Path) -> list[dict[str, Any]]:
     """Les jugements d'un journal, une ligne chacun ; une ligne abîmée ne masque pas les autres."""
     try:
-        lignes = chemin.read_text(encoding="utf-8").splitlines()
+        # Un octet qui n'est pas de l'UTF-8 faisait tomber `make taches` et `make score` en
+        # trace, depuis n'importe quel dossier de tâche (relecture du 01/10/2026).
+        lignes = chemin.read_bytes().decode("utf-8", errors="replace").splitlines()
     except OSError:
         return []
     entrees: list[dict[str, Any]] = []
@@ -764,7 +768,8 @@ def rapatrier(source: Path, cible: Path) -> list[str]:
     deja = {entree.get("run_id") for entree in lire_journal(journal) if entree.get("run_id")}
     nouvelles: list[str] = []
     try:
-        lignes = (source / ".verify" / "journal.jsonl").read_text(encoding="utf-8").splitlines()
+        brut = (source / ".verify" / "journal.jsonl").read_bytes()
+        lignes = brut.decode("utf-8", errors="replace").splitlines()
     except OSError:
         lignes = []
     for ligne in lignes:
@@ -798,6 +803,21 @@ def rapatrier(source: Path, cible: Path) -> list[str]:
             json.dumps(fusionne_mesures(mesures), ensure_ascii=False) + "\n", encoding="utf-8"
         )
         faits.append(f"la mesure de tokens de {fichier.stem}")
+    # Le dernier rapport du juge de chaque tâche : `make delivery-manifest` en a besoin, et
+    # il disparaissait avec le dossier (relecture du 01/10/2026). Celui de la copie principale,
+    # s'il existe, est gardé à côté, daté : rien n'est écrasé.
+    juge = source / ".verify" / "judge"
+    for dossier_tache in sorted(juge.iterdir()) if juge.is_dir() else []:
+        dernier = dossier_tache / "latest"
+        if not (dernier / "report.json").is_file():
+            continue
+        destination = cible / ".verify" / "judge" / dossier_tache.name / "latest"
+        if destination.exists():
+            horodate = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            destination.rename(destination.with_name(f"avant-{horodate}"))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(dernier, destination)
+        faits.append(f"le rapport du juge de {dossier_tache.name}")
     return faits
 
 
@@ -981,6 +1001,10 @@ def main(argv: list[str] | None = None) -> int:
             except ValueError:
                 lu = None
             etat = lu if isinstance(lu, dict) else None
+        if not options.journal.is_file():
+            # `python3 .ephor/usage.py claude <journal absent>` sortait en trace FileNotFoundError.
+            print(f"journal introuvable : {options.journal}", file=sys.stderr)
+            return 2
         lire = claude_code if options.commande == "claude" else copilot
         compte = lire(options.journal, etat)
     else:

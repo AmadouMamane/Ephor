@@ -187,16 +187,32 @@ def generate_manifest(
     return manifest
 
 
-def check_manifest(manifest_path: Path, policy_path: Path) -> list[str]:
-    """Vérifie la conformité d'un manifeste vis-à-vis d'une politique de release."""
+def check_manifest(
+    manifest_path: Path, policy_path: Path, report_path: Path | None = None
+) -> list[str]:
+    """Vérifie la conformité d'un manifeste vis-à-vis d'une politique de release. Avec le
+    rapport du juge (`--report`), l'empreinte du manifeste est recomparée : « conforme » sur
+    une empreinte fausse ne voulait rien dire (relecture du 01/10/2026)."""
     errors: list[str] = []
     if not manifest_path.exists():
         return [f"Manifeste introuvable : {manifest_path}"]
     if not policy_path.exists():
         return [f"Politique introuvable : {policy_path}"]
 
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    # Un manifeste ou une politique illisibles sortaient en trace JSONDecodeError (relecture
+    # du 01/10/2026) : c'est un refus, dit comme tel.
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"Manifeste illisible ({manifest_path}) : {exc}"]
+    try:
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [f"Politique illisible ({policy_path}) : {exc}"]
+    if not isinstance(manifest, dict):
+        return [f"Manifeste illisible ({manifest_path}) : ce n'est pas un objet JSON"]
+    if not isinstance(policy, dict):
+        return [f"Politique illisible ({policy_path}) : ce n'est pas un objet JSON"]
 
     # Le modèle livré avec Ephor est un MODÈLE : il décrit une chaîne de livraison
     # qui n'existe pas encore (canary, seuils, retour arrière). Le valider contre lui-même
@@ -229,6 +245,14 @@ def check_manifest(manifest_path: Path, policy_path: Path) -> list[str]:
     if manifest.get("judge_status") != "verified_needs_review":
         errors.append(f"Le statut du juge n'est pas favorable : {manifest.get('judge_status')}")
 
+    if report_path is not None:
+        if not report_path.is_file():
+            errors.append(f"Rapport du juge introuvable : {report_path}")
+        elif manifest.get("judge_report_sha256") != sha256_file(report_path):
+            errors.append(
+                "Le manifeste ne porte pas l'empreinte de ce rapport du juge : il a été généré"
+                " sur un autre rapport, ou retouché"
+            )
     return errors
 
 
@@ -248,6 +272,9 @@ def main() -> int:
     chk = sub.add_parser("check", help="Vérifie la conformité d'un manifeste")
     chk.add_argument("--manifest", type=Path, default=Path(".verify/delivery-manifest.json"))
     chk.add_argument("--policy", type=Path, default=Path(".ephor/projet/release-policy.json"))
+    chk.add_argument(
+        "--report", type=Path, default=None, help="rapport du juge : son empreinte est recomparée"
+    )
 
     args = parser.parse_args()
 
@@ -274,7 +301,7 @@ def main() -> int:
             print(f"Erreur de génération : {e}", file=sys.stderr)
             return 1
     elif args.cmd == "check":
-        errors = check_manifest(args.manifest, args.policy)
+        errors = check_manifest(args.manifest, args.policy, args.report)
         if errors:
             print("ERREUR de conformité du manifeste de livraison :", file=sys.stderr)
             for err in errors:

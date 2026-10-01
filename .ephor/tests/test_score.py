@@ -165,3 +165,42 @@ def test_une_duree_qui_n_est_pas_un_nombre_fini_compte_zero() -> None:
     assert score.duree(float("nan")) == 0.0 and score.duree(float("inf")) == 0.0
     entree = json.loads('{"task_id": "T", "status": "verified_needs_review", "seconds": NaN}')
     assert "T" in score.report([entree]) or score.report([entree])
+
+
+# ------------------------------------------------- relecture adverse de la 1.5.2 (01/10/2026)
+
+
+def test_un_octet_qui_n_est_pas_de_l_utf8_ne_fait_pas_tomber_le_tableau(tmp_path: Path) -> None:
+    """`make taches` et `make score` tombaient en trace UnicodeDecodeError sur un journal abîmé,
+    celui d'un dossier de tâche compris."""
+    write_journal(tmp_path, JOURNAL)
+    with (tmp_path / ".verify" / "journal.jsonl").open("ab") as flux:
+        flux.write(b"\xff\xfe pas de l'utf-8\n")
+    text = score.report(score.read_journal(tmp_path))
+    assert "4 jugement(s) sur 2 tâche(s)" in text
+
+
+def test_des_valeurs_absurdes_du_journal_ne_sont_pas_recopiees(tmp_path: Path) -> None:
+    """« critères satisfaits 20 / 13, 153 % », « -5 s », un niveau qui est une liste, un
+    identifiant avec un saut de ligne : tout sortait tel quel."""
+    write_journal(
+        tmp_path,
+        [
+            {
+                "run_id": "r1",
+                "task_id": "T-1\nX",
+                "status": score.VERIFIED,
+                "criteria_passed": 10,
+                "criteria_total": 2,
+                "seconds": -5,
+                "niveau": ["fort"],
+                "finished_at": "2026-10-01T10:00:00+00:00",
+            }
+        ],
+    )
+    text = score.report(score.read_journal(tmp_path))
+    assert "2 / 2" in text and "10 / 2" not in text
+    assert "-5" not in text
+    assert "['fort']" not in text
+    assert "T-1X" in text and "T-1\nX" not in text
+    assert score.duree(1e300) == score.DUREE_MAX

@@ -647,3 +647,39 @@ def test_un_journal_abime_ne_fait_pas_tomber_le_rapport(
     (sous / "agent-x.meta.json").write_text('{"agentType": "scout"}')
     (profil,) = usage.sous_agents_claude(depot)
     assert profil["outils"] == {"Bash": 1} and profil["fichiers_lus"] == 0
+
+
+# ------------------------------------------------- relecture adverse de la 1.5.2 (01/10/2026)
+
+
+def test_task_clore_garde_aussi_le_rapport_du_juge(tmp_path: Path) -> None:
+    """`make task-clore` gardait le verdict et la mesure, pas le rapport : plus de
+    `make delivery-manifest` après la fermeture (« Rapport introuvable »)."""
+    source, cible = tmp_path / "tache", tmp_path / "principale"
+    dernier = source / ".verify" / "judge" / "T-1" / "latest"
+    dernier.mkdir(parents=True)
+    (dernier / "report.json").write_text('{"status": "verified_needs_review"}')
+    (dernier / "summary.txt").write_text("VERDICT : VÉRIFIÉ\n")
+    ancien = cible / ".verify" / "judge" / "T-1" / "latest"
+    ancien.mkdir(parents=True)
+    (ancien / "report.json").write_text('{"status": "rejected"}')
+    faits = usage.rapatrier(source, cible)
+    assert "le rapport du juge de T-1" in faits
+    assert '"verified_needs_review"' in (ancien / "report.json").read_text()
+    gardes = [d.name for d in (cible / ".verify" / "judge" / "T-1").iterdir()]
+    assert "latest" in gardes and any(d.startswith("avant-") for d in gardes), "rien d'écrasé"
+
+
+def test_un_journal_absent_est_dit_sans_trace(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert usage.main(["claude", str(tmp_path / "absent.jsonl")]) == 2
+    assert "journal introuvable" in capsys.readouterr().err
+
+
+def test_une_ligne_qui_n_est_pas_de_l_utf8_ne_masque_pas_les_autres(tmp_path: Path) -> None:
+    chemin = tmp_path / "journal.jsonl"
+    chemin.write_bytes(
+        b'{"run_id": "a", "task_id": "T-1"}\n\xff\n{"run_id": "b", "task_id": "T-2"}\n'
+    )
+    assert [e["run_id"] for e in usage.lire_journal(chemin)] == ["a", "b"]
