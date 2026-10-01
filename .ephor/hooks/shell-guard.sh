@@ -79,6 +79,7 @@ fi
 # document en ligne à l'intérieur d'un $(…) quand il contient des apostrophes.
 read -r -d '' ANALYSE <<'PY' || true
 import fnmatch
+import glob
 import os
 import re
 import shlex
@@ -806,7 +807,7 @@ def gestes_et_lectures(nom, args, ici):
     for chemin in chemins_lus(nom, args):
         if chemin.startswith("-") or "://" in chemin:
             continue
-        if lecture_refusee(resolu(ici(chemin))):
+        if any(lecture_refusee(resolu(vu)) for vu in deplie(ici(chemin))):
             yield SECRET + chemin, nom
 
 
@@ -909,6 +910,104 @@ def branche_du_dossier(dossier):
     return fait.stdout.strip()
 
 
+JOKER = re.compile(r"[*?\[]")
+
+
+def deplie(cible):
+    """La cible, et, si elle porte un joker, les fichiers qu'il désigne : le shell le
+    développe avant de lancer la commande. `sed -i … *.md` réécrivait AGENTS.md, et `cat
+    .env*` montrait le secret, sans que la garde le voie (audit du 01/10/2026)."""
+    yield cible
+    if JOKER.search(cible) and not cible.startswith(("$", "~")):
+        absolu = cible if os.path.isabs(cible) else os.path.join(racine, cible)
+        yield from sorted(glob.glob(absolu))[:5000]
+
+
+def git_lance(dossier, *args):
+    try:
+        sortie = subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C", dossier, *args],
+            capture_output=True, text=True, timeout=10, check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [ligne for ligne in sortie.splitlines() if ligne]
+
+
+def git_atteints(sous, args, dossier):
+    """Les fichiers qu'un `git restore`, `checkout` ou `rm` atteint quand un chemin est large
+    (`.`, un dossier, un joker, que git lit à sa façon) : `git restore .` effaçait la consigne
+    que l'opérateur écrivait, pas encore commitée (audit du 01/10/2026)."""
+    if dossier is None:
+        return
+    avant, apres = list(args), []
+    if "--" in args:
+        avant, apres = list(args[: args.index("--")]), list(args[args.index("--") + 1 :])
+    positionnels = [a for a in avant if not a.startswith("-")]
+    arbres = valeurs(avant, {"s"}, {"--source"})
+    if sous == "checkout" and "--" in args:
+        arbres, chemins = arbres + positionnels, apres
+    else:
+        chemins = positionnels + apres
+    larges = [
+        c for c in chemins
+        if c in {".", ":/"} or JOKER.search(c) or os.path.isdir(os.path.join(dossier, c))
+    ]
+    haut = git_lance(dossier, "rev-parse", "--show-toplevel")
+    if not larges or not haut:
+        return
+    if sous == "rm":
+        noms = git_lance(dossier, "ls-files", "--full-name", "--", *larges)
+    else:
+        noms = git_lance(dossier, "diff", "--name-only", "HEAD", "--", *larges)
+        for arbre in arbres:
+            noms += git_lance(dossier, "diff", "--name-only", arbre, "--", *larges)
+    for nom in noms[:5000]:
+        yield os.path.join(haut[0], nom)
+
+
+def find_atteints(tape, absolu, args):
+    """Les fichiers de zone qu'un `find … -delete` atteint sous sa racine : `find . -name
+    Makefile -delete` supprimait le Makefile, la racine `.` n'étant pas une zone (audit du
+    01/10/2026). Sans filtre de nom, tout ce qui est dessous."""
+    if absolu is None:
+        return
+    absolu = os.path.normpath(absolu)
+
+    def apres(options):
+        return [args[j + 1] for j, a in enumerate(args[:-1]) if a in options]
+
+    noms = apres({"-name"})
+    inoms = [n.lower() for n in apres({"-iname"})]
+    chemins = apres({"-path", "-wholename"})
+    ichemins = [c.lower() for c in apres({"-ipath", "-iwholename"})]
+    for litteral in sorted(LITTERAUX):
+        if litteral.startswith(("/", "~", "$")):
+            continue
+        zone_abs = os.path.normpath(os.path.join(racine, litteral))
+        if zone_abs != absolu and not zone_abs.startswith(absolu.rstrip(os.sep) + os.sep):
+            continue
+        if not os.path.lexists(zone_abs):
+            continue
+        fichiers = [zone_abs]
+        if os.path.isdir(zone_abs):
+            for dossier, sous_dossiers, noms_f in os.walk(zone_abs):
+                fichiers += [os.path.join(dossier, n) for n in sous_dossiers + noms_f]
+                if len(fichiers) > 5000:
+                    break
+        for fichier in fichiers:
+            nom = os.path.basename(fichier)
+            montre = tape.rstrip("/") + fichier[len(absolu):]
+            if not (noms or inoms or chemins or ichemins) or (
+                any(fnmatch.fnmatchcase(nom, n) for n in noms)
+                or any(fnmatch.fnmatchcase(nom.lower(), n) for n in inoms)
+                or any(fnmatch.fnmatchcase(montre, c) for c in chemins)
+                or any(fnmatch.fnmatchcase(montre.lower(), c) for c in ichemins)
+            ):
+                yield fichier
+                break
+
+
 def cibles(texte, profondeur=0, base=None):
     """(cible, pourquoi) pour chaque écriture qu'on sait lire dans une commande.
 
@@ -963,8 +1062,10 @@ def cibles(texte, profondeur=0, base=None):
     # Le `cd` d'un sous-shell s'arrête à sa parenthèse : `(cd tasks && ls) && echo x > n.txt`
     # écrivait tasks/n.txt, et `(cd src && make) && rm -f Makefile` visait src/Makefile
     # (audit du 01/10/2026). Le séparateur qui PRÉCÈDE chaque commande ouvre ou ferme.
-    pile, avant = [], ""
+    pile, avant, tube = [], "", []
     for mots, apres in commandes:
+        # `cat x.patch | git apply` : le fichier qu'un `cat` passe au suivant par le tube.
+        tube_recu, tube = tube, []
         for signe in avant:
             if signe == "(":
                 pile.append(base)
@@ -1032,6 +1133,11 @@ def cibles(texte, profondeur=0, base=None):
         options = [a for a in args if a.startswith("-")]
         yield from gestes_et_lectures(nom, args, ici)
         positionnels = [a for a in args if not a.startswith("-")]
+        # `cat < .env` montrait le secret : l'entrée lue est une lecture (audit du 01/10/2026).
+        if entree and any(lecture_refusee(resolu(vu)) for vu in deplie(ici(entree))):
+            yield SECRET + entree, "lecture par <"
+        if nom == "cat" and apres in {"|", "|&"}:
+            tube = positionnels
         for texte_recu in textes:
             yield from document(nom, args, texte_recu, base, ici, profondeur)
         if nom in {"cd", "pushd"}:
@@ -1104,6 +1210,11 @@ def cibles(texte, profondeur=0, base=None):
             if "-delete" in args or any(e in TOUS_ECRITS | DERNIER_ECRIT | {"mv", "sed", "perl"} for e in executes):
                 for a in racines or ["."]:
                     yield ici(a), "find qui écrit"
+                    vise = ici(a)
+                    vise = None if vise.startswith(("$", "~")) else vise
+                    vise = vise if vise is None or os.path.isabs(vise) else os.path.join(racine, vise)
+                    for fichier in find_atteints(a, vise, args):
+                        yield fichier, "find qui écrit"
         elif nom == "git" and args:
             # Les options globales d'abord : `git -C <dépôt> checkout -- Makefile` ou `git
             # --no-pager restore …` perdaient leur sous-commande (audit du 01/10/2026). `-C`
@@ -1144,6 +1255,16 @@ def cibles(texte, profondeur=0, base=None):
                 for a in reste_g:
                     if not a.startswith("-"):
                         yield ici_g(a), "git " + sous_g
+                if sous_g != "mv" and (chez_nous or voisin):
+                    for fichier in git_atteints(sous_g, reste_g, base_g or racine):
+                        yield fichier, "git " + sous_g
+            elif (chez_nous or voisin) and (
+                (sous_g == "reset" and {"--hard", "--merge", "--keep"} & set(reste_g))
+                or (sous_g == "stash" and (not reste_g or reste_g[0] in {"push", "save"} or reste_g[0].startswith("-")))
+            ):
+                # Comme `git restore .` : tout fichier suivi et modifié revient en arrière.
+                for fichier in git_atteints("restore", ["."], base_g or racine):
+                    yield fichier, "git " + sous_g
             elif sous_g == "config":
                 fichier = git_config(reste_g, config_de(base_g))
                 if fichier:
@@ -1153,7 +1274,7 @@ def cibles(texte, profondeur=0, base=None):
                 if fichier:
                     yield fichier, "git remote " + reste_g[0]
             elif sous_g in {"apply", "am"} and not {"--check", "--stat", "--numstat", "--summary"} & set(reste_g):
-                for fichier in [a for a in reste_g if not a.startswith("-")] + ([entree] if entree else []):
+                for fichier in [a for a in reste_g if not a.startswith("-")] + ([entree] if entree else []) + tube_recu:
                     texte_correctif = correctif_lu(fichier, base_g)
                     for nom_c in noms_du_correctif(texte_correctif or ""):
                         yield ici_g(nom_c), "git " + sous_g
@@ -1188,9 +1309,9 @@ try:
         if speciale:
             print(f"{cible[len(speciale):]}\t{speciale}\t{pourquoi}")
             break
-        motif = zone(cible)
-        if motif:
-            print(f"{cible}\t{motif}\t{pourquoi}")
+        atteinte = next(((c, m) for c in deplie(cible) for m in [zone(c)] if m), None)
+        if atteinte:
+            print(f"{atteinte[0]}\t{atteinte[1]}\t{pourquoi}")
             break
 except Exception:  # un défaut de cette analyse ne doit pas tout laisser passer
     for litteral in LITTERAUX:

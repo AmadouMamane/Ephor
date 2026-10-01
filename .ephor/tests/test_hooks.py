@@ -1529,6 +1529,62 @@ def test_une_tres_longue_commande_est_jugee_quand_meme(forme: str) -> None:
     assert au_terminal("echo '" + "y" * 140_000 + "' > /tmp/gros.txt", forme).returncode == 0
 
 
+def depot_aux_jokers(tmp_path: Path) -> Path:
+    """Un dépôt équipé de réglages, avec des fichiers de zone et un secret sur le disque."""
+    projet = projet_avec_reglages(tmp_path)
+    (projet / "src").mkdir()
+    (projet / "src" / "a.py").write_text("A = 1\n")
+    (projet / "Makefile").write_text("verify:\n\t@true\n")
+    (projet / "STEER.md").write_text("")
+    (projet / "AGENTS.md").write_text("# consignes\n")
+    (projet / "README.md").write_text("# projet\n")
+    git(projet, "init", "-q", "-b", "main")
+    git(projet, "add", "-A")
+    git(projet, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-qm", "x")
+    (projet / ".env").write_text("CLE=valeur\n")
+    patch = "--- a/Makefile\n+++ b/Makefile\n@@ -1 +1 @@\n-verify:\n+verify: x\n"
+    (projet / "src" / "fix.patch").write_text(patch)
+    return projet
+
+
+def test_les_jokers_et_les_chemins_larges_sont_developpes(tmp_path: Path) -> None:
+    """Le shell développe un joker avant de lancer la commande, git lit un chemin large comme
+    tout ce qu'il contient : `sed -i … *.md` réécrivait AGENTS.md, `git restore .` effaçait la
+    consigne en cours d'écriture, `find . -name Makefile -delete` le Makefile, et `cat .env*`
+    montrait le secret (audit du 01/10/2026)."""
+    projet = depot_aux_jokers(tmp_path)
+
+    def code(commande: str) -> int:
+        charge = {"tool_name": "Bash", "tool_input": {"command": commande}, "cwd": str(projet)}
+        return hook("shell-guard.sh", charge, cwd=projet, project=projet).returncode
+
+    for refusee in (
+        "sed -i 's/a/b/' *.md",
+        "find . -name Makefile -delete",
+        "find . -delete",
+        "cat .env*",
+        "cat < .env",
+        "cat src/fix.patch | git apply",
+    ):
+        assert code(refusee) == 2, refusee
+    for ordinaire in (
+        "git restore .",
+        "find . -name '*.pyc' -delete",
+        "sed -i 's/a/b/' src/*.py",
+        "cat src/*.py",
+        "git checkout -- '*.py'",
+        "git stash",
+    ):
+        assert code(ordinaire) == 0, ordinaire
+    (projet / "STEER.md").write_text("consigne en cours d'écriture\n")
+    assert code("git restore .") == 2, "la consigne de l'opérateur, pas encore commitée"
+    assert code("git checkout -- '*.md'") == 2
+    assert code("git stash") == 2 and code("git stash push -m x") == 2
+    git(projet, "switch", "-qc", "task/T-1")
+    assert code("git reset --hard") == 2
+    assert code("git restore src/") == 0
+
+
 def sans_python(tmp_path: Path) -> str:
     """jq, mais pas python3 : la garde lit l'appel, sans pouvoir analyser la commande."""
     if shutil.which("jq") is None:
