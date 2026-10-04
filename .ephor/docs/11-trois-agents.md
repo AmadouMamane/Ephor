@@ -281,6 +281,15 @@ Le protocole en cinq minutes est dans `.ephor/docs/10-installation.md`, « Véri
 Copilot, une fois, en cinq minutes ». Si un bouton d'autorisation réapparaît sur une zone de
 contrôle, c'est une régression : le refus se fait battre, et la question se rouvre.
 
+Pour Claude Code, le premier geste est `make doctor` : il compare la version du poste à celle
+sur laquelle cette version d'Ephor a été rejouée (`.ephor/rejoue.txt`). Plus récente, il nomme
+les trois points qui ont déjà cassé d'une version à l'autre (une forme de skill refusée dans
+un bloc en ligne, un fichier que Claude Code écrit lui-même dans `.claude/`, une question
+réseau du bac à sable) et le geste qui tranche : un `/feature` de bout en bout, modèle
+rapide, cinq minutes. Si tout passe, notez la version dans `.ephor/projet/rejoue.txt` avec
+la ligne qu'il donne : l'avertissement se tait pour cette version d'Ephor. Le même contrôle
+vaut pour opencode et Podman.
+
 Pour savoir ce qui se passe vraiment, sans rien deviner :
 
 | Question | Où regarder |

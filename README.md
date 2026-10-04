@@ -90,6 +90,7 @@ relancer opencode ou Claude Code.
 | Livraison | copier d'abord `.ephor/deploy/release-policy.example.json` en `.ephor/projet/release-policy.json`, puis `make delivery-manifest TASK=<ID> DIGEST=sha256:<...>` et `make delivery-check` — la chaîne réelle n'existe pas encore, voir `.ephor/deploy/README.md` |
 | Contexte > 60 % (Ephor le signale en fin de tour) | `/handoff` puis `/clear` |
 | Il manque une doc en ligne | `make fetch-docs URL=...` : elle atterrit dans `docs/external/`, à citer à l'agent au besoin |
+| Claude Code, opencode ou Podman mis à jour sur le poste | `make doctor` : il compare la version du poste à celle sur laquelle Ephor a été rejoué (`.ephor/rejoue.txt`), et dit quoi rejouer si elle diffère ; une fois rejoué, l'équipe le note dans `.ephor/projet/rejoue.txt` |
 | Ça part de travers | `make stop`, écrire dans `STEER.md`, `make resume` |
 | Il faut lire un autre dépôt | le déclarer une fois dans `.ephor/projet/reference-repos.json`, puis `make refs` et `make map REPO=<nom>` |
 | Une fois par lot de tâches | `make score` : ce qu'Ephor produit vraiment, et à quel prix |

@@ -222,6 +222,81 @@ else
 fi
 
 echo
+echo "== Outils d'agent : la version du poste, face à celle sur laquelle Ephor a été rejoué =="
+# Les garanties (juge, make verify, contrat approuvé, CI) ne lisent rien de Claude Code. Le
+# confort de session, si : ce qu'il accepte dans un bloc en ligne de skill, ce qu'il écrit
+# lui-même dans .claude/, les questions de son bac à sable, ses règles d'autorisation. Une
+# version plus récente que celle rejouée en a cassé trois en une journée (2.1.287, 02/10/2026),
+# et rien ne disait sur quelle version Ephor avait été mesuré. Le moteur le dit maintenant
+# (.ephor/rejoue.txt), et le diagnostic compare. Un avertissement, jamais un blocage : un poste
+# choisit rarement sa version, et une version plus ancienne ne casse rien de mesuré — ce
+# qu'Ephor demande de plus récent se dégrade sans bloquer.
+EPHOR_V="$(sed -n '1s/^Ephor \([^ ]*\).*/\1/p' .ephor/VERSION 2>/dev/null)"
+numero() { printf '%s\n' "$1" | grep -oE '[0-9]+(\.[0-9]+)+' | head -n 1; }
+compare() { # compare <poste> <rejouée> : egal | plus-recent | plus-ancien, nombre par nombre
+  local a="$1." b="$2." x y
+  while [ -n "$a" ] || [ -n "$b" ]; do
+    x="${a%%.*}"; a="${a#*.}"; y="${b%%.*}"; b="${b#*.}"
+    [ -n "$x" ] || x=0; [ -n "$y" ] || y=0
+    if [ "$x" -gt "$y" ] 2>/dev/null; then echo plus-recent; return; fi
+    if [ "$x" -lt "$y" ] 2>/dev/null; then echo plus-ancien; return; fi
+  done
+  echo egal
+}
+rejoue_par_le_projet() { # rejoue_par_le_projet <binaire> <version> : noté pour CETTE version d'Ephor ?
+  [ -f .ephor/projet/rejoue.txt ] || return 1
+  awk -v e="$EPHOR_V" -v b="$1" -v v="$2" \
+    '$1 !~ /^#/ && $1 == e && $2 == b && $3 == v { vu = 1 } END { exit !vu }' .ephor/projet/rejoue.txt
+}
+if [ ! -f .ephor/rejoue.txt ]; then
+  warn "rien ne dit sur quelles versions de Claude Code, d'opencode et de Podman cet Ephor a été rejoué (.ephor/rejoue.txt absent)" \
+       "mettez le moteur à jour : bootstrap_existing_repo.sh --mettre-a-jour, depuis le dépôt d'Ephor"
+else
+  while read -r BIN REJOUEE NOM; do
+    case "$BIN" in ''|'#'*) continue ;; esac
+    [ -n "$NOM" ] || NOM="$BIN"
+    if ! command -v "$BIN" >/dev/null 2>&1; then
+      printf '  [ -- ] %s absent de ce poste : rien à comparer (rejoué en %s)\n' "$NOM" "$REJOUEE"
+      continue
+    fi
+    POSTE="$(numero "$("$BIN" --version 2>/dev/null | head -n 1)")"
+    if [ -z "$POSTE" ]; then
+      printf '  [ -- ] %s : version illisible (%s --version), rejoué en %s\n' "$NOM" "$BIN" "$REJOUEE"
+      continue
+    fi
+    if rejoue_par_le_projet "$BIN" "$POSTE"; then
+      ok "$NOM $POSTE : rejoué par le projet avec Ephor $EPHOR_V (.ephor/projet/rejoue.txt)"
+      continue
+    fi
+    # Le geste qui tranche, par outil : ce qui s'en sert, en vrai, en cinq minutes.
+    case "$BIN" in
+      claude)   GESTE="un /feature de bout en bout (modèle rapide, cinq minutes)" ;;
+      opencode) GESTE="une session opencode : écriture d'une zone refusée, make stop respecté" ;;
+      podman)   GESTE="bash .ephor/scripts/demo_judge.sh podman, ou make judge RUNTIME=podman sur une tâche" ;;
+      *)        GESTE="la boucle qui s'en sert" ;;
+    esac
+    NOTE="si tout passe : echo '$EPHOR_V $BIN $POSTE' >> .ephor/projet/rejoue.txt"
+    case "$(compare "$POSTE" "$REJOUEE")" in
+      egal) ok "$NOM $POSTE : la version sur laquelle Ephor $EPHOR_V a été rejoué" ;;
+      plus-recent)
+        case "$BIN" in
+          claude) PEUT="peut refuser une forme de skill, écrire un nouveau fichier dans .claude/ ou poser une question réseau au terminal (trois cas mesurés le 02/10/2026)" ;;
+          *) PEUT="n'a pas été mesurée avec Ephor $EPHOR_V" ;;
+        esac
+        warn "$NOM $POSTE sur ce poste, plus récent que la version rejouée avec Ephor $EPHOR_V ($REJOUEE) : cette version $PEUT" \
+             "rejouez $GESTE ; $NOTE" ;;
+      plus-ancien)
+        case "$BIN" in
+          claude) PEUT="ce qu'Ephor lui demande de plus récent (bloc sandbox des réglages, effort: et disallowedTools: des sous-agents, --effort) se dégrade sans bloquer, mais n'a pas été mesuré" ;;
+          *) PEUT="pas mesurée avec Ephor $EPHOR_V" ;;
+        esac
+        warn "$NOM $POSTE sur ce poste, plus ancien que la version rejouée avec Ephor $EPHOR_V ($REJOUEE) : $PEUT" \
+             "mettez $NOM à jour si le poste le permet ; sinon rejouez $GESTE ; $NOTE" ;;
+    esac
+  done < .ephor/rejoue.txt
+fi
+
+echo
 echo "== Droits d'exécution =="
 NX=$(find .ephor -name '*.sh' ! -perm -u+x 2>/dev/null | wc -l | tr -d ' ')
 if [ "${NX:-0}" -eq 0 ]; then

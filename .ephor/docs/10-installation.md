@@ -77,6 +77,15 @@ corrige rien lui-même.
 Relancez-le chaque fois que `make verify` échoue pour une raison qui ne ressemble pas à
 du code : la cause est presque toujours là.
 
+Relancez-le aussi après une mise à jour de Claude Code, d'opencode ou de Podman. Les
+garanties d'Ephor (juge, `make verify`, contrat, CI) ne dépendent pas de leur version ; le
+confort de session, si : une version de Claude Code plus récente que celle sur laquelle Ephor
+a été rejoué a déjà refusé une forme de skill, posé un fichier nouveau dans `.claude/` et
+ouvert une question réseau au terminal, le même jour. Le diagnostic compare la version du
+poste à celle de `.ephor/rejoue.txt` et, si elle diffère, nomme le geste qui tranche en cinq
+minutes (un `/feature` de bout en bout) et la ligne à noter dans `.ephor/projet/rejoue.txt`
+quand tout passe. Un avertissement, jamais un blocage.
+
 Si `make doctor` répond « No rule to make target », lancez-le sans make :
 `bash .ephor/scripts/doctor.sh`. Un `GNUmakefile` ou un `makefile` à la racine passe avant
 le `Makefile` et détourne toutes les cibles, `make judge` compris ; le diagnostic le nomme.

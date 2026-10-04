@@ -1,0 +1,18 @@
+# Les versions des outils sur lesquelles CETTE version d'Ephor a été rejouée en session réelle,
+# sur un Mac Apple Silicon : un `/feature` de bout en bout sous Claude Code, une session opencode
+# avec le greffon, le juge sous Podman. Une ligne par outil : <binaire> <version> <nom lisible>.
+#
+# Pourquoi : les garanties (juge, make verify, contrat approuvé, CI) ne lisent rien de ces outils.
+# Le confort de session, si : ce que Claude Code accepte dans un bloc en ligne de skill, ce qu'il
+# écrit lui-même dans .claude/, les questions de son bac à sable. Une version plus récente que
+# celle rejouée en a cassé trois en une journée (2.1.287, 02/10/2026), et rien ne disait sur
+# quelle version Ephor avait été mesuré. `make doctor` compare les versions du poste à celles-ci
+# et prévient quand elles diffèrent — un avertissement, jamais un blocage.
+#
+# Une équipe qui a rejoué sa boucle sur une autre version le note dans .ephor/projet/rejoue.txt
+# (<version d'Ephor> <binaire> <version>) : l'avertissement se tait, pour cette version d'Ephor.
+# Le journal des versions (.ephor/CHANGELOG.md) porte les mêmes versions dans l'entrée de la
+# version en place ; un test refuse qu'ils divergent.
+claude 2.1.287 Claude Code
+opencode 1.18.33 opencode
+podman 6.1.2 Podman

@@ -3,6 +3,33 @@
 Une entrée par version : ce qui change pour qui s'en sert. Les raisons de fond sont dans
 `.ephor/docs/adr/`. La version en place est dans `.ephor/VERSION`.
 
+Chaque entrée nomme les versions de **Claude Code, d'opencode et de Podman** sur lesquelles
+elle a été rejouée en session réelle : les outils bougent chaque semaine, et une CI verte ne
+dit rien du vrai binaire. `.ephor/rejoue.txt` porte celles de la version en place, `make doctor`
+les compare à celles du poste, et un test refuse une entrée qui ne les dit pas.
+
+## En préparation
+
+- **`make doctor` compare la version des outils du poste à celle sur laquelle Ephor a été
+  rejoué.** Les garanties (juge, `make verify`, contrat approuvé, CI) ne lisent rien de Claude
+  Code ; le confort de session, si : ce qu'il accepte dans un bloc en ligne de skill, ce qu'il
+  écrit lui-même dans `.claude/`, les questions de son bac à sable, ses règles d'autorisation.
+  Une version plus récente que celle rejouée en a cassé trois en une journée (2.1.287, voir la
+  1.5.4), et rien ne disait sur quelle version Ephor avait été mesuré, ni que celle du poste
+  différait. Le moteur le dit maintenant (`.ephor/rejoue.txt` : Claude Code, opencode, Podman),
+  et le diagnostic compare, nombre par nombre : même version, `[ OK ]` ; plus récente, un
+  avertissement qui nomme ce qui peut casser et le geste qui tranche (sous Claude Code, un
+  `/feature` de bout en bout, cinq minutes) ; plus ancienne, ce qui se dégrade sans bloquer.
+  Un avertissement, jamais un blocage : un poste choisit rarement sa version. Une équipe qui a
+  rejoué sa boucle note la version dans `.ephor/projet/rejoue.txt` (`<Ephor> <outil>
+  <version>`, la ligne exacte est dans l'avertissement), et il se tait — pour cette version
+  d'Ephor seulement. Un outil absent du poste n'est pas comparé, et la version rejouée reste
+  dite.
+- **Le journal des versions nomme, à chaque version, les versions des trois outils sur
+  lesquelles elle a été rejouée** (la 1.5.4 le faisait déjà ; c'est maintenant la règle, dite
+  en tête du journal). Un test refuse une entrée qui ne les porte pas, ou qui ne dit pas celles
+  de `.ephor/rejoue.txt`.
+
 ## 1.5.4 — 2 octobre 2026
 
 Chaque fonctionnalité de la 1.5.3 rejouée sur un Mac avec les vrais outils, dans des projets neufs

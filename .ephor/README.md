@@ -8,7 +8,7 @@
 
 | Chemin | Ce que c'est | À qui |
 |---|---|---|
-| `.ephor/projet/` | ce que **ce** projet règle : ses étapes de vérification (`verify.sh`), les exceptions du contrôle des données personnelles, les dépôts qu'on a le droit de lire ; plus tard sa politique de livraison et le scanner de sécurité de l'entreprise | **au projet** — une mise à jour d'Ephor n'y touche jamais |
+| `.ephor/projet/` | ce que **ce** projet règle : ses étapes de vérification (`verify.sh`), les exceptions du contrôle des données personnelles, les dépôts qu'on a le droit de lire, les versions d'outils sur lesquelles l'équipe a elle-même rejoué cette version d'Ephor (`rejoue.txt`, pour faire taire l'avertissement de `make doctor`) ; plus tard sa politique de livraison et le scanner de sécurité de l'entreprise | **au projet** — une mise à jour d'Ephor n'y touche jamais |
 | `.ephor/*.py`, `.ephor/contract.schema.json` | le juge (`judge.py`) et la forme d'un contrat ; ses outils : compteur de tokens (`usage.py`), contrôle des réglages GitLab (`gitlab_check.py`), tableau de bord (`score.py`), carte du code (`repo_map.py`), dépôts de référence (`refs.py`), aspirateur de docs (`fetch_docs.py`), contrôle des données personnelles (`personal_data.py`), adaptateurs opencode et Copilot (`adapters.py`), refus des gestes d'opérateur à un agent (`operateur.py`), rappel de `PROGRESS.md` (`progres.py`) | Ephor |
 | `.ephor/zones.txt` | la liste des zones de contrôle, la seule : juge, gardes, sentinelle et CI la lisent ; les réglages du projet peuvent l'allonger, jamais la raccourcir | Ephor |
 | `.ephor/hooks/` | les garde-fous, communs aux trois agents ; les outils n'en appellent que les quatre points d'entrée (`avant-outil.sh`, `apres-outil.sh`, `debut-tour.sh`, `fin-tour.sh`), qui choisissent les gardes (ADR 0011) | Ephor |
@@ -20,6 +20,7 @@
 | `.ephor/tests/` | les tests d'Ephor (`make ephor-test`) : dans son dépôt et dans un projet né de son archive ; le script d'installation ne les pose pas, et `make ephor-test` le dit | Ephor |
 | `.ephor/ruff.toml` | les règles de lint d'Ephor, appliquées à ce dossier seul | Ephor |
 | `.ephor/VERSION`, `.ephor/CHANGELOG.md` | la version en place, et ce que chacune a changé | Ephor |
+| `.ephor/rejoue.txt` | les versions de Claude Code, d'opencode et de Podman sur lesquelles cette version d'Ephor a été rejouée en session réelle ; `make doctor` les compare à celles du poste et prévient quand elles diffèrent, sans bloquer | Ephor |
 | `.ephor/empreintes.txt` | les versions livrées de ce qu'Ephor pose hors du moteur (greffon d'opencode, réglages et sous-agents de Claude Code, skills, `Makefile`) : une mise à jour remplace un tel fichier s'il est l'une d'elles, donc jamais retouché (ADR 0010) | Ephor |
 
 Pourquoi un dossier caché, et un seul : Ephor n'encombre plus la racine du projet (une
