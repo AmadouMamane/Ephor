@@ -57,7 +57,9 @@ def depot_partage(tmp_path: Path, makefile: bool = True, reglages: bool = True) 
     """Le clone d'un dépôt d'équipe : son Makefile, ses réglages Claude, son CLAUDE.md, un
     hook pre-push à lui, et un dépôt distant « origin » local, nu, avec sa branche désignée."""
     origin = tmp_path / "origin.git"
-    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+    # `-b main` : sans lui, le dépôt nu naît sur `master` là où git n'a pas de branche par
+    # défaut réglée (le runner de la CI), et `set-head` ne trouvait pas `main` (14 tests rouges).
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
     clone = tmp_path / "equipe"
     (clone / "src").mkdir(parents=True)
     (clone / "src" / "index.js").write_text("console.log('salut')\n", encoding="utf-8")
