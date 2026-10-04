@@ -29,6 +29,30 @@ les compare à celles du poste, et un test refuse une entrée qui ne les dit pas
   lesquelles elle a été rejouée** (la 1.5.4 le faisait déjà ; c'est maintenant la règle, dite
   en tête du journal). Un test refuse une entrée qui ne les porte pas, ou qui ne dit pas celles
   de `.ephor/rejoue.txt`.
+- **Ephor privé : Ephor sur un dépôt partagé que l'équipe n'a pas adopté**
+  (`.ephor/scripts/prive.sh`, doc 13). Jusqu'ici, Ephor s'installait en entier dans le dépôt, à
+  pousser ; sur un dépôt d'équipe pas encore convaincue, c'était l'imposer, ou s'en passer.
+  `poser` installe Ephor avec le script d'installation, puis le range autrement : un commit
+  marqué `Ephor-prive:` sur la branche principale **locale** seulement, les exclusions dans
+  `.git/info/exclude` au lieu du `.gitignore` de l'équipe, `PROGRESS.md` et `STEER.md` hors de
+  git, les réglages de Claude Code dans `.claude/settings.local.json` quand l'équipe a les
+  siens (opencode et Copilot en dérivent), et le `Makefile` de l'équipe ne gagne qu'une ligne
+  d'inclusion (ses cibles gagnent sur celles d'Ephor, sans avertissement). Une garde `pre-push`
+  refuse de pousser le moteur, le marqueur, une ligne qui nomme `.ephor/`, et `rouge.json`.
+  `publier <ID>` rejoue sur la branche du serveur, dans une copie à part, le contrat et ses
+  tests d'acceptation (la spécification avant le code, et la preuve ; jamais `rouge.json`), puis
+  les commits de la tâche, dans le périmètre du contrat et pas un de plus, avec le verdict local
+  du juge en déclaration dans `tasks/<ID>/rapport.md` et dans le texte de la merge request ;
+  les jugements et la mesure de tokens sont sauvegardés hors du dépôt avant la poussée.
+  `--sans-contrat <branche>` fait de même pour une correction sans contrat. Après la fusion,
+  `git pull --rebase` replace le commit d'Ephor, et `make taches` voit la tâche fusionnée, par
+  le nom ou par le contenu (squash). `adopter` prépare la branche que l'équipe relira ;
+  `retirer` remet le clone comme avant, jugements sauvegardés. Les commits d'Ephor sont reconnus
+  à leur marqueur ou à leurs fichiers, jamais à « au-dessus de main » : un rebase les déplace.
+  Le juge, le diagnostic et l'installation ne changent pas : Ephor ne sait pas qu'il est privé.
+  `make doctor` dit seulement, sans crier « inerte », que les garde-fous sont déclarés dans les
+  réglages locaux. Joué de bout en bout dans les tests, fusion par merge request et par squash
+  comprises, contre un dépôt distant local.
 
 ## 1.5.4 — 2 octobre 2026
 

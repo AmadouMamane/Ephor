@@ -73,6 +73,16 @@ qu'Ephor pose ailleurs (greffon d'opencode, réglages et sous-agents de Claude C
 le bilan dit ce qui a changé et ce qui reste « à reprendre » (ADR 0007 et 0010). Puis
 relancer opencode ou Claude Code.
 
+**Sur un dépôt partagé que l'équipe n'a pas adopté** : Ephor privé. Le moteur est commité
+sur votre branche principale locale seulement, derrière un marqueur, et une garde `pre-push`
+le retient ; l'équipe reçoit, par merge request, le contrat, ses tests d'acceptation et les
+commits de la tâche, avec le verdict local en déclaration. `.ephor/docs/13-ephor-prive.md`.
+
+```bash
+bash ~/dev/ephor/.ephor/scripts/prive.sh poser /chemin/du/clone      # poser, ou mettre à jour
+bash .ephor/scripts/prive.sh publier FEAT-001                         # la tâche, vers l'équipe
+```
+
 ---
 
 ## La boucle quotidienne
@@ -87,6 +97,7 @@ relancer opencode ou Claude Code.
 | Beaucoup de tâches | `make taches` : une ligne par tâche et son état, calculé ; `make task-ranger LOT=<fonctionnalité> PREFIXE=<ID->` les range dans `tasks/<lot>/` |
 | Avant de conclure | `make judge TASK=<ID>` ; en conteneur, `RUNTIME=podman` |
 | Revue | `make review TASK=<ID>` : enchaîne ce que le risque du contrat exige, et rien de plus ; lancée du dossier principal, elle se fait dans celui de la tâche, comme `make judge` |
+| Dépôt partagé, Ephor privé | `bash .ephor/scripts/prive.sh publier <ID>` : le contrat, ses tests et les commits de la tâche rejoués sur la branche du serveur, sans rien d'Ephor ; `git pull --rebase` toujours ; `adopter` et `retirer` le jour de la décision (`.ephor/docs/13-ephor-prive.md`) |
 | Livraison | copier d'abord `.ephor/deploy/release-policy.example.json` en `.ephor/projet/release-policy.json`, puis `make delivery-manifest TASK=<ID> DIGEST=sha256:<...>` et `make delivery-check` — la chaîne réelle n'existe pas encore, voir `.ephor/deploy/README.md` |
 | Contexte > 60 % (Ephor le signale en fin de tour) | `/handoff` puis `/clear` |
 | Il manque une doc en ligne | `make fetch-docs URL=...` : elle atterrit dans `docs/external/`, à citer à l'agent au besoin |
@@ -157,11 +168,11 @@ Dans .ephor/ : le moteur, le même dans chaque projet (carte : .ephor/README.md)
                          personal_data · refs · fetch_docs · adapters · gitlab_check ·
                          operateur · progres
 .ephor/hooks/            les garde-fous, communs aux trois agents
-.ephor/scripts/          doctor, review, mutants, repo_map, bootstrap, demo_judge…
+.ephor/scripts/          doctor, review, mutants, repo_map, bootstrap, demo_judge, prive…
 .ephor/deploy/           livraison vers Kubernetes ou GCP : manifeste, image de CI, principes
 .ephor/greffon-copilot/  greffon Copilot : deux fichiers générés, un relais écrit à la main
 .ephor/opencode/         greffon opencode ; .opencode/plugins/ephor.js ne fait que l'importer
-.ephor/docs/             la doc d'Ephor (06 à 12) et ses décisions (ADR 0002 à 0011)
+.ephor/docs/             la doc d'Ephor (06 à 13) et ses décisions (ADR 0002 à 0011)
 .ephor/tests/            les tests d'Ephor : make ephor-test
 .ephor/projet/           AU PROJET : étapes de vérification, exceptions, dépôts lus en référence
 ```

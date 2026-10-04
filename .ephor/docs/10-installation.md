@@ -297,6 +297,11 @@ Ce que chaque version demande de reprendre à la main, s'il y a lieu, est écrit
 `.ephor/CHANGELOG.md`. Sans `--mettre-a-jour`, relancer la commande ne remplace rien :
 chaque fichier qui diffère arrive en `.ephor-new`.
 
+**Un dépôt partagé que l'équipe n'a pas adopté** ne reçoit pas Ephor ainsi : le moteur
+resterait à pousser, et il n'est pas à vous de l'imposer. Ephor privé le pose sur votre
+branche principale locale seulement, et envoie à l'équipe le contrat, ses tests et le code,
+rien d'autre : `.ephor/docs/13-ephor-prive.md`.
+
 ### Ce qu'il faut demander à l'IT
 
 Une seule demande, complète, avec la justification de chaque élément :

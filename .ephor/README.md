@@ -13,10 +13,10 @@
 | `.ephor/zones.txt` | la liste des zones de contrôle, la seule : juge, gardes, sentinelle et CI la lisent ; les réglages du projet peuvent l'allonger, jamais la raccourcir | Ephor |
 | `.ephor/hooks/` | les garde-fous, communs aux trois agents ; les outils n'en appellent que les quatre points d'entrée (`avant-outil.sh`, `apres-outil.sh`, `debut-tour.sh`, `fin-tour.sh`), qui choisissent les gardes (ADR 0011) | Ephor |
 | `.ephor/opencode/` | le greffon d'opencode ; `.opencode/plugins/ephor.js`, dans le projet, ne fait que l'importer | Ephor |
-| `.ephor/scripts/` | diagnostic, revue, mutation, installation sur un dépôt existant… | Ephor |
+| `.ephor/scripts/` | diagnostic, revue, mutation, installation sur un dépôt existant, Ephor privé sur un dépôt partagé (`prive.sh`)… | Ephor |
 | `.ephor/deploy/` | manifeste de livraison, image de CI, principes de livraison | Ephor |
 | `.ephor/greffon-copilot/` | le relais que `make copilot-install` pose sur le poste | Ephor (deux fichiers régénérés par `make adapters`) |
-| `.ephor/docs/` | la documentation d'Ephor : exploitation, tokens, outillage, évaluation, installation, trois agents, GitLab, décisions | Ephor |
+| `.ephor/docs/` | la documentation d'Ephor : exploitation, tokens, outillage, évaluation, installation, trois agents, GitLab, Ephor privé, décisions | Ephor |
 | `.ephor/tests/` | les tests d'Ephor (`make ephor-test`) : dans son dépôt et dans un projet né de son archive ; le script d'installation ne les pose pas, et `make ephor-test` le dit | Ephor |
 | `.ephor/ruff.toml` | les règles de lint d'Ephor, appliquées à ce dossier seul | Ephor |
 | `.ephor/VERSION`, `.ephor/CHANGELOG.md` | la version en place, et ce que chacune a changé | Ephor |

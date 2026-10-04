@@ -320,8 +320,15 @@ if [ -n "$ABSENTS" ]; then
       "mettez le moteur à jour : bootstrap_existing_repo.sh --mettre-a-jour, depuis le dépôt d'Ephor"
 fi
 # Aucune garde déclarée : Ephor est posé, et rien ne tourne. Le diagnostic concluait « Rien ne
-# bloque » sur un dépôt dont le geste 0 n'était pas fait (audit du 01/10/2026).
-if ! grep -q '\.ephor/hooks/' .claude/settings.json 2>/dev/null; then
+# bloque » sur un dépôt dont le geste 0 n'était pas fait (audit du 01/10/2026). Déclarées dans
+# les réglages locaux seulement (Ephor privé, .ephor/docs/13-ephor-prive.md) : elles tournent
+# sur ce poste, et le diagnostic le dit au lieu de crier « inerte ».
+if grep -q '\.ephor/hooks/' .claude/settings.json 2>/dev/null; then
+  :
+elif grep -q '\.ephor/hooks/' .claude/settings.local.json 2>/dev/null; then
+  warn "les garde-fous d'Ephor sont déclarés dans .claude/settings.local.json seulement : ils tournent sur ce poste, pas sur celui d'un collègue" \
+       "c'est la disposition d'Ephor privé (.ephor/docs/13-ephor-prive.md) ; pour l'équipe entière, ils vont dans .claude/settings.json"
+else
   bad "aucun garde-fou d'Ephor n'est déclaré dans .claude/settings.json : Ephor est posé, et INERTE" \
       "geste 0 : fusionnez les blocs « hooks » et « permissions » de .claude/settings.json.ephor-new dans le vôtre, puis make adapters"
 fi
